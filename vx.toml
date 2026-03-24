@@ -1,0 +1,20 @@
+[tools]
+just = "latest"
+rust = "stable"
+
+[settings]
+auto_install = true
+parallel_install = true
+
+[scripts]
+build = "cargo build"
+build-release = "cargo build --release"
+build-release-locked = "vx cargo build --release --locked -p noti-cli"
+check = "vx cargo check --workspace"
+ci = "vx just ci"
+default = "just default"
+fmt = "vx cargo fmt --all"
+fmt-check = "vx cargo fmt --all -- --check"
+lint = "vx cargo clippy --workspace --all-targets -- -D warnings"
+run = "just run"
+test = "vx cargo test --workspace"

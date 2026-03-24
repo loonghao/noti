@@ -1,0 +1,21 @@
+[package]
+name = "noti-providers"
+description = "Notification provider implementations for noti CLI"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+base64 = { workspace = true }
+lettre = { workspace = true }
+noti-core = { path = "../noti-core" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+tokio = { workspace = true }
+wiremock = { workspace = true }

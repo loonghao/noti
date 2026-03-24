@@ -1,0 +1,188 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: Release tag to build and publish
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Release tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_HTTP_TIMEOUT: "600"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  prepare-release:
+    name: Prepare Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag_name }}
+
+      - name: Extract version from tag
+        id: metadata
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: prepare-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary_name: noti
+            archive_name: noti-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: noti.exe
+            archive_name: noti-x86_64-pc-windows-msvc.zip
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary_name: noti
+            archive_name: noti-x86_64-apple-darwin.tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary_name: noti
+            archive_name: noti-aarch64-apple-darwin.tar.gz
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ inputs.tag_name }}
+
+      - name: Setup vx
+        uses: loonghao/vx@main
+        with:
+          version: "0.8.0"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Setup tools (vx)
+        run: vx setup
+
+      - name: Add Rust target
+        run: vx rustup target add ${{ matrix.target }}
+
+      - name: Fix MSVC linker (remove Git's link.exe)
+        if: runner.os == 'Windows'
+        run: Remove-Item 'C:\Program Files\Git\usr\bin\link.exe' -Force -ErrorAction SilentlyContinue
+        shell: pwsh
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+
+      - name: Build release binary
+        run: vx just build-release-target ${{ matrix.target }}
+
+      - name: Package tarball
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -C target/${{ matrix.target }}/release -czf dist/${{ matrix.archive_name }} ${{ matrix.binary_name }}
+
+      - name: Package zip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" -DestinationPath "dist/${{ matrix.archive_name }}" -Force
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: dist/${{ matrix.archive_name }}
+          if-no-files-found: error
+
+  github-release:
+    name: Upload GitHub Release assets
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: '*'
+          merge-multiple: true
+
+      - name: Rename binary archives with version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          shopt -s nullglob
+          for file in artifacts/noti-x86_64-*.tar.gz artifacts/noti-aarch64-*.tar.gz artifacts/noti-x86_64-*.zip artifacts/noti-aarch64-*.zip; do
+            base_name="$(basename "$file")"
+            extension="${base_name##*.}"
+            stem="${base_name%.*}"
+            if [[ "$base_name" == *.tar.gz ]]; then
+              extension="tar.gz"
+              stem="${base_name%.tar.gz}"
+            fi
+            mv "$file" "artifacts/${stem/noti-/noti-v${RELEASE_VERSION}-}.${extension}"
+          done
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum noti-* > noti-checksums.txt
+
+      - name: Prepare fallback release notes
+        shell: bash
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## Installation
+
+          ### From source
+
+          ```bash
+          cargo install --git https://github.com/${{ github.repository }} noti-cli
+          ```
+
+          ### Download binary
+
+          Download the appropriate binary for your platform from the assets below.
+          EOF
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          release_url="https://github.com/${REPOSITORY}/releases/tag/${RELEASE_TAG}"
+          if gh release view "${RELEASE_TAG}" --repo "${REPOSITORY}" > /dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" artifacts/* --repo "${REPOSITORY}" --clobber
+          else
+            gh release create "${RELEASE_TAG}" artifacts/* --repo "${REPOSITORY}" --title "${RELEASE_TAG}" --notes-file RELEASE_NOTES.md
+          fi
+          echo "Uploaded assets to ${release_url}"

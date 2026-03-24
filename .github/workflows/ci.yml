@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_HTTP_TIMEOUT: "600"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  quality:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup vx
+        uses: loonghao/vx@main
+        with:
+          version: "0.8.0"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Setup tools (vx)
+        run: vx setup
+
+      - name: Add Rust components
+        run: vx rustup component add clippy rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run quality checks
+        run: vx just ci
+
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup vx
+        uses: loonghao/vx@main
+        with:
+          version: "0.8.0"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Setup tools (vx)
+        run: vx setup
+
+      - name: Fix MSVC linker (remove Git's link.exe)
+        if: runner.os == 'Windows'
+        run: Remove-Item 'C:\Program Files\Git\usr\bin\link.exe' -Force -ErrorAction SilentlyContinue
+        shell: pwsh
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.os }}
+
+      - name: Run tests
+        run: vx just test
+
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup vx
+        uses: loonghao/vx@main
+        with:
+          version: "0.8.0"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Setup tools (vx)
+        run: vx setup
+
+      - name: Add llvm-tools-preview
+        run: vx rustup component add llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+
+      - name: Install cargo-llvm-cov
+        run: vx cargo install cargo-llvm-cov --locked
+
+      - name: Generate coverage report
+        run: vx cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    needs: [quality, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup vx
+        uses: loonghao/vx@main
+        with:
+          version: "0.8.0"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Setup tools (vx)
+        run: vx setup
+
+      - name: Add Rust target
+        run: vx rustup target add ${{ matrix.target }}
+
+      - name: Fix MSVC linker (remove Git's link.exe)
+        if: runner.os == 'Windows'
+        run: Remove-Item 'C:\Program Files\Git\usr\bin\link.exe' -Force -ErrorAction SilentlyContinue
+        shell: pwsh
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-${{ matrix.target }}
+
+      - name: Build release binary
+        run: vx just build-release-target ${{ matrix.target }}
