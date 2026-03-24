@@ -2,7 +2,7 @@
 
 统一的多渠道通知 CLI 工具，专为 AI Agent 设计。
 
-[![CI](https://github.com/loonghao/wecom-bot-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/wecom-bot-cli/actions/workflows/ci.yml)
+[![CI](https://github.com/loonghao/noti/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/noti/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 概述
@@ -23,7 +23,7 @@
 ### 从源码安装
 
 ```bash
-cargo install --git https://github.com/loonghao/wecom-bot-cli noti-cli
+cargo install --git https://github.com/loonghao/noti noti-cli
 ```
 
 ## 快速开始

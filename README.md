@@ -2,7 +2,7 @@
 
 A unified multi-channel notification CLI for AI agents.
 
-[![CI](https://github.com/loonghao/wecom-bot-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/wecom-bot-cli/actions/workflows/ci.yml)
+[![CI](https://github.com/loonghao/noti/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/noti/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Overview
@@ -23,7 +23,7 @@ A unified multi-channel notification CLI for AI agents.
 ### From source
 
 ```bash
-cargo install --git https://github.com/loonghao/wecom-bot-cli noti-cli
+cargo install --git https://github.com/loonghao/noti noti-cli
 ```
 
 ## Quick Start
