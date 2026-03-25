@@ -129,13 +129,17 @@ impl NotifyProvider for FeishuProvider {
     }
 }
 
-/// Compute Feishu webhook signature.
+/// Compute Feishu webhook signature using HMAC-SHA256 + Base64.
 fn compute_feishu_sign(timestamp: &str, secret: &str) -> String {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
 
     let string_to_sign = format!("{timestamp}\n{secret}");
-    // Feishu uses HmacSHA256, but for simplicity we use a basic approach
-    // In production, consider using the `hmac` and `sha2` crates
-    STANDARD.encode(string_to_sign.as_bytes())
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(string_to_sign.as_bytes()).expect("HMAC accepts any size");
+    mac.update(b"");
+    let result = mac.finalize();
+    STANDARD.encode(result.into_bytes())
 }
