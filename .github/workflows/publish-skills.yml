@@ -1,0 +1,47 @@
+name: Publish Skills to ClawHub
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "skills/**"
+      - "scripts/package_openclaw_skill.py"
+      - ".github/workflows/publish-skills.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-skills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish to ClawHub
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub
+
+      - name: Publish noti-openclaw skill
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          clawhub publish skills/noti-openclaw \
+            --slug noti-openclaw \
+            --name "noti-openclaw" \
+            --version "$(grep '^version:' skills/noti-openclaw/SKILL.md | head -1 | sed 's/version: //')" \
+            --tags latest \
+            --source-repo "${{ github.repository }}" \
+            --source-commit "${{ github.sha }}" \
+            --no-input \
+            --token "$CLAWHUB_TOKEN"

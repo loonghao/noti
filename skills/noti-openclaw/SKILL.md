@@ -1,3 +1,27 @@
+---
+name: noti-openclaw
+description: OpenClaw skill for noti — unified multi-channel notification CLI. Send notifications to 100+ channels (WeCom, Feishu, Slack, Telegram, Discord, Email, and many more) from a single CLI command.
+version: 0.1.1
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - noti
+    primaryEnv: ""
+    homepage: https://github.com/loonghao/noti
+    emoji: "🔔"
+    tags:
+      - notification
+      - cli
+      - wecom
+      - slack
+      - telegram
+      - discord
+      - email
+      - webhook
+      - multi-channel
+---
+
 # noti-openclaw
 
 > OpenClaw skill for **noti** — unified multi-channel notification CLI.
