@@ -39,3 +39,6 @@ build-release-target target:
 
 run *args:
     vx cargo run -p noti-cli -- {{args}}
+
+package-skills:
+    vx python scripts/package_openclaw_skill.py

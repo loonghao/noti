@@ -1,6 +1,7 @@
 [tools]
 just = "latest"
 rust = "stable"
+python = "3.12"
 
 [settings]
 auto_install = true

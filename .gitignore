@@ -5,3 +5,5 @@ target/
 *.log
 .env
 dist/
+automations/
+plans/
