@@ -33,7 +33,7 @@ jobs:
         with:
           version: "0.8.8"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+          cache-key-prefix: vx-0.8.8-${{ runner.os }}-${{ runner.arch }}
 
       - name: Setup tools (vx)
         run: vx setup
@@ -67,7 +67,7 @@ jobs:
         with:
           version: "0.8.8"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+          cache-key-prefix: vx-0.8.8-${{ runner.os }}-${{ runner.arch }}
 
       - name: Setup tools (vx)
         run: vx setup
@@ -98,7 +98,7 @@ jobs:
         with:
           version: "0.8.8"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+          cache-key-prefix: vx-0.8.8-${{ runner.os }}-${{ runner.arch }}
 
       - name: Setup tools (vx)
         run: vx setup
@@ -150,7 +150,7 @@ jobs:
         with:
           version: "0.8.8"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-key-prefix: vx-tools-${{ runner.os }}-${{ runner.arch }}
+          cache-key-prefix: vx-0.8.8-${{ runner.os }}-${{ runner.arch }}
 
       - name: Setup tools (vx)
         run: vx setup
