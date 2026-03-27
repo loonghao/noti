@@ -1,23 +1,32 @@
 <div align="center">
 
-# 📢 noti
+<img src="https://img.shields.io/badge/📢-noti-blue?style=for-the-badge&labelColor=1a1a2e&color=16213e" alt="noti logo" height="60"/>
 
-**A unified multi-channel notification CLI for AI agents**
+# noti
 
-*Send notifications to 125+ services from a single command line — built for scripts, agents, and automation.*
+**A unified multi-channel notification CLI — built for AI agents & automation**
+
+*Send notifications to 125+ services from a single command line.*
+
+<br/>
 
 [![CI](https://github.com/loonghao/noti/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/noti/actions/workflows/ci.yml)
 [![Release](https://github.com/loonghao/noti/actions/workflows/release.yml/badge.svg)](https://github.com/loonghao/noti/actions/workflows/release.yml)
 [![Codecov](https://codecov.io/gh/loonghao/noti/graph/badge.svg)](https://codecov.io/gh/loonghao/noti)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.85+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Crates](https://img.shields.io/badge/crates-3_workspace_crates-blue?logo=rust)](https://github.com/loonghao/noti)
-[![GitHub release](https://img.shields.io/github/v/release/loonghao/noti?include_prereleases&logo=github)](https://github.com/loonghao/noti/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/loonghao/noti/total?logo=github&color=green)](https://github.com/loonghao/noti/releases)
+[![GitHub release](https://img.shields.io/github/v/release/loonghao/noti?include_prereleases&logo=github&label=release)](https://github.com/loonghao/noti/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/loonghao/noti/total?logo=github&color=green&label=downloads)](https://github.com/loonghao/noti/releases)
 
-[![Windows](https://img.shields.io/badge/Windows-x86__64-0078D6?logo=windows&logoColor=white)](#installation)
-[![macOS](https://img.shields.io/badge/macOS-x86__64%20|%20ARM64-000000?logo=apple&logoColor=white)](#installation)
-[![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black)](#installation)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.85+-dea584?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Crates](https://img.shields.io/badge/crates-3_workspace-e6893c?style=flat-square&logo=rust)](https://github.com/loonghao/noti)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/loonghao/noti/pulls)
+[![GitHub Stars](https://img.shields.io/github/stars/loonghao/noti?style=flat-square&logo=github&color=yellow)](https://github.com/loonghao/noti/stargazers)
+
+[![Windows](https://img.shields.io/badge/Windows-x86__64-0078D6?style=flat-square&logo=windows&logoColor=white)](#-installation)
+[![macOS](https://img.shields.io/badge/macOS-x86__64%20|%20ARM64-000000?style=flat-square&logo=apple&logoColor=white)](#-installation)
+[![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624?style=flat-square&logo=linux&logoColor=black)](#-installation)
+
+<br/>
 
 [English](README.md) · [简体中文](README_zh.md)
 
@@ -25,36 +34,55 @@
 
 ---
 
+<br/>
+
+## 🎯 Why noti?
+
+> **One binary. One command. 125+ notification channels.**
+
+Most projects cobble together different SDKs for Slack, email, SMS, and push notifications. **noti** replaces all of that with a single, blazing-fast Rust CLI that speaks a universal URL scheme — perfect for shell scripts, CI pipelines, and AI agents.
+
+```bash
+# That's it. One line. Any channel.
+noti send --to "wecom://<key>" --message "Deploy complete ✅"
+noti send --to "slack://<token>" --message "Build passed 🎉"
+noti send --to "tg://<bot>/<chat>" --message "Alert: CPU > 90%"
+```
+
+<br/>
+
 ## ✨ Highlights
 
 <table>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 
 ### 🚀 CLI-first Design
-Built for agent/script integration — one-line commands, no config files needed.
+Built for agent/script integration — one-line commands, no config files needed. Works perfectly in CI/CD pipelines.
 
-### 📡 125 Built-in Providers
-Chat, SMS, email, push, webhooks, incident management, IoT — all in one binary.
+### 📡 125+ Built-in Providers
+Chat, SMS, email, push, webhooks, incident management, IoT — all in one binary. No plugins, no extensions.
 
 ### 🔗 URL Scheme Addressing
-Intuitive `provider://credentials` format — `wecom://key`, `slack://tokens`, `tg://bot/chat`.
+Intuitive `provider://credentials` format — `wecom://key`, `slack://tokens`, `tg://bot/chat`. Zero learning curve.
 
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 
 ### 📋 Profile Management
-Save, reuse, and test notification configs — set up once, use by name.
+Save, reuse, and test notification configs — set up once, use by name. Share across your team.
 
-### 🤖 JSON Output
-`--json` flag for structured, machine-readable output — perfect for AI agents.
+### 🤖 Machine-Friendly Output
+`--json` flag for structured, machine-readable output — deterministic exit codes for reliable automation.
 
 ### ⚡ Blazing Fast
-Native Rust binary with instant startup — no runtime, no interpreter overhead.
+Native Rust binary with **< 10ms startup** — no runtime, no interpreter, no dependency hell.
 
 </td>
 </tr>
 </table>
+
+<br/>
 
 ## 📦 Installation
 
@@ -80,18 +108,20 @@ cargo install --git https://github.com/loonghao/noti noti-cli
 
 ### Download binary
 
-Pre-built binaries for all platforms are available on the [GitHub Releases](https://github.com/loonghao/noti/releases) page.
+Pre-built binaries for all platforms are available on the [Releases](https://github.com/loonghao/noti/releases) page:
 
-| Platform | Architecture | Download |
-|----------|-------------|----------|
-| Windows | x86_64 | [`noti-x86_64-pc-windows-msvc.zip`](https://github.com/loonghao/noti/releases/latest) |
-| macOS | x86_64 (Intel) | [`noti-x86_64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
-| macOS | ARM64 (Apple Silicon) | [`noti-aarch64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
-| Linux | x86_64 | [`noti-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+| Platform | Architecture | File |
+|:---------|:------------|:-----|
+| **Windows** | x86_64 | [`noti-x86_64-pc-windows-msvc.zip`](https://github.com/loonghao/noti/releases/latest) |
+| **macOS** | x86_64 (Intel) | [`noti-x86_64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+| **macOS** | ARM64 (Apple Silicon) | [`noti-aarch64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+| **Linux** | x86_64 | [`noti-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+
+<br/>
 
 ## 🚀 Quick Start
 
-### Send via URL scheme
+### 1. Send via URL scheme
 
 ```bash
 # WeCom (企业微信)
@@ -117,7 +147,7 @@ noti send --to "smtp://user:pass@smtp.gmail.com:587?to=recipient@example.com" \
 noti send --to "webhook://example.com/api/notify" --message "Hello!"
 ```
 
-### Send via saved profile
+### 2. Send via saved profile
 
 ```bash
 # Save a profile
@@ -130,13 +160,13 @@ noti send --profile my-team --message "Hello from noti!"
 noti config test my-team
 ```
 
-### Send with direct provider flags
+### 3. Send with direct provider flags
 
 ```bash
 noti send --provider wecom --param key=<webhook_key> --message "Hello!"
 ```
 
-### JSON output (for agents)
+### 4. JSON output (for agents)
 
 ```bash
 noti --json send --to "wecom://<key>" --message "deploy complete"
@@ -152,13 +182,17 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 }
 ```
 
+<br/>
+
 ## 📡 Supported Providers (125)
 
 <details>
-<summary><strong>💬 Chat & IM (22)</strong></summary>
+<summary><strong>💬 Chat & IM — 22 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | WeCom | `wecom://` | WeChat Work group bot webhook |
 | Feishu | `feishu://` | Feishu / Lark group bot webhook |
 | DingTalk | `dingtalk://` | DingTalk group bot webhook |
@@ -185,10 +219,12 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 </details>
 
 <details>
-<summary><strong>🔔 Push Notifications (20)</strong></summary>
+<summary><strong>🔔 Push Notifications — 20 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | Pushover | `pushover://` | Pushover push notifications |
 | ntfy | `ntfy://` | ntfy.sh push notifications |
 | Gotify | `gotify://` | Gotify self-hosted push |
@@ -213,10 +249,12 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 </details>
 
 <details>
-<summary><strong>📱 SMS & Messaging (17)</strong></summary>
+<summary><strong>📱 SMS & Messaging — 17 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | Twilio | `twilio://` | Twilio SMS via REST API |
 | Vonage | `vonage://` | Vonage (Nexmo) SMS API |
 | D7 Networks | `d7sms://` | D7 Networks SMS gateway |
@@ -238,10 +276,12 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 </details>
 
 <details>
-<summary><strong>📧 Email (8)</strong></summary>
+<summary><strong>📧 Email — 8 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | Email | `smtp://` | Email via SMTP |
 | Mailgun | `mailgun://` | Mailgun transactional email API |
 | SendGrid | `sendgrid://` | SendGrid transactional email API v3 |
@@ -254,10 +294,12 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 </details>
 
 <details>
-<summary><strong>🌐 Webhooks (4)</strong></summary>
+<summary><strong>🌐 Webhooks — 4 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | Webhook | `webhook://` | Generic HTTP webhook |
 | JSON Webhook | `json://` | Generic JSON webhook |
 | Form Webhook | `form://` | Generic form webhook |
@@ -266,10 +308,12 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 </details>
 
 <details>
-<summary><strong>🚨 Incident & Automation (7)</strong></summary>
+<summary><strong>🚨 Incident & Automation — 7 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | IFTTT | `ifttt://` | IFTTT Maker Webhooks |
 | PagerDuty | `pagerduty://` | PagerDuty Events API v2 |
 | Opsgenie | `opsgenie://` | Atlassian Opsgenie alerts API v2 |
@@ -281,10 +325,12 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 </details>
 
 <details>
-<summary><strong>🏠 IoT, Media & More (47)</strong></summary>
+<summary><strong>🏠 IoT, Media & More — 47 providers</strong></summary>
+
+<br/>
 
 | Provider | Scheme | Description |
-|----------|--------|-------------|
+|:---------|:-------|:------------|
 | Bluesky | `bluesky://` | Bluesky social network (AT Protocol) |
 | Home Assistant | `hassio://` | Home Assistant notifications |
 | LaMetric | `lametric://` | LaMetric Time smart clock |
@@ -335,12 +381,14 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 
 </details>
 
-### List providers
+### Discover providers
 
 ```bash
 noti providers list          # List all available providers
 noti providers info wecom    # Show provider details and parameters
 ```
+
+<br/>
 
 ## ⚙️ Configuration
 
@@ -359,37 +407,51 @@ noti config test <name>
 noti config path
 ```
 
+<br/>
+
 ## 📊 Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | ✅ Success |
-| `1` | ❌ Send failure (network/API error) |
-| `2` | ⚠️ Parameter/configuration error |
+| Code | Meaning | Use Case |
+|:-----|:--------|:---------|
+| `0` | ✅ Success | Message sent successfully |
+| `1` | ❌ Send failure | Network error, API rejection |
+| `2` | ⚠️ Config error | Missing parameters, invalid profile |
+
+<br/>
 
 ## 🤖 Agent Integration
 
 noti is designed to be consumed by AI agents like [OpenClaw](https://github.com/nicepkg/openclaw). Key design principles:
 
 | Feature | Benefit |
-|---------|---------|
+|:--------|:--------|
 | **URL scheme** | One-line addressing — no config files needed |
 | **`--json` flag** | Structured output for reliable parsing |
 | **Exit codes** | Deterministic success/failure signals |
 | **Profile system** | Pre-configure once, use by name |
+| **`providers list`** | Self-discovery — agent can enumerate channels |
 
-### Example: OpenClaw integration
+### Example: OpenClaw / AI agent workflow
 
 ```bash
-# Agent discovers available providers
+# 1. Agent discovers available providers
 noti --json providers list
 
-# Agent inspects provider parameters
+# 2. Agent inspects provider parameters
 noti --json providers info wecom
 
-# Agent sends notification
+# 3. Agent sends notification
 noti --json send --to "wecom://key123" --message "Task completed"
+
+# 4. Agent checks result
+echo $?  # 0 = success, 1 = failure, 2 = config error
 ```
+
+### OpenClaw Skill
+
+noti ships with a built-in [OpenClaw](https://github.com/nicepkg/openclaw) skill definition in `skills/noti-openclaw/` — agents can auto-discover noti's capabilities.
+
+<br/>
 
 ## 🏗️ Architecture
 
@@ -398,17 +460,19 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary — argument parsing, output formatting
 │   ├── noti-core/       # Core abstractions — Provider trait, Registry, URL parsing
-│   └── noti-providers/  # 125 provider implementations
+│   └── noti-providers/  # 125 provider implementations (one file each)
 ├── scripts/             # Install scripts (bash, PowerShell) & utilities
 ├── skills/              # OpenClaw skill definitions
-└── justfile             # Task runner recipes
+└── justfile             # Task runner recipes (via vx)
 ```
+
+<br/>
 
 ## 🛠️ Development
 
 ### Prerequisites
 
-- [vx](https://github.com/loonghao/vx) — tool version manager
+- [vx](https://github.com/loonghao/vx) — universal tool version manager
 - Rust 1.85+ (stable, managed by vx)
 
 ### Commands
@@ -418,9 +482,12 @@ vx just fmt          # Format code
 vx just check        # Type check
 vx just lint         # Clippy lint
 vx just test         # Run tests
+vx just coverage     # Generate coverage report
 vx just ci           # Full CI pipeline (fmt + check + lint + test)
 vx just run -- send --help   # Run CLI in dev mode
 ```
+
+<br/>
 
 ## 🙏 Acknowledgements
 
@@ -430,6 +497,18 @@ noti is inspired by these excellent projects:
 - [Apprise](https://github.com/caronc/apprise) — Push notifications with a unified API
 - [OpenClaw](https://github.com/nicepkg/openclaw) — The AI agent framework noti was built for
 
+<br/>
+
 ## 📄 License
 
-MIT © [Hal Long](https://github.com/loonghao)
+[MIT](LICENSE) © [Hal Long](https://github.com/loonghao)
+
+---
+
+<div align="center">
+
+**[⬆ Back to top](#noti)**
+
+Made with ❤️ in Rust
+
+</div>
