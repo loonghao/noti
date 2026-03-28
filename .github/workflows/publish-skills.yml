@@ -32,14 +32,14 @@ jobs:
       - name: Install ClawHub CLI
         run: npm install -g clawhub
 
-      - name: Publish noti-openclaw skill
+      - name: Publish noti-cli skill
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
         run: |
-          clawhub publish skills/noti-openclaw \
-            --slug noti-openclaw \
-            --name "noti-openclaw" \
-            --version "$(grep '^version:' skills/noti-openclaw/SKILL.md | head -1 | sed 's/version: //')" \
+          clawhub publish skills/noti-cli \
+            --slug noti-cli \
+            --name "noti-cli" \
+            --version "$(grep '^version:' skills/noti-cli/SKILL.md | head -1 | sed 's/version: //')" \
             --tags latest \
             --source-repo "${{ github.repository }}" \
             --source-commit "${{ github.sha }}" \

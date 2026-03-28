@@ -449,7 +449,7 @@ echo $?  # 0 = 成功, 1 = 失败, 2 = 配置错误
 
 ### OpenClaw 技能
 
-noti 内置了 [OpenClaw](https://github.com/nicepkg/openclaw) 技能定义（位于 `skills/noti-openclaw/`）— Agent 可自动发现 noti 的能力。
+noti 内置了 [OpenClaw](https://github.com/nicepkg/openclaw) 技能定义（位于 `skills/noti-cli/`）— Agent 可自动发现 noti 的能力。
 
 <br/>
 

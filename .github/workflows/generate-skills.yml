@@ -37,9 +37,9 @@ jobs:
       - name: Setup vx
         uses: loonghao/vx@main
         with:
-          version: "0.8.12"
+          version: "0.8.13"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-key-prefix: vx-0.8.12-${{ runner.os }}-${{ runner.arch }}
+          cache-key-prefix: vx-0.8.13-${{ runner.os }}-${{ runner.arch }}
 
       - name: Setup tools (vx)
         run: vx setup

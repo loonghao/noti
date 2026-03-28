@@ -5,7 +5,7 @@ Usage:
     python scripts/package_openclaw_skill.py
 
 Output:
-    dist/skills/noti-openclaw.zip
+    dist/skills/noti-cli.zip
 """
 
 import shutil

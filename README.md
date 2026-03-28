@@ -449,7 +449,7 @@ echo $?  # 0 = success, 1 = failure, 2 = config error
 
 ### OpenClaw Skill
 
-noti ships with a built-in [OpenClaw](https://github.com/nicepkg/openclaw) skill definition in `skills/noti-openclaw/` — agents can auto-discover noti's capabilities.
+noti ships with a built-in [OpenClaw](https://github.com/nicepkg/openclaw) skill definition in `skills/noti-cli/` — agents can auto-discover noti's capabilities.
 
 <br/>
 
