@@ -42,3 +42,15 @@ run *args:
 
 package-skills:
     vx python scripts/package_openclaw_skill.py
+
+docs-dev:
+    cd docs && vx npm run docs:dev
+
+docs-build:
+    cd docs && vx npm run docs:build
+
+docs-preview:
+    cd docs && vx npm run docs:preview
+
+docs-install:
+    cd docs && vx npm install
