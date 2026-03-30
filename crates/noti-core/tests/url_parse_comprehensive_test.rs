@@ -182,8 +182,7 @@ fn test_slack_empty_fails() {
 #[rstest]
 fn test_smtp_full_url() {
     let parsed =
-        parse_notification_url("smtp://user:pass@smtp.gmail.com:587?to=dest@example.com")
-            .unwrap();
+        parse_notification_url("smtp://user:pass@smtp.gmail.com:587?to=dest@example.com").unwrap();
     assert_eq!(parsed.scheme, "smtp");
     assert_eq!(parsed.config.get("username"), Some("user"));
     assert_eq!(parsed.config.get("password"), Some("pass"));
@@ -392,10 +391,7 @@ fn test_zulip_full() {
     assert_eq!(parsed.scheme, "zulip");
     assert_eq!(parsed.config.get("bot_email"), Some("botemail"));
     assert_eq!(parsed.config.get("api_key"), Some("apikey"));
-    assert_eq!(
-        parsed.config.get("domain"),
-        Some("example.zulipchat.com")
-    );
+    assert_eq!(parsed.config.get("domain"), Some("example.zulipchat.com"));
     assert_eq!(parsed.config.get("stream"), Some("stream"));
     assert_eq!(parsed.config.get("topic"), Some("topic"));
 }
@@ -410,8 +406,7 @@ fn test_zulip_email_with_at_fails() {
 
 #[rstest]
 fn test_zulip_domain_only() {
-    let parsed =
-        parse_notification_url("zulip://bot:key@domain.com").unwrap();
+    let parsed = parse_notification_url("zulip://bot:key@domain.com").unwrap();
     assert_eq!(parsed.config.get("domain"), Some("domain.com"));
 }
 
@@ -426,8 +421,7 @@ fn test_zulip_failures() {
 
 #[rstest]
 fn test_teams_url() {
-    let parsed =
-        parse_notification_url("teams://outlook.office.com/webhook/xxx").unwrap();
+    let parsed = parse_notification_url("teams://outlook.office.com/webhook/xxx").unwrap();
     assert_eq!(parsed.scheme, "teams");
     assert_eq!(
         parsed.config.get("webhook_url"),
@@ -613,10 +607,20 @@ fn test_misskey_missing_at() {
 // ======================== Webhooks (json, form, xml, webhook) ========================
 
 #[rstest]
-#[case("json://example.com/api/v1", "json", "url", "https://example.com/api/v1")]
+#[case(
+    "json://example.com/api/v1",
+    "json",
+    "url",
+    "https://example.com/api/v1"
+)]
 #[case("form://example.com/api", "form", "url", "https://example.com/api")]
 #[case("xml://example.com/api", "xml", "url", "https://example.com/api")]
-#[case("webhook://example.com/hook", "webhook", "url", "https://example.com/hook")]
+#[case(
+    "webhook://example.com/hook",
+    "webhook",
+    "url",
+    "https://example.com/hook"
+)]
 fn test_webhook_variants(
     #[case] url: &str,
     #[case] expected_scheme: &str,
@@ -632,20 +636,14 @@ fn test_webhook_variants(
 fn test_http_passthrough() {
     let parsed = parse_notification_url("https://example.com/api").unwrap();
     assert_eq!(parsed.scheme, "webhook");
-    assert_eq!(
-        parsed.config.get("url"),
-        Some("https://example.com/api")
-    );
+    assert_eq!(parsed.config.get("url"), Some("https://example.com/api"));
 }
 
 #[rstest]
 fn test_http_passthrough_http() {
     let parsed = parse_notification_url("http://example.com/api").unwrap();
     assert_eq!(parsed.scheme, "webhook");
-    assert_eq!(
-        parsed.config.get("url"),
-        Some("http://example.com/api")
-    );
+    assert_eq!(parsed.config.get("url"), Some("http://example.com/api"));
 }
 
 #[rstest]
@@ -697,16 +695,12 @@ fn test_signal_missing_to() {
 #[rstest]
 fn test_sns() {
     let parsed =
-        parse_notification_url("sns://accesskey:secretkey@us-east-1/arn:aws:sns:topic")
-            .unwrap();
+        parse_notification_url("sns://accesskey:secretkey@us-east-1/arn:aws:sns:topic").unwrap();
     assert_eq!(parsed.scheme, "sns");
     assert_eq!(parsed.config.get("access_key"), Some("accesskey"));
     assert_eq!(parsed.config.get("secret_key"), Some("secretkey"));
     assert_eq!(parsed.config.get("region"), Some("us-east-1"));
-    assert_eq!(
-        parsed.config.get("topic_arn"),
-        Some("arn:aws:sns:topic")
-    );
+    assert_eq!(parsed.config.get("topic_arn"), Some("arn:aws:sns:topic"));
 }
 
 #[rstest]
@@ -881,8 +875,7 @@ fn test_threema_failures() {
 
 #[rstest]
 fn test_nextcloud() {
-    let parsed =
-        parse_notification_url("ncloud://user:pass@host.com/targetuser").unwrap();
+    let parsed = parse_notification_url("ncloud://user:pass@host.com/targetuser").unwrap();
     assert_eq!(parsed.scheme, "ncloud");
     assert_eq!(parsed.config.get("user"), Some("user"));
     assert_eq!(parsed.config.get("password"), Some("pass"));
@@ -933,8 +926,7 @@ fn test_msgbird() {
 
 #[rstest]
 fn test_reddit() {
-    let parsed =
-        parse_notification_url("reddit://cid:csecret@user:password/subreddit").unwrap();
+    let parsed = parse_notification_url("reddit://cid:csecret@user:password/subreddit").unwrap();
     assert_eq!(parsed.scheme, "reddit");
     assert_eq!(parsed.config.get("client_id"), Some("cid"));
     assert_eq!(parsed.config.get("client_secret"), Some("csecret"));
@@ -956,7 +948,13 @@ fn test_reddit_failures() {
 fn test_twist() {
     let parsed = parse_notification_url("twist://install_id=123&post_data_key=abc").unwrap();
     assert_eq!(parsed.scheme, "twist");
-    assert!(parsed.config.get("webhook_url").unwrap().contains("twist.com"));
+    assert!(
+        parsed
+            .config
+            .get("webhook_url")
+            .unwrap()
+            .contains("twist.com")
+    );
 }
 
 #[rstest]
@@ -977,10 +975,7 @@ fn test_chanify_simple() {
 fn test_chanify_with_host() {
     let parsed = parse_notification_url("chanify://mytoken@custom.host.com").unwrap();
     assert_eq!(parsed.config.get("token"), Some("mytoken"));
-    assert_eq!(
-        parsed.config.get("server"),
-        Some("https://custom.host.com")
-    );
+    assert_eq!(parsed.config.get("server"), Some("https://custom.host.com"));
 }
 
 // ======================== Spike ========================
@@ -1080,8 +1075,7 @@ fn test_kodi_empty_fails() {
 
 #[rstest]
 fn test_jira() {
-    let parsed =
-        parse_notification_url("jira://user:apitoken@jira.example.com/PROJ-123").unwrap();
+    let parsed = parse_notification_url("jira://user:apitoken@jira.example.com/PROJ-123").unwrap();
     assert_eq!(parsed.scheme, "jira");
     assert_eq!(parsed.config.get("user"), Some("user"));
     assert_eq!(parsed.config.get("api_token"), Some("apitoken"));
@@ -1100,8 +1094,7 @@ fn test_jira_failures() {
 
 #[rstest]
 fn test_sendpulse() {
-    let parsed =
-        parse_notification_url("sendpulse://cid:csecret@from@ex.com/to@ex.com").unwrap();
+    let parsed = parse_notification_url("sendpulse://cid:csecret@from@ex.com/to@ex.com").unwrap();
     assert_eq!(parsed.scheme, "sendpulse");
     assert_eq!(parsed.config.get("client_id"), Some("cid"));
     assert_eq!(parsed.config.get("client_secret"), Some("csecret"));
@@ -1539,8 +1532,7 @@ fn test_napi_too_few_parts() {
 
 #[rstest]
 fn test_query_params_preserved() {
-    let parsed =
-        parse_notification_url("feishu://hookid?secret=mysecret&extra=value").unwrap();
+    let parsed = parse_notification_url("feishu://hookid?secret=mysecret&extra=value").unwrap();
     assert_eq!(parsed.config.get("hook_id"), Some("hookid"));
     assert_eq!(parsed.config.get("secret"), Some("mysecret"));
     assert_eq!(parsed.config.get("extra"), Some("value"));
@@ -1550,18 +1542,12 @@ fn test_query_params_preserved() {
 fn test_ntfy_with_server_query() {
     let parsed = parse_notification_url("ntfy://topic?server=https://ntfy.sh").unwrap();
     assert_eq!(parsed.config.get("topic"), Some("topic"));
-    assert_eq!(
-        parsed.config.get("server"),
-        Some("https://ntfy.sh")
-    );
+    assert_eq!(parsed.config.get("server"), Some("https://ntfy.sh"));
 }
 
 #[rstest]
 fn test_bark_with_server_query() {
     let parsed = parse_notification_url("bark://key?server=https://bark.custom.com").unwrap();
     assert_eq!(parsed.config.get("device_key"), Some("key"));
-    assert_eq!(
-        parsed.config.get("server"),
-        Some("https://bark.custom.com")
-    );
+    assert_eq!(parsed.config.get("server"), Some("https://bark.custom.com"));
 }

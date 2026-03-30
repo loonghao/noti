@@ -117,7 +117,9 @@ impl NotifyProvider for MatrixProvider {
             let content_uri = upload_raw
                 .get("content_uri")
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| NotiError::provider("matrix", "no content_uri in upload response"))?;
+                .ok_or_else(|| {
+                    NotiError::provider("matrix", "no content_uri in upload response")
+                })?;
 
             // Send event referencing the uploaded media
             let msgtype = match attachment.kind {

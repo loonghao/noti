@@ -21,8 +21,7 @@ impl WebhookProvider {
         method: &str,
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
-        let mut form = reqwest::multipart::Form::new()
-            .text("message", message.text.clone());
+        let mut form = reqwest::multipart::Form::new().text("message", message.text.clone());
 
         if let Some(ref title) = message.title {
             form = form.text("title", title.clone());

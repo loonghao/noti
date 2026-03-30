@@ -111,10 +111,7 @@ fn test_message_builder_chain() {
     assert_eq!(msg.text, "hello");
     assert_eq!(msg.title, Some("Title".to_string()));
     assert_eq!(msg.format, MessageFormat::Markdown);
-    assert_eq!(
-        msg.extra.get("priority"),
-        Some(&serde_json::json!("high"))
-    );
+    assert_eq!(msg.extra.get("priority"), Some(&serde_json::json!("high")));
 }
 
 #[rstest]
@@ -260,7 +257,9 @@ fn test_provider_config_set_and_get() {
 
 #[rstest]
 fn test_provider_config_set_overwrites() {
-    let config = ProviderConfig::new().set("key", "first").set("key", "second");
+    let config = ProviderConfig::new()
+        .set("key", "first")
+        .set("key", "second");
     assert_eq!(config.get("key"), Some("second"));
 }
 
@@ -289,7 +288,9 @@ fn test_provider_config_require_failure() {
 
 #[rstest]
 fn test_provider_config_serde_roundtrip() {
-    let config = ProviderConfig::new().set("key", "value").set("token", "abc");
+    let config = ProviderConfig::new()
+        .set("key", "value")
+        .set("token", "abc");
     let json = serde_json::to_string(&config).unwrap();
     let parsed: ProviderConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.get("key"), Some("value"));

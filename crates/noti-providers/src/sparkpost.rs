@@ -105,10 +105,7 @@ impl NotifyProvider for SparkPostProvider {
             let mut attachments_json = Vec::new();
             for attachment in &message.attachments {
                 let data = attachment.read_bytes().await?;
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &data,
-                );
+                let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
                 attachments_json.push(json!({
                     "name": attachment.effective_file_name(),
                     "type": attachment.effective_mime(),

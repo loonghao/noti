@@ -109,9 +109,7 @@ impl NotifyProvider for ClickSendProvider {
             let raw: serde_json::Value = resp
                 .json()
                 .await
-                .map_err(|e| {
-                    NotiError::Network(format!("failed to parse response: {e}"))
-                })?;
+                .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
 
             let http_code = raw.get("http_code").and_then(|v| v.as_u64()).unwrap_or(0);
             if http_code == 200 {

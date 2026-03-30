@@ -90,10 +90,11 @@ impl NotifyProvider for ThreemaProvider {
                 .map_err(|e| NotiError::Network(format!("failed to read blob response: {e}")))?;
 
             if !(200..300).contains(&(blob_status as usize)) {
-                return Ok(
-                    SendResponse::failure("threema", format!("blob upload failed: {blob_id}"))
-                        .with_status_code(blob_status),
-                );
+                return Ok(SendResponse::failure(
+                    "threema",
+                    format!("blob upload failed: {blob_id}"),
+                )
+                .with_status_code(blob_status));
             }
 
             // Send file message referencing the blob

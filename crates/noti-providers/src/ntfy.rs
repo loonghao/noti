@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use noti_core::{
-    Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
-};
+use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
 
@@ -87,23 +85,16 @@ impl NotifyProvider for NtfyProvider {
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
         let status = resp.status().as_u16();
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .unwrap_or(json!({ "status": status }));
+        let raw: serde_json::Value = resp.json().await.unwrap_or(json!({ "status": status }));
 
         if status == 200 {
-            Ok(
-                SendResponse::success("ntfy", "message sent successfully")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            Ok(SendResponse::success("ntfy", "message sent successfully")
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
-            Ok(
-                SendResponse::failure("ntfy", format!("HTTP {status}"))
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            Ok(SendResponse::failure("ntfy", format!("HTTP {status}"))
+                .with_status_code(status)
+                .with_raw_response(raw))
         }
     }
 }
@@ -149,23 +140,16 @@ impl NtfyProvider {
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
         let status = resp.status().as_u16();
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .unwrap_or(json!({ "status": status }));
+        let raw: serde_json::Value = resp.json().await.unwrap_or(json!({ "status": status }));
 
         if status == 200 {
-            Ok(
-                SendResponse::success("ntfy", "file sent successfully")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            Ok(SendResponse::success("ntfy", "file sent successfully")
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
-            Ok(
-                SendResponse::failure("ntfy", format!("HTTP {status}"))
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            Ok(SendResponse::failure("ntfy", format!("HTTP {status}"))
+                .with_status_code(status)
+                .with_raw_response(raw))
         }
     }
 }

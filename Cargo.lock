@@ -1043,6 +1043,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
@@ -1066,6 +1067,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "url",
  "wiremock",
 ]
 

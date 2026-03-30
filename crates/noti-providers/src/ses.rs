@@ -173,16 +173,10 @@ impl NotifyProvider for SesProvider {
             ];
 
             // Add destinations
-            params.push((
-                "Destinations.member.1",
-                to.to_string(),
-            ));
+            params.push(("Destinations.member.1", to.to_string()));
             if let Some(cc_addrs) = cc {
                 for (i, addr) in cc_addrs.split(',').enumerate() {
-                    params.push((
-                        "Destinations.member.1",
-                        addr.trim().to_string(),
-                    ));
+                    params.push(("Destinations.member.1", addr.trim().to_string()));
                     let _ = i;
                 }
             }
@@ -228,10 +222,7 @@ impl NotifyProvider for SesProvider {
 
             if let Some(cc_addrs) = cc {
                 for (i, addr) in cc_addrs.split(',').enumerate() {
-                    params.push((
-                        "Destination.CcAddresses.member.1",
-                        addr.trim().to_string(),
-                    ));
+                    params.push(("Destination.CcAddresses.member.1", addr.trim().to_string()));
                     let _ = i;
                 }
             }

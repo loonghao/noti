@@ -68,8 +68,7 @@ impl NotifyProvider for FortySixElksProvider {
         let from = config.require("from", "46elks")?;
         let to = config.require("to", "46elks")?;
 
-        let has_media = message.has_attachments()
-            || config.get("media_url").is_some();
+        let has_media = message.has_attachments() || config.get("media_url").is_some();
 
         // Use MMS endpoint if we have attachments
         let endpoint = if has_media {
@@ -90,9 +89,11 @@ impl NotifyProvider for FortySixElksProvider {
 
         // Add MMS image
         if message.has_attachments() {
-            if let Some(attachment) = message.attachments.iter().find(|a| {
-                matches!(a.kind, AttachmentKind::Image)
-            }) {
+            if let Some(attachment) = message
+                .attachments
+                .iter()
+                .find(|a| matches!(a.kind, AttachmentKind::Image))
+            {
                 let data = attachment.read_bytes().await?;
                 let mime = attachment.effective_mime();
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&data);

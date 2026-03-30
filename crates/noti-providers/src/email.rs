@@ -62,11 +62,7 @@ impl NotifyProvider for EmailProvider {
         let password = config.require("password", "email")?;
         let to = config.require("to", "email")?;
         let from = config.get("from").unwrap_or(username);
-        let port: u16 = config
-            .get("port")
-            .unwrap_or("587")
-            .parse()
-            .unwrap_or(587);
+        let port: u16 = config.get("port").unwrap_or("587").parse().unwrap_or(587);
         let subject = message.title.as_deref().unwrap_or("noti notification");
 
         let mut builder = LettreMessage::builder()
@@ -82,10 +78,9 @@ impl NotifyProvider for EmailProvider {
         // CC
         if let Some(cc) = config.get("cc") {
             for addr in cc.split(',').map(|s| s.trim()) {
-                builder = builder.cc(
-                    addr.parse()
-                        .map_err(|e| NotiError::Validation(format!("invalid cc address: {e}")))?,
-                );
+                builder = builder.cc(addr
+                    .parse()
+                    .map_err(|e| NotiError::Validation(format!("invalid cc address: {e}")))?);
             }
         }
         // BCC
@@ -101,16 +96,12 @@ impl NotifyProvider for EmailProvider {
         // Build body with or without attachments
         let email = if message.has_attachments() {
             let body_part = match message.format {
-                MessageFormat::Html => {
-                    SinglePart::builder()
-                        .content_type(ContentType::TEXT_HTML)
-                        .body(message.text.clone())
-                }
-                _ => {
-                    SinglePart::builder()
-                        .content_type(ContentType::TEXT_PLAIN)
-                        .body(message.text.clone())
-                }
+                MessageFormat::Html => SinglePart::builder()
+                    .content_type(ContentType::TEXT_HTML)
+                    .body(message.text.clone()),
+                _ => SinglePart::builder()
+                    .content_type(ContentType::TEXT_PLAIN)
+                    .body(message.text.clone()),
             };
 
             let mut multipart = MultiPart::mixed().singlepart(body_part);
@@ -119,8 +110,7 @@ impl NotifyProvider for EmailProvider {
                 let file_name = attachment.effective_file_name();
                 let content_type = ContentType::parse(&attachment.effective_mime())
                     .unwrap_or(ContentType::TEXT_PLAIN);
-                let lettre_attachment =
-                    LettreAttachment::new(file_name).body(data, content_type);
+                let lettre_attachment = LettreAttachment::new(file_name).body(data, content_type);
                 multipart = multipart.singlepart(lettre_attachment);
             }
 
@@ -132,15 +122,11 @@ impl NotifyProvider for EmailProvider {
                 MessageFormat::Html => builder
                     .header(ContentType::TEXT_HTML)
                     .body(message.text.clone())
-                    .map_err(|e| {
-                        NotiError::provider("email", format!("build email error: {e}"))
-                    })?,
+                    .map_err(|e| NotiError::provider("email", format!("build email error: {e}")))?,
                 _ => builder
                     .header(ContentType::TEXT_PLAIN)
                     .body(message.text.clone())
-                    .map_err(|e| {
-                        NotiError::provider("email", format!("build email error: {e}"))
-                    })?,
+                    .map_err(|e| NotiError::provider("email", format!("build email error: {e}")))?,
             }
         };
 
@@ -154,10 +140,7 @@ impl NotifyProvider for EmailProvider {
 
         match mailer.send(email).await {
             Ok(_) => Ok(SendResponse::success("email", "email sent successfully")),
-            Err(e) => Ok(SendResponse::failure(
-                "email",
-                format!("SMTP error: {e}"),
-            )),
+            Err(e) => Ok(SendResponse::failure("email", format!("SMTP error: {e}"))),
         }
     }
 }

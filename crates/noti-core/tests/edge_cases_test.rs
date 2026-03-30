@@ -16,7 +16,10 @@ fn test_noti_error_is_debug() {
 #[rstest]
 fn test_noti_error_provider_with_string_types() {
     let err = NotiError::provider(String::from("test_provider"), String::from("test_message"));
-    assert_eq!(err.to_string(), "provider error (test_provider): test_message");
+    assert_eq!(
+        err.to_string(),
+        "provider error (test_provider): test_message"
+    );
 }
 
 #[rstest]
@@ -77,8 +80,7 @@ fn test_message_with_extra_overwrite() {
 
 #[rstest]
 fn test_message_with_extra_complex_value() {
-    let msg = Message::text("test")
-        .with_extra("nested", serde_json::json!({"a": [1, 2, 3]}));
+    let msg = Message::text("test").with_extra("nested", serde_json::json!({"a": [1, 2, 3]}));
     let val = msg.extra.get("nested").unwrap();
     assert!(val.is_object());
 }
@@ -93,13 +95,20 @@ fn test_message_serde_with_extra() {
     assert!(json.contains("priority"));
 
     let parsed: Message = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.extra.get("priority"), Some(&serde_json::json!("high")));
+    assert_eq!(
+        parsed.extra.get("priority"),
+        Some(&serde_json::json!("high"))
+    );
     assert_eq!(parsed.extra.get("count"), Some(&serde_json::json!(42)));
 }
 
 #[rstest]
 fn test_message_serde_with_format_roundtrip() {
-    for format in [MessageFormat::Text, MessageFormat::Markdown, MessageFormat::Html] {
+    for format in [
+        MessageFormat::Text,
+        MessageFormat::Markdown,
+        MessageFormat::Html,
+    ] {
         let msg = Message::text("test").with_format(format.clone());
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: Message = serde_json::from_str(&json).unwrap();
@@ -178,8 +187,14 @@ fn test_provider_config_require_error_message() {
     let config = ProviderConfig::new();
     let err = config.require("api_key", "slack").unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("api_key"), "error should mention the missing key");
-    assert!(msg.contains("slack"), "error should mention the provider name");
+    assert!(
+        msg.contains("api_key"),
+        "error should mention the missing key"
+    );
+    assert!(
+        msg.contains("slack"),
+        "error should mention the provider name"
+    );
 }
 
 #[rstest]
@@ -272,7 +287,10 @@ fn test_profile_clone() {
     };
     let cloned = profile.clone();
     assert_eq!(cloned.provider, profile.provider);
-    assert_eq!(cloned.config.get("webhook_url"), profile.config.get("webhook_url"));
+    assert_eq!(
+        cloned.config.get("webhook_url"),
+        profile.config.get("webhook_url")
+    );
 }
 
 // ======================== AppConfig additional tests ========================

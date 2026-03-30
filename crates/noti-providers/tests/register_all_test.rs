@@ -17,7 +17,10 @@ fn test_all_providers_have_names() {
     noti_providers::register_all_providers(&mut registry);
 
     for provider in registry.all_providers() {
-        assert!(!provider.name().is_empty(), "provider name should not be empty");
+        assert!(
+            !provider.name().is_empty(),
+            "provider name should not be empty"
+        );
     }
 }
 

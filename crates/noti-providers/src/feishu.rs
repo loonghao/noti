@@ -62,10 +62,7 @@ impl NotifyProvider for FeishuProvider {
         // If there's an image attachment, send as image message
         if let Some(img) = message.first_image() {
             let data = img.read_bytes().await?;
-            let b64 = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &data,
-            );
+            let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
 
             let body = json!({
                 "msg_type": "image",

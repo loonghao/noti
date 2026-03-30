@@ -95,8 +95,7 @@ impl NotifyProvider for PlivoProvider {
                 ) {
                     let data = attachment.read_bytes().await?;
                     let mime = attachment.effective_mime();
-                    let b64 =
-                        base64::engine::general_purpose::STANDARD.encode(&data);
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                     media_urls.push(format!("data:{mime};base64,{b64}"));
                 }
             }
