@@ -9,6 +9,8 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Health check
         .route("/health", get(handlers::health::health_check))
+        // Metrics endpoint
+        .route("/api/v1/metrics", get(handlers::metrics::get_metrics))
         // Synchronous notification endpoints
         .route("/api/v1/send", post(handlers::send::send_notification))
         .route("/api/v1/send/batch", post(handlers::send::send_batch))

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use noti_core::{ProviderRegistry, StatusTracker, TemplateRegistry};
 use noti_queue::{InMemoryQueue, QueueBackend, WorkerConfig, WorkerHandle, WorkerPool};
@@ -12,6 +13,7 @@ pub struct AppState {
     pub template_registry: Arc<RwLock<TemplateRegistry>>,
     pub queue: Arc<dyn QueueBackend>,
     pub task_notify: Arc<Notify>,
+    pub started_at: SystemTime,
 }
 
 impl AppState {
@@ -25,6 +27,7 @@ impl AppState {
             template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
             queue,
             task_notify,
+            started_at: SystemTime::now(),
         }
     }
 
