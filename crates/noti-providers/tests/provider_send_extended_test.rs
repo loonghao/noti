@@ -454,7 +454,7 @@ mod homeassistant_tests {
         let prov = HomeAssistantProvider::new(client());
         let c = ProviderConfig::new()
             .set("access_token", "tok123")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov
             .send(&Message::text("test").with_title("Alert"), &c)
@@ -478,7 +478,7 @@ mod homeassistant_tests {
         let prov = HomeAssistantProvider::new(client());
         let c = ProviderConfig::new()
             .set("access_token", "bad")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
@@ -502,7 +502,7 @@ mod emby_tests {
         let prov = EmbyProvider::new(client());
         let c = ProviderConfig::new()
             .set("api_key", "key123")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov
             .send(&Message::text("test").with_title("T"), &c)
@@ -523,7 +523,7 @@ mod emby_tests {
         let prov = EmbyProvider::new(client());
         let c = ProviderConfig::new()
             .set("api_key", "key")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http")
             .set("user_id", "u123");
         let r = prov.send(&Message::text("hi"), &c).await.unwrap();
@@ -541,7 +541,7 @@ mod emby_tests {
         let prov = EmbyProvider::new(client());
         let c = ProviderConfig::new()
             .set("api_key", "bad")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
@@ -564,7 +564,7 @@ mod jellyfin_tests {
         let prov = JellyfinProvider::new(client());
         let c = ProviderConfig::new()
             .set("api_key", "k")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov.send(&Message::text("test"), &c).await.unwrap();
         assert!(r.success);
@@ -582,7 +582,7 @@ mod jellyfin_tests {
         let prov = JellyfinProvider::new(client());
         let c = ProviderConfig::new()
             .set("api_key", "k")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http")
             .set("user_id", "uid");
         let r = prov
@@ -603,7 +603,7 @@ mod jellyfin_tests {
         let prov = JellyfinProvider::new(client());
         let c = ProviderConfig::new()
             .set("api_key", "k")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
@@ -625,7 +625,7 @@ mod chanify_tests {
         let prov = ChanifyProvider::new(client());
         let c = ProviderConfig::new()
             .set("token", "tok")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov
             .send(&Message::text("hi").with_title("T"), &c)
             .await
@@ -644,7 +644,7 @@ mod chanify_tests {
         let prov = ChanifyProvider::new(client());
         let c = ProviderConfig::new()
             .set("token", "tok")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov.send(&Message::text("no title"), &c).await.unwrap();
         assert!(r.success);
     }
@@ -659,7 +659,7 @@ mod chanify_tests {
         let prov = ChanifyProvider::new(client());
         let c = ProviderConfig::new()
             .set("token", "tok")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
     }
@@ -683,7 +683,7 @@ mod pushdeer_tests {
         let prov = PushDeerProvider::new(client());
         let c = ProviderConfig::new()
             .set("push_key", "PDU123")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov
             .send(
                 &Message::text("hi")
@@ -710,7 +710,7 @@ mod pushdeer_tests {
         let prov = PushDeerProvider::new(client());
         let c = ProviderConfig::new()
             .set("push_key", "bad")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
     }
@@ -731,7 +731,7 @@ mod pushjet_tests {
         let prov = PushjetProvider::new(client());
         let c = ProviderConfig::new()
             .set("secret", "sec")
-            .set("server", &ms.uri())
+            .set("server", ms.uri())
             .set("level", "5")
             .set("link", "https://x.com");
         let r = prov
@@ -752,7 +752,7 @@ mod pushjet_tests {
         let prov = PushjetProvider::new(client());
         let c = ProviderConfig::new()
             .set("secret", "bad")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
     }
@@ -774,7 +774,7 @@ mod signal_tests {
         let c = ProviderConfig::new()
             .set("from", "+1234")
             .set("to", "+5678")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov
             .send(&Message::text("hi").with_title("Urgent"), &c)
             .await
@@ -794,7 +794,7 @@ mod signal_tests {
         let c = ProviderConfig::new()
             .set("from", "+1")
             .set("to", "+2")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov.send(&Message::text("plain"), &c).await.unwrap();
         assert!(r.success);
     }
@@ -813,7 +813,7 @@ mod signal_tests {
         let c = ProviderConfig::new()
             .set("from", "+1")
             .set("to", "+2")
-            .set("server", &ms.uri());
+            .set("server", ms.uri());
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
     }
@@ -834,7 +834,7 @@ mod jira_tests {
         let (h, p) = parse_mock(&ms.uri());
         let prov = JiraProvider::new(client());
         let c = ProviderConfig::new()
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("user", "u@e.com")
             .set("api_token", "tok")
             .set("issue_key", "PROJ-1")
@@ -857,7 +857,7 @@ mod jira_tests {
         let (h, p) = parse_mock(&ms.uri());
         let prov = JiraProvider::new(client());
         let c = ProviderConfig::new()
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("user", "u")
             .set("api_token", "t")
             .set("issue_key", "X-0")
@@ -887,7 +887,7 @@ mod nextcloud_tests {
         let c = ProviderConfig::new()
             .set("user", "admin")
             .set("password", "pass")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http")
             .set("target_user", "john");
         let r = prov
@@ -913,7 +913,7 @@ mod nextcloud_tests {
         let c = ProviderConfig::new()
             .set("user", "u")
             .set("password", "p")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("scheme", "http");
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
@@ -939,7 +939,7 @@ mod nctalk_tests {
         let c = ProviderConfig::new()
             .set("user", "u")
             .set("password", "p")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("room_token", "r1")
             .set("scheme", "http");
         let r = prov.send(&Message::text("hi"), &c).await.unwrap();
@@ -963,7 +963,7 @@ mod nctalk_tests {
         let c = ProviderConfig::new()
             .set("user", "u")
             .set("password", "p")
-            .set("host", &format!("{h}:{p}"))
+            .set("host", format!("{h}:{p}"))
             .set("room_token", "bad")
             .set("scheme", "http");
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
@@ -985,7 +985,7 @@ mod apprise_tests {
             .await;
         let prov = AppriseProvider::new(client());
         let c = ProviderConfig::new()
-            .set("host", &ms.uri())
+            .set("host", ms.uri())
             .set("config_key", "my-config")
             .set("tag", "all");
         let r = prov
@@ -1010,7 +1010,7 @@ mod apprise_tests {
             .await;
         let prov = AppriseProvider::new(client());
         let c = ProviderConfig::new()
-            .set("host", &ms.uri())
+            .set("host", ms.uri())
             .set("urls", "slack://tok");
         let r = prov
             .send(&Message::text("hi").with_format(MessageFormat::Html), &c)
@@ -1028,7 +1028,7 @@ mod apprise_tests {
             .await;
         let prov = AppriseProvider::new(client());
         let c = ProviderConfig::new()
-            .set("host", &ms.uri())
+            .set("host", ms.uri())
             .set("config_key", "k");
         let r = prov.send(&Message::text("x"), &c).await.unwrap();
         assert!(!r.success);
