@@ -77,6 +77,10 @@ pub struct NotificationTask {
     /// Optional metadata for tracking/correlation.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
+
+    /// Optional webhook URL to call when the task reaches a terminal state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
 }
 
 impl NotificationTask {
@@ -99,6 +103,7 @@ impl NotificationTask {
             created_at: now,
             updated_at: now,
             metadata: HashMap::new(),
+            callback_url: None,
         }
     }
 
@@ -111,6 +116,12 @@ impl NotificationTask {
     /// Add metadata key-value pair.
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set a callback URL to be invoked when the task reaches a terminal state.
+    pub fn with_callback_url(mut self, url: impl Into<String>) -> Self {
+        self.callback_url = Some(url.into());
         self
     }
 

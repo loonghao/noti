@@ -1364,6 +1364,7 @@ version = "0.1.3"
 dependencies = [
  "async-trait",
  "noti-core",
+ "reqwest",
  "rstest",
  "serde",
  "serde_json",

@@ -37,6 +37,8 @@ pub struct AsyncSendRequest {
     /// Optional metadata for tracking/correlation.
     #[serde(default)]
     pub metadata: HashMap<String, String>,
+    /// Optional webhook URL to call when the task completes or fails.
+    pub callback_url: Option<String>,
 }
 
 /// Retry configuration for the API.
@@ -134,6 +136,8 @@ pub struct BatchAsyncItem {
     /// Optional metadata for tracking/correlation.
     #[serde(default)]
     pub metadata: HashMap<String, String>,
+    /// Optional webhook URL to call when the task completes or fails.
+    pub callback_url: Option<String>,
 }
 
 /// Request body for batch async notification enqueue.
@@ -286,6 +290,10 @@ pub async fn send_async(
     let mut task = NotificationTask::new(&req.provider, config, msg)
         .with_retry_policy(policy);
 
+    if let Some(url) = &req.callback_url {
+        task = task.with_callback_url(url);
+    }
+
     for (k, v) in &req.metadata {
         task = task.with_metadata(k, v);
     }
@@ -355,6 +363,10 @@ pub async fn send_async_batch(
 
         let mut task = NotificationTask::new(&item.provider, config, msg)
             .with_retry_policy(policy);
+
+        if let Some(url) = &item.callback_url {
+            task = task.with_callback_url(url);
+        }
 
         for (k, v) in &item.metadata {
             task = task.with_metadata(k, v);

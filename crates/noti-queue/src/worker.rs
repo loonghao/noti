@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 
 use noti_core::ProviderRegistry;
 
+use crate::callback::fire_callback;
 use crate::queue::QueueBackend;
 
 /// Configuration for the worker pool.
@@ -114,6 +115,7 @@ impl WorkerPool {
                         Ok(Some(task)) => {
                             let task_id = task.id.clone();
                             let provider_name = task.provider.clone();
+                            let has_callback = task.callback_url.is_some();
 
                             tracing::debug!(
                                 worker_id,
@@ -131,6 +133,12 @@ impl WorkerPool {
                                         format!("provider '{}' not found", provider_name);
                                     tracing::error!(worker_id, task_id = %task_id, %err);
                                     let _ = queue.nack(&task_id, &err).await;
+                                    // Fire callback if task reached terminal state
+                                    if has_callback {
+                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
+                                            fire_callback(&updated).await;
+                                        }
+                                    }
                                     continue;
                                 }
                             };
@@ -145,6 +153,12 @@ impl WorkerPool {
                                         "task completed successfully"
                                     );
                                     let _ = queue.ack(&task_id).await;
+                                    // Fire callback on success
+                                    if has_callback {
+                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
+                                            fire_callback(&updated).await;
+                                        }
+                                    }
                                 }
                                 Ok(resp) => {
                                     tracing::warn!(
@@ -155,6 +169,12 @@ impl WorkerPool {
                                         "provider returned failure response"
                                     );
                                     let _ = queue.nack(&task_id, &resp.message).await;
+                                    // Fire callback only if task reached terminal state (not retrying)
+                                    if has_callback {
+                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
+                                            fire_callback(&updated).await;
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::warn!(
@@ -165,6 +185,12 @@ impl WorkerPool {
                                         "task send failed"
                                     );
                                     let _ = queue.nack(&task_id, &e.to_string()).await;
+                                    // Fire callback only if task reached terminal state (not retrying)
+                                    if has_callback {
+                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
+                                            fire_callback(&updated).await;
+                                        }
+                                    }
                                 }
                             }
                         }
