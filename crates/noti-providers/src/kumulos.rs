@@ -49,7 +49,7 @@ impl NotifyProvider for KumulosProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(

@@ -58,7 +58,7 @@ impl NotifyProvider for HomeAssistantProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(

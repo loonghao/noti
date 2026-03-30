@@ -47,7 +47,7 @@ impl NotifyProvider for FlockProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(

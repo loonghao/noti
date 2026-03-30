@@ -51,7 +51,7 @@ impl NotifyProvider for KodiProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(

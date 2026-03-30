@@ -46,7 +46,7 @@ impl NotifyProvider for TwistProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(
