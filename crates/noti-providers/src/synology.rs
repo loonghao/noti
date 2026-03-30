@@ -1,11 +1,14 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
 /// Synology Chat incoming webhook provider.
 ///
-/// Supports file attachments via the `file_url` field in the payload.
-/// Images can be displayed inline in Synology Chat.
+/// Supports image attachments embedded as base64 data URIs in the message text.
+/// Non-image attachments are encoded as base64 and included as data references.
 ///
 /// API reference: https://kb.synology.com/en-global/DSM/tutorial/How_to_configure_webhooks_in_Synology_Chat
 pub struct SynologyProvider {
@@ -69,14 +72,24 @@ impl NotifyProvider for SynologyProvider {
         let mut payload_obj = serde_json::json!({"text": message.text});
 
         if message.has_attachments() {
-            // Synology Chat supports file_url for displaying files/images
-            // Append file info to text for non-URL-based attachments
             let mut text = message.text.clone();
             for attachment in &message.attachments {
-                text.push_str(&format!(
-                    "\n📎 Attachment: {}",
-                    attachment.effective_file_name()
-                ));
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    text.push_str(&format!(
+                        "\n\n![{file_name}](data:{mime};base64,{b64})"
+                    ));
+                } else {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    text.push_str(&format!(
+                        "\n📎 {file_name} (data:{mime};base64,{b64})"
+                    ));
+                }
             }
             payload_obj["text"] = serde_json::json!(text);
         }
