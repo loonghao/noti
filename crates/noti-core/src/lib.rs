@@ -6,6 +6,7 @@ pub mod provider;
 pub mod registry;
 pub mod retry;
 pub mod sender;
+pub mod status;
 pub mod template;
 pub mod url;
 
@@ -18,5 +19,6 @@ pub use provider::{NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 pub use registry::ProviderRegistry;
 pub use retry::{RetryPolicy, send_with_retry};
 pub use sender::{BatchResult, SendTarget, TargetResult, send_batch, send_failover};
+pub use status::{DeliveryRecord, DeliveryStatus, StatusSummary, StatusTracker};
 pub use template::{MessageTemplate, TemplateRegistry};
 pub use url::{ParsedUrl, parse_notification_url};
