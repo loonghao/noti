@@ -1,7 +1,6 @@
 use async_trait::async_trait;
-use base64::Engine;
 use noti_core::{
-    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -9,8 +8,8 @@ use serde_json::json;
 /// Flock team messaging provider.
 ///
 /// Sends messages via Flock incoming webhooks.
-/// Supports image attachments via FlockML attachment cards with base64 data URIs.
-/// Non-image attachments are listed as file references in the message.
+/// Flock webhooks only support JSON payloads (text and flockml).
+/// File uploads require the Flock API with OAuth tokens.
 pub struct FlockProvider {
     client: Client,
 }
@@ -41,13 +40,9 @@ impl NotifyProvider for FlockProvider {
 
     fn params(&self) -> Vec<ParamDef> {
         vec![
-            ParamDef::required("token", "Flock incoming webhook token")
-                .with_example("your-webhook-token"),
+            ParamDef::required("webhook_url", "Flock incoming webhook URL")
+                .with_example("https://api.flock.com/hooks/sendMessage/XXXXXX"),
         ]
-    }
-
-    fn supports_attachments(&self) -> bool {
-        false
     }
 
     async fn send(
@@ -56,75 +51,55 @@ impl NotifyProvider for FlockProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
-        let token = config.require("token", "flock")?;
+        let webhook_url = config.require("webhook_url", "flock")?;
 
-        let url = format!("https://api.flock.com/hooks/sendMessage/{token}");
-
-        let text = if let Some(ref title) = message.title {
-            format!("**{title}**\n{}", message.text)
-        } else {
-            message.text.clone()
-        };
-
-        // Build payload with attachment cards for images
-        let mut payload = json!({
-            "text": text
-        });
-
-        if message.has_attachments() {
-            let mut attachments = Vec::new();
-            for attachment in &message.attachments {
-                let file_name = attachment.effective_file_name();
-                if attachment.kind == AttachmentKind::Image {
-                    let data = attachment.read_bytes().await?;
-                    let mime = attachment.effective_mime();
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    attachments.push(json!({
-                        "title": file_name,
-                        "views": {
-                            "image": {
-                                "original": {
-                                    "src": format!("data:{mime};base64,{b64}"),
-                                    "width": 400,
-                                    "height": 300
-                                }
-                            }
-                        }
-                    }));
+        let text = match message.format {
+            MessageFormat::Html => {
+                if let Some(ref title) = message.title {
+                    format!("<b>{title}</b><br/>{}", message.text)
                 } else {
-                    attachments.push(json!({
-                        "title": format!("📎 {file_name}"),
-                        "description": format!("File attachment: {file_name}")
-                    }));
+                    message.text.clone()
                 }
             }
-            payload["attachments"] = json!(attachments);
-        }
+            _ => {
+                if let Some(ref title) = message.title {
+                    format!("{title}\n{}", message.text)
+                } else {
+                    message.text.clone()
+                }
+            }
+        };
+
+        let payload = if matches!(message.format, MessageFormat::Html) {
+            json!({ "flockml": text })
+        } else {
+            json!({ "text": text })
+        };
 
         let resp = self
             .client
-            .post(&url)
+            .post(webhook_url)
             .json(&payload)
             .send()
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
         let status = resp.status().as_u16();
-        let raw: serde_json::Value = resp.json().await.unwrap_or(json!({"status": status}));
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
 
         if (200..300).contains(&(status as usize)) {
-            Ok(SendResponse::success("flock", "message sent to Flock")
-                .with_status_code(status)
-                .with_raw_response(raw))
-        } else {
-            let error = raw
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
             Ok(
-                SendResponse::failure("flock", format!("API error: {error}"))
+                SendResponse::success("flock", "message sent successfully")
+                    .with_status_code(status),
+            )
+        } else {
+            Ok(
+                SendResponse::failure("flock", format!("API error: {body}"))
                     .with_status_code(status)
-                    .with_raw_response(raw),
+                    .with_raw_response(json!({ "body": body })),
             )
         }
     }

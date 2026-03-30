@@ -1,8 +1,6 @@
 use async_trait::async_trait;
-use base64::Engine;
 use noti_core::{
-    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
-    SendResponse,
+    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -10,8 +8,9 @@ use serde_json::json;
 /// Google Chat (formerly Hangouts Chat) webhook provider.
 ///
 /// Uses the Google Chat Spaces webhook URL to post messages.
-/// Supports image attachments via cardsV2 Image widget with base64 data URI.
-/// Non-image attachments are listed as file references in the text.
+/// Google Chat webhooks only support JSON payloads (text and cards).
+/// File/image uploads require the Google Chat REST API with service account
+/// credentials, which is not supported by webhooks.
 ///
 /// The webhook URL looks like:
 /// `https://chat.googleapis.com/v1/spaces/<space>/messages?key=<key>&token=<token>`
@@ -51,10 +50,6 @@ impl NotifyProvider for GoogleChatProvider {
         ]
     }
 
-    fn supports_attachments(&self) -> bool {
-        false
-    }
-
     async fn send(
         &self,
         message: &Message,
@@ -76,50 +71,7 @@ impl NotifyProvider for GoogleChatProvider {
         }
         text.push_str(&message.text);
 
-        // Build payload — use cardsV2 when image attachments are present
-        let payload = if message.has_attachments() {
-            let mut widgets = Vec::new();
-
-            // Text widget
-            widgets.push(json!({
-                "textParagraph": { "text": text }
-            }));
-
-            // Image widgets for image attachments
-            for attachment in &message.attachments {
-                if attachment.kind == AttachmentKind::Image {
-                    let data = attachment.read_bytes().await?;
-                    let mime = attachment.effective_mime();
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    widgets.push(json!({
-                        "image": {
-                            "imageUrl": format!("data:{mime};base64,{b64}"),
-                            "altText": attachment.effective_file_name()
-                        }
-                    }));
-                } else {
-                    let file_name = attachment.effective_file_name();
-                    widgets.push(json!({
-                        "textParagraph": {
-                            "text": format!("📎 Attachment: {file_name}")
-                        }
-                    }));
-                }
-            }
-
-            json!({
-                "cardsV2": [{
-                    "cardId": "noti-attachment",
-                    "card": {
-                        "sections": [{
-                            "widgets": widgets
-                        }]
-                    }
-                }]
-            })
-        } else {
-            json!({ "text": text })
-        };
+        let payload = json!({ "text": text });
 
         let resp = self
             .client
