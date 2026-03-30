@@ -2,9 +2,13 @@ use async_trait::async_trait;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
-/// Jira notification provider — adds comments to issues.
+/// Jira notification provider — adds comments and attachments to issues.
 ///
-/// API reference: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-comments/
+/// Supports file attachments via the Jira attachment REST API.
+///
+/// API reference:
+/// - Comments: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-comments/
+/// - Attachments: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-attachments/
 pub struct JiraProvider {
     client: Client,
 }
@@ -43,6 +47,10 @@ impl NotifyProvider for JiraProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,9 +64,53 @@ impl NotifyProvider for JiraProvider {
         let issue_key = config.require("issue_key", "jira")?;
         let scheme = config.get("scheme").unwrap_or("https");
 
-        let url = format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/comment");
+        // Step 1: Upload attachments if present
+        if message.has_attachments() {
+            let attach_url =
+                format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/attachments");
 
-        // Atlassian Document Format (ADF) for API v3
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
+
+                let part = reqwest::multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+                let form = reqwest::multipart::Form::new().part("file", part);
+
+                let resp = self
+                    .client
+                    .post(&attach_url)
+                    .basic_auth(user, Some(api_token))
+                    .header("X-Atlassian-Token", "no-check")
+                    .multipart(form)
+                    .send()
+                    .await
+                    .map_err(|e| NotiError::Network(e.to_string()))?;
+
+                let status = resp.status().as_u16();
+                if !(200..300).contains(&status) {
+                    let raw: serde_json::Value =
+                        resp.json().await.unwrap_or(serde_json::Value::Null);
+                    return Ok(
+                        SendResponse::failure(
+                            "jira",
+                            format!("attachment upload failed (HTTP {status})"),
+                        )
+                        .with_status_code(status)
+                        .with_raw_response(raw),
+                    );
+                }
+            }
+        }
+
+        // Step 2: Add comment
+        let comment_url =
+            format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/comment");
+
         let body = serde_json::json!({
             "body": {
                 "type": "doc",
@@ -75,7 +127,7 @@ impl NotifyProvider for JiraProvider {
 
         let resp = self
             .client
-            .post(&url)
+            .post(&comment_url)
             .basic_auth(user, Some(api_token))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -87,7 +139,12 @@ impl NotifyProvider for JiraProvider {
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
         if (200..300).contains(&status) {
-            Ok(SendResponse::success("jira", "comment added successfully")
+            let msg = if message.has_attachments() {
+                "comment and attachments added successfully"
+            } else {
+                "comment added successfully"
+            };
+            Ok(SendResponse::success("jira", msg)
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {

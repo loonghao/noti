@@ -51,6 +51,10 @@ impl NotifyProvider for Signl4Provider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -63,9 +67,23 @@ impl NotifyProvider for Signl4Provider {
 
         let title = message.title.as_deref().unwrap_or("Alert");
 
+        // Include attachment info in the message body
+        let message_text = if message.has_attachments() {
+            let mut text = message.text.clone();
+            for attachment in &message.attachments {
+                text.push_str(&format!(
+                    "\n📎 Attachment: {}",
+                    attachment.effective_file_name()
+                ));
+            }
+            text
+        } else {
+            message.text.clone()
+        };
+
         let mut payload = json!({
             "Title": title,
-            "Message": message.text,
+            "Message": message_text,
         });
 
         if let Some(severity) = config.get("s4_severity") {

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
@@ -6,7 +7,8 @@ use reqwest::Client;
 ///
 /// Prowl is a push notification client for iOS that receives push
 /// notifications from the Prowl API. It supports priority levels,
-/// URLs, and application names.
+/// URLs, and application names. Supports image attachments via
+/// base64 data URI in the url field.
 ///
 /// API docs: <https://www.prowlapp.com/api.php>
 pub struct ProwlProvider {
@@ -53,6 +55,10 @@ impl NotifyProvider for ProwlProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -63,19 +69,41 @@ impl NotifyProvider for ProwlProvider {
         let application = config.get("application").unwrap_or("noti");
         let priority = config.get("priority").unwrap_or("0");
 
+        // Embed first image attachment as base64 in description
+        let mut description = message.text.clone();
+        for attachment in &message.attachments {
+            if attachment.kind == noti_core::AttachmentKind::Image {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let name = attachment.effective_file_name();
+                    description
+                        .push_str(&format!("\n\n[Image: {name}] data:{mime};base64,{b64}"));
+                }
+            }
+        }
+
         let mut form = vec![
             ("apikey", api_key.to_string()),
             ("application", application.to_string()),
             ("event", message.title.clone().unwrap_or_default()),
-            ("description", message.text.clone()),
+            ("description", description),
             ("priority", priority.to_string()),
         ];
 
         if let Some(provider_key) = config.get("provider_key") {
             form.push(("providerkey", provider_key.to_string()));
         }
+
+        // Use explicit url config or embed first image as data URI
         if let Some(url) = config.get("url") {
             form.push(("url", url.to_string()));
+        } else if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                form.push(("url", format!("data:{mime};base64,{b64}")));
+            }
         }
 
         let resp = self

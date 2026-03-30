@@ -6,13 +6,13 @@ use serde_json::json;
 /// Form webhook provider.
 ///
 /// Sends a form-encoded notification payload to any HTTP endpoint.
-/// This is a specialized version of the generic webhook provider that sends
-/// `Content-Type: application/x-www-form-urlencoded`.
+/// Supports file attachments via multipart/form-data upload.
 ///
 /// The form fields:
 /// - `title` (if provided)
 /// - `message` (the notification text)
 /// - `type` (default: "info")
+/// - `file[]` (attachments, when present switches to multipart/form-data)
 pub struct FormWebhookProvider {
     client: Client,
 }
@@ -56,6 +56,10 @@ impl NotifyProvider for FormWebhookProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -66,35 +70,79 @@ impl NotifyProvider for FormWebhookProvider {
         let method = config.get("method").unwrap_or("POST").to_uppercase();
         let noti_type = config.get("type").unwrap_or("info");
 
-        let mut form_data: Vec<(&str, &str)> =
-            vec![("message", &message.text), ("type", noti_type)];
+        let resp = if message.has_attachments() {
+            // Use multipart form for file attachments
+            let mut form = reqwest::multipart::Form::new()
+                .text("message", message.text.clone())
+                .text("type", noti_type.to_string());
 
-        let title_val;
-        if let Some(ref title) = message.title {
-            title_val = title.clone();
-            form_data.push(("title", &title_val));
-        }
+            if let Some(ref title) = message.title {
+                form = form.text("title", title.clone());
+            }
 
-        let mut request = match method.as_str() {
-            "PUT" => self.client.put(url),
-            "PATCH" => self.client.patch(url),
-            _ => self.client.post(url),
-        };
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
 
-        // Add custom headers
-        if let Some(headers) = config.get("header") {
-            for pair in headers.split(';') {
-                if let Some((k, v)) = pair.split_once('=') {
-                    request = request.header(k.trim(), v.trim());
+                let part = reqwest::multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+                form = form.part("file[]", part);
+            }
+
+            let mut request = match method.as_str() {
+                "PUT" => self.client.put(url),
+                "PATCH" => self.client.patch(url),
+                _ => self.client.post(url),
+            };
+
+            if let Some(headers) = config.get("header") {
+                for pair in headers.split(';') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        request = request.header(k.trim(), v.trim());
+                    }
                 }
             }
-        }
 
-        let resp = request
-            .form(&form_data)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            request
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        } else {
+            // Standard form-encoded request
+            let mut form_data: Vec<(&str, &str)> =
+                vec![("message", &message.text), ("type", noti_type)];
+
+            let title_val;
+            if let Some(ref title) = message.title {
+                title_val = title.clone();
+                form_data.push(("title", &title_val));
+            }
+
+            let mut request = match method.as_str() {
+                "PUT" => self.client.put(url),
+                "PATCH" => self.client.patch(url),
+                _ => self.client.post(url),
+            };
+
+            if let Some(headers) = config.get("header") {
+                for pair in headers.split(';') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        request = request.header(k.trim(), v.trim());
+                    }
+                }
+            }
+
+            request
+                .form(&form_data)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        };
 
         let status = resp.status().as_u16();
         let body = resp

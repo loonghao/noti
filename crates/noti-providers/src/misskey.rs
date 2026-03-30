@@ -7,6 +7,7 @@ use serde_json::json;
 ///
 /// Posts notes to a Misskey instance via its API.
 /// Misskey is an open-source decentralized microblogging platform.
+/// Supports file attachments via the Drive API.
 pub struct MisskeyProvider {
     client: Client,
 }
@@ -14,6 +15,53 @@ pub struct MisskeyProvider {
 impl MisskeyProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Upload a file to Misskey Drive and return the file ID.
+    async fn upload_to_drive(
+        &self,
+        instance: &str,
+        access_token: &str,
+        attachment: &noti_core::Attachment,
+    ) -> Result<String, NotiError> {
+        let url = format!("https://{instance}/api/drive/files/create");
+        let data = attachment.read_bytes().await?;
+        let file_name = attachment.effective_file_name();
+        let mime_str = attachment.effective_mime();
+
+        let part = reqwest::multipart::Part::bytes(data)
+            .file_name(file_name)
+            .mime_str(&mime_str)
+            .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("i", access_token.to_string())
+            .part("file", part);
+
+        let resp = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
+
+        raw.get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                let err = raw
+                    .get("error")
+                    .and_then(|v| v.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                NotiError::provider("misskey", format!("drive upload failed: {err}"))
+            })
     }
 }
 
@@ -49,6 +97,10 @@ impl NotifyProvider for MisskeyProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -78,12 +130,16 @@ impl NotifyProvider for MisskeyProvider {
             payload["cw"] = json!(cw);
         }
 
-        // Use title as CW if set and no explicit CW
-        if config.get("cw").is_none() {
-            if let Some(ref title) = message.title {
-                // Don't set cw, title is already in text
-                let _ = title;
+        // Upload attachments to Drive and attach file IDs
+        if message.has_attachments() {
+            let mut file_ids = Vec::new();
+            for attachment in &message.attachments {
+                let file_id = self
+                    .upload_to_drive(instance, access_token, attachment)
+                    .await?;
+                file_ids.push(file_id);
             }
+            payload["fileIds"] = json!(file_ids);
         }
 
         let resp = self

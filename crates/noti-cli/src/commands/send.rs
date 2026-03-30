@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use noti_core::{
-    AppConfig, Message, MessageFormat, ProviderConfig, ProviderRegistry, parse_notification_url,
+    AppConfig, Attachment, Message, MessageFormat, ProviderConfig, ProviderRegistry,
+    parse_notification_url,
 };
 
 use crate::output::{OutputMode, print_error, print_json};
@@ -37,6 +38,11 @@ pub struct SendArgs {
     #[arg(long, default_value = "text")]
     pub format: String,
 
+    /// File attachment(s) to send (image, document, etc.).
+    /// Can be specified multiple times.
+    #[arg(long = "file", short = 'f', value_name = "PATH")]
+    pub files: Vec<String>,
+
     /// Request timeout in seconds.
     #[arg(long, default_value = "30")]
     pub timeout: u64,
@@ -65,6 +71,23 @@ pub async fn execute(
     let mut message = Message::text(&args.message).with_format(format);
     if let Some(ref title) = args.title {
         message = message.with_title(title);
+    }
+
+    // Attach files
+    for file_path in &args.files {
+        let path = std::path::Path::new(file_path);
+        if !path.exists() {
+            bail!("attachment file not found: {file_path}");
+        }
+        message = message.with_attachment(Attachment::from_path(path));
+    }
+
+    // Warn if provider doesn't support attachments but files were given
+    if message.has_attachments() && !provider.supports_attachments() {
+        eprintln!(
+            "⚠ provider '{}' does not support file attachments; files will be ignored",
+            provider.name()
+        );
     }
 
     // Send

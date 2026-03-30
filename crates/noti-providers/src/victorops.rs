@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,6 +7,7 @@ use serde_json::json;
 /// Splunk On-Call (formerly VictorOps) provider.
 ///
 /// Creates incidents via the Splunk On-Call REST endpoint for monitoring tool integrations.
+/// Supports image attachments via `image_url` in the alert payload.
 ///
 /// API reference: <https://help.victorops.com/knowledge-base/rest-endpoint-integration-guide/>
 pub struct VictorOpsProvider {
@@ -48,6 +50,10 @@ impl NotifyProvider for VictorOpsProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -70,13 +76,22 @@ impl NotifyProvider for VictorOpsProvider {
             .unwrap_or_default()
             .as_secs();
 
-        let payload = json!({
+        let mut payload = json!({
             "message_type": message_type,
             "entity_id": format!("noti-{timestamp}"),
             "entity_display_name": title,
             "state_message": message.text,
             "monitoring_tool": "noti-cli",
         });
+
+        // Embed first image attachment as base64 data URI in image_url
+        if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["image_url"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+        }
 
         let resp = self
             .client

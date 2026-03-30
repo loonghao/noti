@@ -1,10 +1,14 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
 /// SMSEagle hardware SMS gateway provider.
 ///
-/// Sends SMS via SMSEagle hardware appliance HTTP API.
+/// Sends SMS/MMS via SMSEagle hardware appliance HTTP API v2.
+/// When attachments are present (images), the provider switches to the MMS endpoint.
 ///
 /// API reference: <https://www.smseagle.eu/api/>
 pub struct SmsEagleProvider {
@@ -28,7 +32,7 @@ impl NotifyProvider for SmsEagleProvider {
     }
 
     fn description(&self) -> &str {
-        "SMSEagle hardware SMS gateway"
+        "SMSEagle hardware SMS/MMS gateway"
     }
 
     fn example_url(&self) -> &str {
@@ -45,6 +49,10 @@ impl NotifyProvider for SmsEagleProvider {
             ParamDef::optional("port", "Port number (default: auto)"),
             ParamDef::optional("priority", "Message priority: 0-9 (default: 0)").with_example("0"),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -70,7 +78,18 @@ impl NotifyProvider for SmsEagleProvider {
             format!("{scheme}://{host}")
         };
 
-        let url = format!("{base_url}/api/v2/messages/sms");
+        // Use MMS endpoint when image attachments are present
+        let has_media = message.has_attachments()
+            && message
+                .attachments
+                .iter()
+                .any(|a| matches!(a.kind, AttachmentKind::Image));
+
+        let url = if has_media {
+            format!("{base_url}/api/v2/messages/mms")
+        } else {
+            format!("{base_url}/api/v2/messages/sms")
+        };
 
         let mut payload = serde_json::json!({
             "to": [to],
@@ -79,6 +98,27 @@ impl NotifyProvider for SmsEagleProvider {
 
         if let Some(priority) = config.get("priority") {
             payload["priority"] = serde_json::json!(priority.parse::<u8>().unwrap_or(0));
+        }
+
+        // Attach base64-encoded images for MMS
+        if has_media {
+            let mut attachments = Vec::new();
+            for attachment in &message.attachments {
+                if matches!(attachment.kind, AttachmentKind::Image) {
+                    let data = attachment.read_bytes().await?;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let mime = attachment.effective_mime();
+                    let name = attachment.effective_file_name();
+                    attachments.push(serde_json::json!({
+                        "content": b64,
+                        "content_type": mime,
+                        "filename": name,
+                    }));
+                }
+            }
+            if !attachments.is_empty() {
+                payload["attachments"] = serde_json::json!(attachments);
+            }
         }
 
         let resp = self
@@ -96,10 +136,14 @@ impl NotifyProvider for SmsEagleProvider {
             .await
             .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
 
+        let msg_type = if has_media { "MMS" } else { "SMS" };
+
         if (200..300).contains(&(status as usize)) {
-            Ok(SendResponse::success("smseagle", "SMS sent via SMSEagle")
-                .with_status_code(status)
-                .with_raw_response(serde_json::json!({"body": body})))
+            Ok(
+                SendResponse::success("smseagle", format!("{msg_type} sent via SMSEagle"))
+                    .with_status_code(status)
+                    .with_raw_response(serde_json::json!({"body": body})),
+            )
         } else {
             Ok(
                 SendResponse::failure("smseagle", format!("API error ({status}): {body}"))

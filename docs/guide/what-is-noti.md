@@ -24,6 +24,7 @@ noti send --to "tg://<bot>/<chat>" --message "Alert: CPU > 90%"
 | **Profile management** | Save, reuse, and test notification configs |
 | **Machine-friendly** | `--json` output + deterministic exit codes |
 | **Blazing fast** | Native Rust binary, < 10ms startup |
+| **File attachments** | Send images, documents & media — auto-detected MIME types |
 | **125+ providers** | Chat, SMS, email, push, webhooks, IoT — all built-in |
 
 ## Architecture

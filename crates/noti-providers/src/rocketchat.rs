@@ -7,8 +7,8 @@ use serde_json::json;
 
 /// Rocket.Chat incoming webhook provider.
 ///
-/// Uses Rocket.Chat's incoming webhook integration.
-/// The webhook URL is obtained from Administration > Integrations > New Integration.
+/// Uses Rocket.Chat's incoming webhook integration for text messages.
+/// For file attachments, uses the REST API (requires auth_token + user_id + room_id).
 pub struct RocketChatProvider {
     client: Client,
 }
@@ -16,6 +16,72 @@ pub struct RocketChatProvider {
 impl RocketChatProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Upload files via Rocket.Chat REST API.
+    async fn send_with_files(
+        &self,
+        message: &Message,
+        base_url: &str,
+        auth_token: &str,
+        user_id: &str,
+        room_id: &str,
+    ) -> Result<SendResponse, NotiError> {
+        for attachment in &message.attachments {
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
+
+            let part = reqwest::multipart::Part::bytes(data)
+                .file_name(file_name)
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+            let mut form = reqwest::multipart::Form::new().part("file", part);
+
+            if !message.text.is_empty() {
+                form = form.text("description", message.text.clone());
+            }
+
+            let upload_url = format!("{base_url}/api/v1/rooms.upload/{room_id}");
+            let resp = self
+                .client
+                .post(&upload_url)
+                .header("X-Auth-Token", auth_token)
+                .header("X-User-Id", user_id)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let status = resp.status().as_u16();
+            let raw: serde_json::Value = resp
+                .json()
+                .await
+                .unwrap_or_else(|_| json!({"error": "failed to parse response"}));
+
+            let success = raw
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if !success {
+                let error = raw
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                return Ok(
+                    SendResponse::failure("rocketchat", format!("file upload error: {error}"))
+                        .with_status_code(status)
+                        .with_raw_response(raw),
+                );
+            }
+        }
+
+        Ok(SendResponse::success(
+            "rocketchat",
+            "message and file(s) sent successfully",
+        ))
     }
 }
 
@@ -48,7 +114,17 @@ impl NotifyProvider for RocketChatProvider {
             ParamDef::optional("icon_url", "Override the posting avatar URL"),
             ParamDef::optional("port", "Server port (default: 443)"),
             ParamDef::optional("scheme", "URL scheme: https or http (default: https)"),
+            ParamDef::optional(
+                "auth_token",
+                "Personal auth token (required for file uploads)",
+            ),
+            ParamDef::optional("user_id", "User ID (required for file uploads)"),
+            ParamDef::optional("room_id", "Room ID (required for file uploads)"),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -63,7 +139,23 @@ impl NotifyProvider for RocketChatProvider {
         let url_scheme = config.get("scheme").unwrap_or("https");
         let port = config.get("port").unwrap_or("443");
 
-        let webhook_url = format!("{url_scheme}://{host}:{port}/hooks/{token_a}/{token_b}");
+        let base_url = format!("{url_scheme}://{host}:{port}");
+
+        // Handle file attachments via REST API
+        if message.has_attachments() {
+            if let (Some(auth_token), Some(user_id), Some(room_id)) = (
+                config.get("auth_token"),
+                config.get("user_id"),
+                config.get("room_id"),
+            ) {
+                return self
+                    .send_with_files(message, &base_url, auth_token, user_id, room_id)
+                    .await;
+            }
+            // Fall through to webhook if no auth credentials
+        }
+
+        let webhook_url = format!("{base_url}/hooks/{token_a}/{token_b}");
 
         // Rocket.Chat supports markdown in the text field
         let text = match (&message.format, &message.title) {

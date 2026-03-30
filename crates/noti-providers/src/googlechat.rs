@@ -1,6 +1,8 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -8,6 +10,8 @@ use serde_json::json;
 /// Google Chat (formerly Hangouts Chat) webhook provider.
 ///
 /// Uses the Google Chat Spaces webhook URL to post messages.
+/// Supports image attachments via cardsV2 Image widget (base64 data URI or URL).
+///
 /// The webhook URL looks like:
 /// `https://chat.googleapis.com/v1/spaces/<space>/messages?key=<key>&token=<token>`
 pub struct GoogleChatProvider {
@@ -46,6 +50,10 @@ impl NotifyProvider for GoogleChatProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -54,26 +62,67 @@ impl NotifyProvider for GoogleChatProvider {
         self.validate_config(config)?;
         let webhook_url = config.require("webhook_url", "googlechat")?;
 
-        // Google Chat supports a simple text field and cards.
-        // For markdown/rich content, use cardsV2.
-        let payload = match message.format {
-            MessageFormat::Markdown | MessageFormat::Html => {
-                // Google Chat supports a subset of markup in `text` field
-                let mut text = String::new();
-                if let Some(ref title) = message.title {
+        let mut text = String::new();
+        if let Some(ref title) = message.title {
+            match message.format {
+                MessageFormat::Markdown | MessageFormat::Html => {
                     text.push_str(&format!("*{title}*\n\n"));
                 }
-                text.push_str(&message.text);
-                json!({ "text": text })
-            }
-            MessageFormat::Text => {
-                let mut text = String::new();
-                if let Some(ref title) = message.title {
+                MessageFormat::Text => {
                     text.push_str(&format!("{title}\n\n"));
                 }
-                text.push_str(&message.text);
-                json!({ "text": text })
             }
+        }
+        text.push_str(&message.text);
+
+        // If there are image attachments, use cardsV2 with Image widgets
+        let payload = if message.has_attachments() {
+            let mut widgets = Vec::new();
+
+            // Text widget
+            widgets.push(json!({
+                "textParagraph": {
+                    "text": text
+                }
+            }));
+
+            // Add image widgets for image attachments
+            for attachment in &message.attachments {
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime_str = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let data_uri = format!("data:{mime_str};base64,{b64}");
+
+                    widgets.push(json!({
+                        "image": {
+                            "imageUrl": data_uri,
+                            "altText": attachment.effective_file_name()
+                        }
+                    }));
+                } else {
+                    // For non-image files, mention in text
+                    let file_name = attachment.effective_file_name();
+                    widgets.push(json!({
+                        "textParagraph": {
+                            "text": format!("📎 <b>Attachment:</b> {file_name}")
+                        }
+                    }));
+                }
+            }
+
+            json!({
+                "cardsV2": [{
+                    "cardId": "noti-card",
+                    "card": {
+                        "sections": [{
+                            "widgets": widgets
+                        }]
+                    }
+                }]
+            })
+        } else {
+            json!({ "text": text })
         };
 
         let resp = self

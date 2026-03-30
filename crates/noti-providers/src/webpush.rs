@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// Web Push (VAPID) provider.
 ///
 /// Sends browser push notifications using the Web Push protocol.
-/// Requires a push subscription endpoint and VAPID keys.
+/// Supports image attachments via the Notification API `image` and `badge` fields.
 ///
 /// Reference: <https://web.dev/push-notifications-overview/>
 pub struct WebPushProvider {
@@ -54,6 +57,10 @@ impl NotifyProvider for WebPushProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -69,6 +76,26 @@ impl NotifyProvider for WebPushProvider {
 
         if let Some(ref title) = message.title {
             notification["title"] = json!(title);
+        }
+
+        // Embed first image attachment as data URI in the `image` field
+        if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                notification["image"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+        } else if message.has_attachments() {
+            // For non-image attachments, embed as badge icon
+            if let Some(att) = message.attachments.first() {
+                if att.kind == AttachmentKind::Image {
+                    if let Ok(data) = att.read_bytes().await {
+                        let mime = att.effective_mime();
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        notification["badge"] = json!(format!("data:{mime};base64,{b64}"));
+                    }
+                }
+            }
         }
 
         let payload = serde_json::to_string(&notification).map_err(|e| NotiError::Provider {

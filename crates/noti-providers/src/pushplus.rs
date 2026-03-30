@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -49,6 +52,10 @@ impl NotifyProvider for PushplusProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -61,11 +68,37 @@ impl NotifyProvider for PushplusProvider {
 
         let title = message.title.as_deref().unwrap_or("Notification");
 
+        // Build content with embedded images for attachments
+        let content = if message.has_attachments() {
+            let mut html = format!("<p>{}</p>", message.text);
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    html.push_str(&format!(
+                        "<p><img src=\"data:{mime};base64,{b64}\" alt=\"{file_name}\" /></p>"
+                    ));
+                } else {
+                    html.push_str(&format!("<p>📎 Attachment: {file_name}</p>"));
+                }
+            }
+            html
+        } else {
+            message.text.clone()
+        };
+
         let mut payload = json!({
             "token": token,
             "title": title,
-            "content": message.text,
+            "content": content,
         });
+
+        // Force HTML template when attachments are present
+        if message.has_attachments() {
+            payload["template"] = json!("html");
+        }
 
         if let Some(topic) = config.get("topic") {
             payload["topic"] = json!(topic);

@@ -46,6 +46,10 @@ impl NotifyProvider for FeishuProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -55,9 +59,68 @@ impl NotifyProvider for FeishuProvider {
         let hook_id = config.require("hook_id", "feishu")?;
         let url = Self::build_webhook_url(hook_id);
 
+        // If there's an image attachment, send as image message
+        if let Some(img) = message.first_image() {
+            let data = img.read_bytes().await?;
+            let b64 = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &data,
+            );
+
+            let body = json!({
+                "msg_type": "image",
+                "content": {
+                    "image_key": b64
+                }
+            });
+
+            let mut request = self.client.post(&url);
+            request = Self::maybe_sign(request, &body, config);
+
+            let resp = request
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // If there's a file attachment, send as post message with download link hint
+        if message.has_attachments() {
+            let attachment = &message.attachments[0];
+            let file_name = attachment.effective_file_name();
+            let body = json!({
+                "msg_type": "post",
+                "content": {
+                    "post": {
+                        "zh_cn": {
+                            "title": message.title.as_deref().unwrap_or("File Notification"),
+                            "content": [
+                                [
+                                    {
+                                        "tag": "text",
+                                        "text": format!("{}\n\n📎 Attachment: {}", message.text, file_name)
+                                    }
+                                ]
+                            ]
+                        }
+                    }
+                }
+            });
+
+            let mut request = self.client.post(&url);
+            request = Self::maybe_sign(request, &body, config);
+
+            let resp = request
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
         let body = match message.format {
             MessageFormat::Markdown => {
-                // Feishu uses interactive card for markdown-like content
                 json!({
                     "msg_type": "interactive",
                     "card": {
@@ -84,8 +147,24 @@ impl NotifyProvider for FeishuProvider {
             }
         };
 
-        // If secret is provided, sign the request
         let mut request = self.client.post(&url);
+        request = Self::maybe_sign(request, &body, config);
+
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
+}
+
+impl FeishuProvider {
+    fn maybe_sign(
+        mut request: reqwest::RequestBuilder,
+        body: &serde_json::Value,
+        config: &ProviderConfig,
+    ) -> reqwest::RequestBuilder {
         if let Some(secret) = config.get("secret") {
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -98,14 +177,12 @@ impl NotifyProvider for FeishuProvider {
             body_with_sign["sign"] = json!(sign);
             request = request.json(&body_with_sign);
         } else {
-            request = request.json(&body);
+            request = request.json(body);
         }
+        request
+    }
 
-        let resp = request
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
-
+    async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp
             .json()

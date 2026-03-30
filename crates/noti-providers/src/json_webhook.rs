@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,15 +7,15 @@ use serde_json::json;
 /// JSON webhook provider.
 ///
 /// Sends a JSON-formatted notification payload to any HTTP endpoint.
-/// This is a specialized version of the generic webhook provider that always
-/// sends `Content-Type: application/json`.
+/// Supports file attachments as base64-encoded data in the JSON payload.
 ///
 /// The JSON body structure:
 /// ```json
 /// {
 ///   "title": "...",
 ///   "message": "...",
-///   "type": "info"
+///   "type": "info",
+///   "attachments": [{"name": "file.png", "mime": "image/png", "data": "base64..."}]
 /// }
 /// ```
 pub struct JsonWebhookProvider {
@@ -60,6 +61,10 @@ impl NotifyProvider for JsonWebhookProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -77,6 +82,21 @@ impl NotifyProvider for JsonWebhookProvider {
 
         if let Some(ref title) = message.title {
             payload["title"] = json!(title);
+        }
+
+        // Add attachments as base64-encoded data in the JSON payload
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                attachments_json.push(json!({
+                    "name": attachment.effective_file_name(),
+                    "mime": attachment.effective_mime(),
+                    "data": b64,
+                }));
+            }
+            payload["attachments"] = json!(attachments_json);
         }
 
         let mut request = match method.as_str() {

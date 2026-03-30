@@ -43,6 +43,9 @@
 </td>
 <td width="50%">
 
+### 📎 文件附件
+发送图片、文档和媒体文件 — 自动检测 MIME 类型，100+ 渠道支持。
+
 ### 📋 Profile 管理
 保存、复用、测试通知配置 — 一次设定，按名使用。
 
@@ -115,6 +118,20 @@ noti send --to "smtp://user:pass@smtp.gmail.com:587?to=recipient@example.com" \
 
 # 通用 Webhook
 noti send --to "webhook://example.com/api/notify" --message "Hello!"
+```
+
+### 发送附件
+
+```bash
+# 发送单个文件
+noti send --to "slack://<tokens>" --message "构建报告" --file report.pdf
+
+# 发送多个文件
+noti send --to "discord://<webhook>" --message "截图" \
+  --file screenshot1.png --file screenshot2.png
+
+# 发送图片到 Telegram
+noti send --to "tg://<bot>/<chat>" --message "每日图表" --file chart.png
 ```
 
 ### 通过保存的 Profile 发送

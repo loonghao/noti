@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// Clickatell SMS provider.
+/// Clickatell SMS/messaging provider.
 ///
-/// Sends SMS messages via the Clickatell Platform REST API.
-/// Requires an API key and recipient phone number.
+/// Sends messages via the Clickatell Platform REST API.
+/// Supports media attachments via WhatsApp channel.
 pub struct ClickatellProvider {
     client: Client,
 }
@@ -41,7 +44,17 @@ impl NotifyProvider for ClickatellProvider {
             ParamDef::required("to", "Recipient phone number (international format)")
                 .with_example("15559876543"),
             ParamDef::optional("from", "Sender ID or phone number").with_example("+15551234567"),
+            ParamDef::optional("channel", "Channel: sms or whatsapp (default: sms)")
+                .with_example("sms"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for media attachment (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -52,6 +65,7 @@ impl NotifyProvider for ClickatellProvider {
         self.validate_config(config)?;
         let api_key = config.require("api_key", "clickatell")?;
         let to = config.require("to", "clickatell")?;
+        let channel = config.get("channel").unwrap_or("sms");
 
         let url = "https://platform.clickatell.com/messages";
 
@@ -61,17 +75,41 @@ impl NotifyProvider for ClickatellProvider {
             message.text.clone()
         };
 
-        let mut payload = json!({
-            "messages": [{
-                "channel": "sms",
-                "to": to,
-                "content": body_text
-            }]
+        let mut msg_payload = json!({
+            "channel": channel,
+            "to": to,
+            "content": body_text
         });
 
         if let Some(from) = config.get("from") {
-            payload["messages"][0]["from"] = json!(from);
+            msg_payload["from"] = json!(from);
         }
+
+        // Add media attachments
+        if message.has_attachments() {
+            if let Some(attachment) = message.attachments.iter().find(|a| {
+                matches!(
+                    a.kind,
+                    AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio
+                )
+            }) {
+                let data = attachment.read_bytes().await?;
+                let mime = attachment.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                msg_payload["media"] = json!({
+                    "url": format!("data:{mime};base64,{b64}"),
+                    "type": mime
+                });
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            msg_payload["media"] = json!({
+                "url": media_url
+            });
+        }
+
+        let payload = json!({
+            "messages": [msg_payload]
+        });
 
         let resp = self
             .client
@@ -90,11 +128,14 @@ impl NotifyProvider for ClickatellProvider {
             .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
 
         if (200..300).contains(&(status as usize)) {
-            Ok(
-                SendResponse::success("clickatell", "SMS sent via Clickatell")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            let msg = if message.has_attachments() {
+                "message sent with media via Clickatell"
+            } else {
+                "SMS sent via Clickatell"
+            };
+            Ok(SendResponse::success("clickatell", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             let error = raw
                 .get("error")

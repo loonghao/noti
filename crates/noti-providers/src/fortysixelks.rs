@@ -1,8 +1,13 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
-/// 46elks SMS provider.
+/// 46elks SMS/MMS provider.
+///
+/// Supports MMS via the a1/mms endpoint for sending images.
 ///
 /// API reference: https://46elks.com/docs/send-sms
 pub struct FortySixElksProvider {
@@ -26,7 +31,7 @@ impl NotifyProvider for FortySixElksProvider {
     }
 
     fn description(&self) -> &str {
-        "46elks SMS messaging via REST API"
+        "46elks SMS/MMS messaging via REST API"
     }
 
     fn example_url(&self) -> &str {
@@ -40,7 +45,15 @@ impl NotifyProvider for FortySixElksProvider {
             ParamDef::required("from", "Sender phone number or alphanumeric sender ID"),
             ParamDef::required("to", "Recipient phone number in E.164 format"),
             ParamDef::optional("flash", "Send as flash SMS (yes/no, default: no)"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for MMS image (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -55,19 +68,43 @@ impl NotifyProvider for FortySixElksProvider {
         let from = config.require("from", "46elks")?;
         let to = config.require("to", "46elks")?;
 
-        let mut params = vec![
-            ("from", from),
-            ("to", to),
-            ("message", message.text.as_str()),
+        let has_media = message.has_attachments()
+            || config.get("media_url").is_some();
+
+        // Use MMS endpoint if we have attachments
+        let endpoint = if has_media {
+            "https://api.46elks.com/a1/mms"
+        } else {
+            "https://api.46elks.com/a1/sms"
+        };
+
+        let mut params: Vec<(&str, String)> = vec![
+            ("from", from.to_string()),
+            ("to", to.to_string()),
+            ("message", message.text.clone()),
         ];
 
         if let Some(flash) = config.get("flash") {
-            params.push(("flashsms", flash));
+            params.push(("flashsms", flash.to_string()));
+        }
+
+        // Add MMS image
+        if message.has_attachments() {
+            if let Some(attachment) = message.attachments.iter().find(|a| {
+                matches!(a.kind, AttachmentKind::Image)
+            }) {
+                let data = attachment.read_bytes().await?;
+                let mime = attachment.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                params.push(("image", format!("data:{mime};base64,{b64}")));
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            params.push(("image", media_url.to_string()));
         }
 
         let resp = self
             .client
-            .post("https://api.46elks.com/a1/sms")
+            .post(endpoint)
             .basic_auth(api_username, Some(api_password))
             .form(&params)
             .send()
@@ -78,7 +115,12 @@ impl NotifyProvider for FortySixElksProvider {
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
         if (200..300).contains(&status) {
-            Ok(SendResponse::success("46elks", "SMS sent successfully")
+            let msg = if has_media {
+                "MMS sent with image via 46elks"
+            } else {
+                "SMS sent successfully"
+            };
+            Ok(SendResponse::success("46elks", msg)
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {

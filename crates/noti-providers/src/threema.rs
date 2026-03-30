@@ -5,6 +5,7 @@ use reqwest::Client;
 /// Threema Gateway provider.
 ///
 /// Sends text messages via Threema Gateway (basic mode).
+/// Supports file attachments via the blob upload API.
 ///
 /// API reference: <https://gateway.threema.ch/en/developer/api>
 pub struct ThreemaProvider {
@@ -47,6 +48,10 @@ impl NotifyProvider for ThreemaProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -55,6 +60,97 @@ impl NotifyProvider for ThreemaProvider {
         self.validate_config(config)?;
         let gateway_id = config.require("gateway_id", "threema")?;
         let api_secret = config.require("api_secret", "threema")?;
+
+        // If has attachments, upload blob and send file message
+        if message.has_attachments() {
+            let attachment = &message.attachments[0];
+            let data = attachment.read_bytes().await?;
+
+            // Upload blob
+            let blob_url = "https://msgapi.threema.ch/upload_blob";
+            let part = reqwest::multipart::Part::bytes(data)
+                .file_name(attachment.effective_file_name())
+                .mime_str(&attachment.effective_mime())
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+            let form = reqwest::multipart::Form::new().part("blob", part);
+
+            let blob_resp = self
+                .client
+                .post(blob_url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let blob_status = blob_resp.status().as_u16();
+            let blob_id = blob_resp
+                .text()
+                .await
+                .map_err(|e| NotiError::Network(format!("failed to read blob response: {e}")))?;
+
+            if !(200..300).contains(&(blob_status as usize)) {
+                return Ok(
+                    SendResponse::failure("threema", format!("blob upload failed: {blob_id}"))
+                        .with_status_code(blob_status),
+                );
+            }
+
+            // Send file message referencing the blob
+            let send_url = "https://msgapi.threema.ch/send_simple";
+            let text = if !message.text.is_empty() {
+                format!(
+                    "{}\n\n[Attachment: {}]",
+                    message.text,
+                    attachment.effective_file_name()
+                )
+            } else {
+                format!("[Attachment: {}]", attachment.effective_file_name())
+            };
+
+            let mut send_form = vec![
+                ("from", gateway_id.to_string()),
+                ("secret", api_secret.to_string()),
+                ("text", text),
+            ];
+
+            if let Some(to_phone) = config.get("to_phone") {
+                send_form.push(("phone", to_phone.to_string()));
+            } else if let Some(to_email) = config.get("to_email") {
+                send_form.push(("email", to_email.to_string()));
+            } else {
+                let to = config.require("to", "threema")?;
+                send_form.push(("to", to.to_string()));
+            }
+
+            let resp = self
+                .client
+                .post(send_url)
+                .form(&send_form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let status = resp.status().as_u16();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
+
+            return if (200..300).contains(&(status as usize)) {
+                Ok(
+                    SendResponse::success("threema", "message with attachment sent")
+                        .with_status_code(status)
+                        .with_raw_response(serde_json::json!({"message_id": body.trim(), "blob_id": blob_id.trim()})),
+                )
+            } else {
+                Ok(
+                    SendResponse::failure("threema", format!("API error ({status}): {body}"))
+                        .with_status_code(status)
+                        .with_raw_response(serde_json::json!({"body": body})),
+                )
+            };
+        }
 
         let url = "https://msgapi.threema.ch/send_simple";
 
@@ -70,7 +166,6 @@ impl NotifyProvider for ThreemaProvider {
             ("text", text),
         ];
 
-        // Determine recipient addressing
         if let Some(to_phone) = config.get("to_phone") {
             form.push(("phone", to_phone.to_string()));
         } else if let Some(to_email) = config.get("to_email") {

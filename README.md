@@ -43,6 +43,9 @@ Intuitive `provider://credentials` format — `wecom://key`, `slack://tokens`, `
 </td>
 <td width="50%">
 
+### 📎 File Attachments
+Send images, documents, and media files — auto-detected MIME types, supported across 100+ providers.
+
 ### 📋 Profile Management
 Save, reuse, and test notification configs — set up once, use by name.
 
@@ -115,6 +118,20 @@ noti send --to "smtp://user:pass@smtp.gmail.com:587?to=recipient@example.com" \
 
 # Generic Webhook
 noti send --to "webhook://example.com/api/notify" --message "Hello!"
+```
+
+### Send with attachments
+
+```bash
+# Send a single file
+noti send --to "slack://<tokens>" --message "Build report" --file report.pdf
+
+# Send multiple files
+noti send --to "discord://<webhook>" --message "Screenshots" \
+  --file screenshot1.png --file screenshot2.png
+
+# Send image to Telegram
+noti send --to "tg://<bot>/<chat>" --message "Daily chart" --file chart.png
 ```
 
 ### Send via saved profile

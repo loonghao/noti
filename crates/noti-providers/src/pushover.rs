@@ -45,6 +45,10 @@ impl NotifyProvider for PushoverProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -54,37 +58,77 @@ impl NotifyProvider for PushoverProvider {
         let user_key = config.require("user_key", "pushover")?;
         let api_token = config.require("api_token", "pushover")?;
 
-        let mut form = vec![
-            ("token", api_token.to_string()),
-            ("user", user_key.to_string()),
-            ("message", message.text.clone()),
-        ];
+        let resp = if message.has_attachments() {
+            // Use multipart form for file attachment
+            let attachment = &message.attachments[0];
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
 
-        if let Some(ref title) = message.title {
-            form.push(("title", title.clone()));
-        }
+            let file_part = reqwest::multipart::Part::bytes(data)
+                .file_name(file_name)
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
 
-        if message.format == MessageFormat::Html {
-            form.push(("html", "1".to_string()));
-        }
+            let mut form = reqwest::multipart::Form::new()
+                .text("token", api_token.to_string())
+                .text("user", user_key.to_string())
+                .text("message", message.text.clone())
+                .part("attachment", file_part);
 
-        if let Some(device) = config.get("device") {
-            form.push(("device", device.to_string()));
-        }
-        if let Some(priority) = config.get("priority") {
-            form.push(("priority", priority.to_string()));
-        }
-        if let Some(sound) = config.get("sound") {
-            form.push(("sound", sound.to_string()));
-        }
+            if let Some(ref title) = message.title {
+                form = form.text("title", title.clone());
+            }
+            if message.format == MessageFormat::Html {
+                form = form.text("html", "1".to_string());
+            }
+            if let Some(device) = config.get("device") {
+                form = form.text("device", device.to_string());
+            }
+            if let Some(priority) = config.get("priority") {
+                form = form.text("priority", priority.to_string());
+            }
+            if let Some(sound) = config.get("sound") {
+                form = form.text("sound", sound.to_string());
+            }
 
-        let resp = self
-            .client
-            .post("https://api.pushover.net/1/messages.json")
-            .form(&form)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            self.client
+                .post("https://api.pushover.net/1/messages.json")
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        } else {
+            // Standard form POST
+            let mut form = vec![
+                ("token", api_token.to_string()),
+                ("user", user_key.to_string()),
+                ("message", message.text.clone()),
+            ];
+
+            if let Some(ref title) = message.title {
+                form.push(("title", title.clone()));
+            }
+            if message.format == MessageFormat::Html {
+                form.push(("html", "1".to_string()));
+            }
+            if let Some(device) = config.get("device") {
+                form.push(("device", device.to_string()));
+            }
+            if let Some(priority) = config.get("priority") {
+                form.push(("priority", priority.to_string()));
+            }
+            if let Some(sound) = config.get("sound") {
+                form.push(("sound", sound.to_string()));
+            }
+
+            self.client
+                .post("https://api.pushover.net/1/messages.json")
+                .form(&form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        };
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp

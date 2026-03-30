@@ -1,12 +1,16 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// Plivo SMS provider.
+/// Plivo SMS/MMS provider.
 ///
-/// Sends SMS messages via the Plivo REST API.
+/// Sends SMS/MMS messages via the Plivo REST API.
 /// Plivo is a global cloud communication platform for voice and messaging.
+/// Supports MMS with media_urls for image/video/audio attachments.
 ///
 /// API reference: <https://www.plivo.com/docs/sms/api/message#send-a-message>
 pub struct PlivoProvider {
@@ -30,7 +34,7 @@ impl NotifyProvider for PlivoProvider {
     }
 
     fn description(&self) -> &str {
-        "Plivo SMS via REST API"
+        "Plivo SMS/MMS via REST API"
     }
 
     fn example_url(&self) -> &str {
@@ -45,7 +49,15 @@ impl NotifyProvider for PlivoProvider {
                 .with_example("+15551234567"),
             ParamDef::required("to", "Recipient phone number (E.164 format)")
                 .with_example("+15559876543"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for MMS media (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -67,11 +79,35 @@ impl NotifyProvider for PlivoProvider {
             message.text.clone()
         };
 
-        let payload = json!({
+        let mut payload = json!({
             "src": from,
             "dst": to,
             "text": body_text,
         });
+
+        // Add MMS media attachments
+        if message.has_attachments() {
+            let mut media_urls = Vec::new();
+            for attachment in &message.attachments {
+                if matches!(
+                    attachment.kind,
+                    AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio
+                ) {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 =
+                        base64::engine::general_purpose::STANDARD.encode(&data);
+                    media_urls.push(format!("data:{mime};base64,{b64}"));
+                }
+            }
+            if !media_urls.is_empty() {
+                payload["type"] = json!("mms");
+                payload["media_urls"] = json!(media_urls);
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            payload["type"] = json!("mms");
+            payload["media_urls"] = json!([media_url]);
+        }
 
         let resp = self
             .client
@@ -87,7 +123,12 @@ impl NotifyProvider for PlivoProvider {
         let raw: serde_json::Value = resp.json().await.unwrap_or(json!({"status": status}));
 
         if (200..300).contains(&(status as usize)) {
-            Ok(SendResponse::success("plivo", "SMS sent via Plivo")
+            let msg = if message.has_attachments() {
+                "MMS sent with attachments via Plivo"
+            } else {
+                "SMS sent via Plivo"
+            };
+            Ok(SendResponse::success("plivo", msg)
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {

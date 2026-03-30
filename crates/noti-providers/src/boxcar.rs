@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -7,6 +8,7 @@ use serde_json::json;
 ///
 /// Boxcar is a push notification service that supports iOS and Android devices.
 /// It provides a simple REST API for sending push notifications.
+/// Supports image attachments via `icon_url` with base64 data URI.
 ///
 /// API Reference: <https://boxcar.io/developer>
 pub struct BoxcarProvider {
@@ -48,6 +50,10 @@ impl NotifyProvider for BoxcarProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -79,8 +85,15 @@ impl NotifyProvider for BoxcarProvider {
             payload["notification"]["source_name"] = json!("noti");
         }
 
+        // Use explicit icon_url or embed first image attachment as data URI
         if let Some(icon) = config.get("icon_url") {
             payload["notification"]["icon_url"] = json!(icon);
+        } else if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["notification"]["icon_url"] = json!(format!("data:{mime};base64,{b64}"));
+            }
         }
 
         let resp = self

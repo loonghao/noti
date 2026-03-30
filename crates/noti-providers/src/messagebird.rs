@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// MessageBird SMS provider.
+/// MessageBird SMS/MMS provider.
 ///
-/// Sends SMS messages via the MessageBird REST API.
-/// MessageBird is a global cloud communications platform.
+/// Sends SMS/MMS messages via the MessageBird REST API.
+/// Supports MMS with mediaUrls for image/video attachments.
 ///
 /// API reference: <https://developers.messagebird.com/api/sms-messaging/>
 pub struct MessageBirdProvider {
@@ -30,7 +33,7 @@ impl NotifyProvider for MessageBirdProvider {
     }
 
     fn description(&self) -> &str {
-        "MessageBird SMS via REST API"
+        "MessageBird SMS/MMS via REST API"
     }
 
     fn example_url(&self) -> &str {
@@ -44,7 +47,15 @@ impl NotifyProvider for MessageBirdProvider {
             ParamDef::required("from", "Sender name or phone number").with_example("MyApp"),
             ParamDef::required("to", "Recipient phone number (E.164 format)")
                 .with_example("+15551234567"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for MMS media (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -65,11 +76,34 @@ impl NotifyProvider for MessageBirdProvider {
             message.text.clone()
         };
 
-        let payload = json!({
+        let mut payload = json!({
             "originator": from,
             "recipients": [to],
             "body": body_text,
         });
+
+        // Add MMS media attachments
+        if message.has_attachments() {
+            let mut media_urls = Vec::new();
+            for attachment in &message.attachments {
+                if matches!(
+                    attachment.kind,
+                    AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio
+                ) {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    media_urls.push(format!("data:{mime};base64,{b64}"));
+                }
+            }
+            if !media_urls.is_empty() {
+                payload["type"] = json!("mms");
+                payload["mediaUrls"] = json!(media_urls);
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            payload["type"] = json!("mms");
+            payload["mediaUrls"] = json!([media_url]);
+        }
 
         let resp = self
             .client
@@ -84,11 +118,14 @@ impl NotifyProvider for MessageBirdProvider {
         let raw: serde_json::Value = resp.json().await.unwrap_or(json!({"status": status}));
 
         if (200..300).contains(&(status as usize)) {
-            Ok(
-                SendResponse::success("messagebird", "SMS sent via MessageBird")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            let msg = if message.has_attachments() {
+                "MMS sent with media via MessageBird"
+            } else {
+                "SMS sent via MessageBird"
+            };
+            Ok(SendResponse::success("messagebird", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             let error = raw
                 .get("errors")

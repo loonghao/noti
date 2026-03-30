@@ -1,10 +1,13 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
 /// Notica provider.
 ///
 /// Sends browser push notifications via Notica.
+/// Supports image attachments by embedding base64 data URIs in
+/// the notification payload.
 ///
 /// API reference: <https://notica.us/>
 pub struct NoticaProvider {
@@ -35,6 +38,10 @@ impl NotifyProvider for NoticaProvider {
         "notica://<token>"
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     fn params(&self) -> Vec<ParamDef> {
         vec![ParamDef::required("token", "Notica notification token").with_example("abc123")]
     }
@@ -49,11 +56,26 @@ impl NotifyProvider for NoticaProvider {
 
         let url = format!("https://notica.us/?{token}");
 
-        let body_text = if let Some(ref title) = message.title {
+        // Build notification text with embedded image data URIs
+        let mut body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)
         } else {
             message.text.clone()
         };
+
+        // Append image data as base64 data URIs in the payload
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    body_text.push_str(&format!(
+                        "\n[{}] data:{mime};base64,{b64}",
+                        attachment.effective_file_name()
+                    ));
+                }
+            }
+        }
 
         let params = [("payload", body_text.as_str())];
 

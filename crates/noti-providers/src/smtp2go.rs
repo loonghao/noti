@@ -46,6 +46,10 @@ impl NotifyProvider for Smtp2GoProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -83,6 +87,24 @@ impl NotifyProvider for Smtp2GoProvider {
         if let Some(bcc) = config.get("bcc") {
             let bcc_list: Vec<&str> = bcc.split(',').map(|e| e.trim()).collect();
             payload["bcc"] = json!(bcc_list);
+        }
+
+        // Add file attachments as base64-encoded content
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                attachments_json.push(json!({
+                    "filename": attachment.effective_file_name(),
+                    "fileblob": b64,
+                    "mimetype": attachment.effective_mime(),
+                }));
+            }
+            payload["attachments"] = json!(attachments_json);
         }
 
         let resp = self

@@ -1,6 +1,8 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -47,6 +49,10 @@ impl NotifyProvider for RyverProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -59,7 +65,7 @@ impl NotifyProvider for RyverProvider {
 
         let url = format!("https://{organization}.ryver.com/application/24/incoming/{token}");
 
-        let body_text = if let Some(ref title) = message.title {
+        let mut body_text = if let Some(ref title) = message.title {
             if matches!(message.format, MessageFormat::Markdown) {
                 format!("**{title}**\n\n{}", message.text)
             } else {
@@ -68,6 +74,21 @@ impl NotifyProvider for RyverProvider {
         } else {
             message.text.clone()
         };
+
+        // Embed images in markdown and list file attachments
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    body_text.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
+                } else {
+                    body_text.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+                }
+            }
+        }
 
         let payload = json!({
             "body": body_text

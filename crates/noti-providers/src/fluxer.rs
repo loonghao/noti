@@ -51,6 +51,10 @@ impl NotifyProvider for FluxerProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -74,7 +78,6 @@ impl NotifyProvider for FluxerProvider {
         });
 
         if let Some(ref title) = message.title {
-            // Use embed for title + body
             payload = json!({
                 "embeds": [{
                     "title": title,
@@ -95,13 +98,38 @@ impl NotifyProvider for FluxerProvider {
             payload["tts"] = json!(true);
         }
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+        let resp = if message.has_attachments() {
+            let mut form = reqwest::multipart::Form::new().text(
+                "payload_json",
+                serde_json::to_string(&payload)
+                    .map_err(|e| NotiError::Network(format!("JSON error: {e}")))?,
+            );
+
+            for (i, attachment) in message.attachments.iter().enumerate() {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
+                let part = reqwest::multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("invalid MIME type: {e}")))?;
+                form = form.part(format!("files[{i}]"), part);
+            }
+
+            self.client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        } else {
+            self.client
+                .post(&url)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        };
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp

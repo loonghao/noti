@@ -8,6 +8,7 @@ use serde_json::json;
 /// SendGrid email provider.
 ///
 /// Sends transactional email via the SendGrid Mail Send API v3.
+/// Supports file attachments encoded as base64 in the JSON payload.
 ///
 /// API reference: <https://docs.sendgrid.com/api-reference/mail-send/mail-send>
 pub struct SendGridProvider {
@@ -51,6 +52,10 @@ impl NotifyProvider for SendGridProvider {
             ParamDef::optional("bcc", "BCC email address(es), comma-separated")
                 .with_example("bcc@example.com"),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -103,12 +108,31 @@ impl NotifyProvider for SendGridProvider {
             }
         };
 
-        let payload = json!({
+        let mut payload = json!({
             "personalizations": [personalizations],
             "from": from_obj,
             "subject": subject,
             "content": content,
         });
+
+        // Add attachments as base64-encoded content
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                attachments_json.push(json!({
+                    "content": b64,
+                    "filename": attachment.effective_file_name(),
+                    "type": attachment.effective_mime(),
+                    "disposition": "attachment"
+                }));
+            }
+            payload["attachments"] = json!(attachments_json);
+        }
 
         let resp = self
             .client

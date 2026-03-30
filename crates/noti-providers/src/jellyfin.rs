@@ -1,11 +1,17 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// Jellyfin media server notification provider.
 ///
 /// Uses the Jellyfin REST API to send notifications to users.
+/// Supports image attachments via the `Url` field in the notification payload,
+/// using base64 data URIs for inline image display.
+///
 /// API docs: https://api.jellyfin.org/
 pub struct JellyfinProvider {
     client: Client,
@@ -35,6 +41,10 @@ impl NotifyProvider for JellyfinProvider {
         "jellyfin://<api_key>@<host>/<user_id>"
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     fn params(&self) -> Vec<ParamDef> {
         vec![
             ParamDef::required("api_key", "Jellyfin API key"),
@@ -62,14 +72,35 @@ impl NotifyProvider for JellyfinProvider {
         let base_url = format!("{scheme}://{host}");
 
         let name = message.title.as_deref().unwrap_or("noti");
-        let description = &message.text;
 
-        let payload = json!({
+        // Build description with attachment info
+        let mut description = message.text.clone();
+        if message.has_attachments() {
+            let non_images: Vec<_> = message
+                .attachments
+                .iter()
+                .filter(|a| a.kind != AttachmentKind::Image)
+                .collect();
+            for att in &non_images {
+                description.push_str(&format!("\n📎 {}", att.effective_file_name()));
+            }
+        }
+
+        let mut payload = json!({
             "Name": name,
             "Description": description,
             "Category": "Plugin",
             "NotificationType": "TaskCompleted"
         });
+
+        // Embed first image as a data URI in the Url field
+        if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["Url"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+        }
 
         let mut url = format!("{base_url}/Notifications/Admin");
 

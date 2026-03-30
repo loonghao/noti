@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -51,6 +54,10 @@ impl NotifyProvider for JoinProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -77,6 +84,18 @@ impl NotifyProvider for JoinProvider {
         }
         if let Some(url) = config.get("url") {
             params.push(("url", url.to_string()));
+        }
+
+        // Handle image attachments via the image parameter
+        if let Some(image_att) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = image_att.read_bytes().await?;
+            let mime = image_att.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            params.push(("image", format!("data:{mime};base64,{b64}")));
         }
 
         let resp = self

@@ -3,6 +3,7 @@ use noti_core::{
     Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
 use reqwest::Client;
+use reqwest::multipart;
 use serde_json::json;
 
 /// Discord webhook provider.
@@ -44,6 +45,10 @@ impl NotifyProvider for DiscordProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -55,39 +60,90 @@ impl NotifyProvider for DiscordProvider {
 
         let url = format!("https://discord.com/api/webhooks/{webhook_id}/{webhook_token}");
 
-        let mut payload = match message.format {
-            MessageFormat::Markdown | MessageFormat::Html => {
-                // Discord supports basic markdown natively in content
-                if let Some(ref title) = message.title {
-                    json!({
-                        "embeds": [{
-                            "title": title,
-                            "description": message.text
-                        }]
-                    })
-                } else {
+        let resp = if message.has_attachments() {
+            // Multipart upload with file attachments
+            let mut payload = match message.format {
+                MessageFormat::Markdown | MessageFormat::Html => {
+                    if let Some(ref title) = message.title {
+                        json!({
+                            "embeds": [{
+                                "title": title,
+                                "description": message.text
+                            }]
+                        })
+                    } else {
+                        json!({ "content": message.text })
+                    }
+                }
+                MessageFormat::Text => {
                     json!({ "content": message.text })
                 }
+            };
+
+            if let Some(username) = config.get("username") {
+                payload["username"] = json!(username);
             }
-            MessageFormat::Text => {
-                json!({ "content": message.text })
+            if let Some(avatar) = config.get("avatar_url") {
+                payload["avatar_url"] = json!(avatar);
             }
+
+            let mut form = multipart::Form::new().text(
+                "payload_json",
+                serde_json::to_string(&payload)
+                    .map_err(|e| NotiError::Network(format!("JSON error: {e}")))?,
+            );
+
+            for (i, attachment) in message.attachments.iter().enumerate() {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
+                let part = multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("invalid MIME type: {e}")))?;
+                form = form.part(format!("files[{i}]"), part);
+            }
+
+            self.client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        } else {
+            // Text-only JSON payload
+            let mut payload = match message.format {
+                MessageFormat::Markdown | MessageFormat::Html => {
+                    if let Some(ref title) = message.title {
+                        json!({
+                            "embeds": [{
+                                "title": title,
+                                "description": message.text
+                            }]
+                        })
+                    } else {
+                        json!({ "content": message.text })
+                    }
+                }
+                MessageFormat::Text => {
+                    json!({ "content": message.text })
+                }
+            };
+
+            if let Some(username) = config.get("username") {
+                payload["username"] = json!(username);
+            }
+            if let Some(avatar) = config.get("avatar_url") {
+                payload["avatar_url"] = json!(avatar);
+            }
+
+            self.client
+                .post(&url)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
         };
-
-        if let Some(username) = config.get("username") {
-            payload["username"] = json!(username);
-        }
-        if let Some(avatar) = config.get("avatar_url") {
-            payload["avatar_url"] = json!(avatar);
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
 
         let status = resp.status().as_u16();
 

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
@@ -6,6 +7,8 @@ use reqwest::Client;
 ///
 /// Publishes messages to an SNS topic via the AWS SNS REST API.
 /// Requires AWS credentials and a topic ARN.
+/// Supports attachments via MessageAttributes: images are embedded as base64
+/// in a `noti.image` attribute, and file metadata is included in `noti.attachments`.
 ///
 /// Note: Uses the SNS HTTP Query API directly, no AWS SDK required.
 pub struct SnsProvider {
@@ -34,6 +37,10 @@ impl NotifyProvider for SnsProvider {
 
     fn example_url(&self) -> &str {
         "sns://<access_key>:<secret_key>@<region>/<topic_arn>"
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     fn params(&self) -> Vec<ParamDef> {
@@ -76,16 +83,67 @@ impl NotifyProvider for SnsProvider {
             .unwrap_or("noti notification");
 
         // Use Query API (simpler than SigV4 for basic use)
-        // For production use, consider AWS SDK, but this works for basic notifications
         let timestamp = chrono_like_timestamp();
 
-        let params = vec![
-            ("Action", "Publish"),
-            ("TopicArn", topic_arn),
-            ("Message", &body_text),
-            ("Subject", subject),
-            ("Version", "2010-03-31"),
+        let mut params = vec![
+            ("Action".to_string(), "Publish".to_string()),
+            ("TopicArn".to_string(), topic_arn.to_string()),
+            ("Message".to_string(), body_text),
+            ("Subject".to_string(), subject.to_string()),
+            ("Version".to_string(), "2010-03-31".to_string()),
         ];
+
+        // Add attachments as MessageAttributes
+        if message.has_attachments() {
+            let mut attr_idx = 1;
+
+            // Embed first image as base64 data URI in a string attribute
+            if let Some(img) = message.first_image() {
+                if let Ok(data) = img.read_bytes().await {
+                    let mime = img.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let data_uri = format!("data:{mime};base64,{b64}");
+                    params.push((
+                        format!("MessageAttributes.entry.{attr_idx}.Name"),
+                        "noti.image".to_string(),
+                    ));
+                    params.push((
+                        format!("MessageAttributes.entry.{attr_idx}.Value.DataType"),
+                        "String".to_string(),
+                    ));
+                    params.push((
+                        format!("MessageAttributes.entry.{attr_idx}.Value.StringValue"),
+                        data_uri,
+                    ));
+                    attr_idx += 1;
+                }
+            }
+
+            // Add attachment metadata (names, types) as a JSON string attribute
+            let att_meta: Vec<serde_json::Value> = message
+                .attachments
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "name": a.effective_file_name(),
+                        "mime": a.effective_mime(),
+                        "kind": format!("{:?}", a.kind),
+                    })
+                })
+                .collect();
+            params.push((
+                format!("MessageAttributes.entry.{attr_idx}.Name"),
+                "noti.attachments".to_string(),
+            ));
+            params.push((
+                format!("MessageAttributes.entry.{attr_idx}.Value.DataType"),
+                "String".to_string(),
+            ));
+            params.push((
+                format!("MessageAttributes.entry.{attr_idx}.Value.StringValue"),
+                serde_json::to_string(&att_meta).unwrap_or_default(),
+            ));
+        }
 
         // Simple HMAC-based auth header
         let auth_header = format!(

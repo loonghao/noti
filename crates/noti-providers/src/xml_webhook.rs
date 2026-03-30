@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
@@ -51,6 +52,10 @@ impl NotifyProvider for XmlWebhookProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -74,8 +79,30 @@ impl NotifyProvider for XmlWebhookProvider {
             Some(t) => format!("<title>{}</title>", escape_xml(t)),
             None => String::new(),
         };
+
+        // Build attachments XML if present
+        let attachments_xml = if message.has_attachments() {
+            let mut xml_parts = String::from("<attachments>");
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                let mime = attachment.effective_mime();
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                xml_parts.push_str(&format!(
+                    "<attachment><filename>{}</filename><mimetype>{}</mimetype><content>{}</content></attachment>",
+                    escape_xml(&file_name),
+                    escape_xml(&mime),
+                    b64
+                ));
+            }
+            xml_parts.push_str("</attachments>");
+            xml_parts
+        } else {
+            String::new()
+        };
+
         let xml_body = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<{root}>{title_xml}<message>{}</message><type>{}</type></{root}>",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<{root}>{title_xml}<message>{}</message><type>{}</type>{attachments_xml}</{root}>",
             escape_xml(&message.text),
             escape_xml(noti_type),
         );

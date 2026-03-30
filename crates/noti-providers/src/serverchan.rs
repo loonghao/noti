@@ -1,8 +1,14 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
 /// ServerChan (Server酱) push notification provider.
+///
+/// Supports image attachments embedded as base64 data URIs in the markdown
+/// `desp` field. Non-image attachments are listed as file references.
 pub struct ServerChanProvider {
     client: Client,
 }
@@ -38,6 +44,10 @@ impl NotifyProvider for ServerChanProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -50,7 +60,26 @@ impl NotifyProvider for ServerChanProvider {
 
         let title = message.title.as_deref().unwrap_or("Notification");
 
-        let form = vec![("title", title.to_string()), ("desp", message.text.clone())];
+        // Build desp with embedded attachments
+        let desp = if message.has_attachments() {
+            let mut md = message.text.clone();
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    md.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
+                } else {
+                    md.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+                }
+            }
+            md
+        } else {
+            message.text.clone()
+        };
+
+        let form = vec![("title", title.to_string()), ("desp", desp)];
 
         let resp = self
             .client

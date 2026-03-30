@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// D7 Networks SMS provider.
+/// D7 Networks SMS/MMS provider.
 ///
-/// Sends SMS messages via the D7 Networks REST API.
-/// Requires an API token/key.
+/// Sends messages via the D7 Networks REST API.
+/// Supports media attachments via WhatsApp/Viber channels and data URIs.
 pub struct D7NetworksProvider {
     client: Client,
 }
@@ -28,7 +31,7 @@ impl NotifyProvider for D7NetworksProvider {
     }
 
     fn description(&self) -> &str {
-        "D7 Networks SMS gateway"
+        "D7 Networks SMS/messaging gateway"
     }
 
     fn example_url(&self) -> &str {
@@ -43,7 +46,15 @@ impl NotifyProvider for D7NetworksProvider {
             ParamDef::optional("from", "Sender ID / phone number").with_example("SMSINFO"),
             ParamDef::optional("channel", "Channel: sms, whatsapp, viber (default: sms)")
                 .with_example("sms"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for media attachment (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -65,14 +76,47 @@ impl NotifyProvider for D7NetworksProvider {
             message.text.clone()
         };
 
+        let mut msg_type = "text";
+        let mut media_data = None;
+
+        // Handle attachments
+        if message.has_attachments() {
+            if let Some(attachment) = message.attachments.iter().find(|a| {
+                matches!(
+                    a.kind,
+                    AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio
+                )
+            }) {
+                let data = attachment.read_bytes().await?;
+                let mime = attachment.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                media_data = Some(json!({
+                    "media_url": format!("data:{mime};base64,{b64}"),
+                    "media_type": mime
+                }));
+                msg_type = "media";
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            media_data = Some(json!({
+                "media_url": media_url
+            }));
+            msg_type = "media";
+        }
+
+        let mut msg_payload = json!({
+            "channel": channel,
+            "recipients": [to],
+            "content": body_text,
+            "msg_type": msg_type,
+            "data_coding": "text"
+        });
+
+        if let Some(ref media) = media_data {
+            msg_payload["media"] = media.clone();
+        }
+
         let payload = json!({
-            "messages": [{
-                "channel": channel,
-                "recipients": [to],
-                "content": body_text,
-                "msg_type": "text",
-                "data_coding": "text"
-            }],
+            "messages": [msg_payload],
             "message_globals": {
                 "originator": from,
                 "report_url": ""
@@ -95,7 +139,12 @@ impl NotifyProvider for D7NetworksProvider {
             .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
 
         if (200..300).contains(&(status as usize)) {
-            Ok(SendResponse::success("d7sms", "SMS sent via D7 Networks")
+            let msg = if message.has_attachments() {
+                "message sent with media via D7 Networks"
+            } else {
+                "SMS sent via D7 Networks"
+            };
+            Ok(SendResponse::success("d7sms", msg)
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {

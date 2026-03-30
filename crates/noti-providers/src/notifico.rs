@@ -1,8 +1,13 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
+use serde_json::json;
 
 /// Notifico self-hosted notification service.
+///
+/// Supports attachments by embedding base64-encoded file data in the webhook
+/// JSON payload under the `attachments` key.
 ///
 /// Reference: https://n2.notifico.tech/
 pub struct NotificoProvider {
@@ -33,6 +38,10 @@ impl NotifyProvider for NotificoProvider {
         "notifico://<project_id>/<msghook>"
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     fn params(&self) -> Vec<ParamDef> {
         vec![
             ParamDef::required("project_id", "Notifico project ID"),
@@ -57,7 +66,31 @@ impl NotifyProvider for NotificoProvider {
 
         let url = format!("{host}/hook/{project_id}/{msghook}");
 
-        let body = serde_json::json!({ "payload": message.text });
+        let mut body = json!({ "payload": message.text });
+
+        // Add title if present
+        if let Some(ref title) = message.title {
+            body["title"] = json!(title);
+        }
+
+        // Add attachments as base64-encoded data in the JSON payload
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    attachments_json.push(json!({
+                        "name": attachment.effective_file_name(),
+                        "mime": attachment.effective_mime(),
+                        "data": b64,
+                        "kind": format!("{:?}", attachment.kind),
+                    }));
+                }
+            }
+            if !attachments_json.is_empty() {
+                body["attachments"] = json!(attachments_json);
+            }
+        }
 
         let resp = self
             .client

@@ -6,6 +6,10 @@ use reqwest::Client;
 use serde_json::json;
 
 /// Gotify self-hosted push notification provider.
+///
+/// Gotify does not natively support file attachments in its API,
+/// but images can be embedded in markdown messages. For file attachments,
+/// the file info is mentioned in the message body.
 pub struct GotifyProvider {
     client: Client,
 }
@@ -43,6 +47,10 @@ impl NotifyProvider for GotifyProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,14 +64,25 @@ impl NotifyProvider for GotifyProvider {
 
         let priority: i32 = config.get("priority").unwrap_or("5").parse().unwrap_or(5);
 
-        let content_type = match message.format {
-            MessageFormat::Markdown => "text/markdown",
-            MessageFormat::Html => "text/html",
-            MessageFormat::Text => "text/plain",
+        // Build message text — if attachments present, embed info in markdown
+        let (body_text, content_type) = if message.has_attachments() {
+            let mut md = message.text.clone();
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                md.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+            }
+            (md, "text/markdown")
+        } else {
+            let ct = match message.format {
+                MessageFormat::Markdown => "text/markdown",
+                MessageFormat::Html => "text/html",
+                MessageFormat::Text => "text/plain",
+            };
+            (message.text.clone(), ct)
         };
 
         let mut payload = json!({
-            "message": message.text,
+            "message": body_text,
             "priority": priority,
             "extras": {
                 "client::display": {

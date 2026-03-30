@@ -7,6 +7,7 @@ use serde_json::json;
 ///
 /// Uses the signal-cli REST API to send messages through Signal.
 /// Requires a running signal-cli-rest-api instance.
+/// Supports file attachments via base64 encoding.
 ///
 /// API docs: <https://github.com/bbernhard/signal-cli-rest-api>
 pub struct SignalProvider {
@@ -51,6 +52,10 @@ impl NotifyProvider for SignalProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -68,11 +73,31 @@ impl NotifyProvider for SignalProvider {
             text = format!("*{title}*\n\n{text}");
         }
 
-        let payload = json!({
+        let mut payload = json!({
             "message": text,
             "number": from,
             "recipients": [to],
         });
+
+        // Add base64-encoded attachments
+        if message.has_attachments() {
+            let mut base64_attachments = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                let mime_str = attachment.effective_mime();
+                let file_name = attachment.effective_file_name();
+                base64_attachments.push(json!({
+                    "contentType": mime_str,
+                    "filename": file_name,
+                    "base64": b64,
+                }));
+            }
+            payload["base64_attachments"] = json!(base64_attachments);
+        }
 
         let resp = self
             .client

@@ -50,6 +50,10 @@ impl NotifyProvider for BrevoProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -101,6 +105,23 @@ impl NotifyProvider for BrevoProvider {
 
         if let Some(reply_to) = config.get("reply_to") {
             payload["replyTo"] = json!({"email": reply_to});
+        }
+
+        // Add file attachments as base64-encoded content
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                attachments_json.push(json!({
+                    "content": b64,
+                    "name": attachment.effective_file_name(),
+                }));
+            }
+            payload["attachment"] = json!(attachments_json);
         }
 
         let resp = self

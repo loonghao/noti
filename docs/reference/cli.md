@@ -31,6 +31,8 @@ noti send [OPTIONS] --message <MESSAGE>
 | `--message <TEXT>` | **Required.** Message body |
 | `--title <TEXT>` | Message title/subject |
 | `--format <FORMAT>` | Message format: `text`, `markdown`, `html` |
+| `--file <PATH>`, `-f` | File attachment (repeatable). Auto-detects MIME type. |
+| `--timeout <SECONDS>` | Request timeout in seconds (default: 30) |
 
 **Examples:**
 
@@ -39,6 +41,8 @@ noti send --to "wecom://<key>" --message "Hello"
 noti send --profile my-team --message "Build passed"
 noti send --provider slack --param webhook_url=... --message "Hello"
 noti --json send --to "tg://<bot>/<chat>" --message "Alert"
+noti send --to "slack://<tokens>" --message "Report" --file report.pdf
+noti send --to "discord://<webhook>" --message "Images" -f a.png -f b.png
 ```
 
 ### `config`

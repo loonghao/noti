@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// Sinch SMS provider.
+/// Sinch SMS/MMS provider.
 ///
-/// Sends SMS messages via the Sinch REST API.
-/// Requires service plan ID, API token, sender, and recipient.
+/// Sends SMS/MMS messages via the Sinch REST API.
+/// Supports MMS with media_body for image/video attachments.
 pub struct SinchProvider {
     client: Client,
 }
@@ -28,7 +31,7 @@ impl NotifyProvider for SinchProvider {
     }
 
     fn description(&self) -> &str {
-        "Sinch SMS via REST API"
+        "Sinch SMS/MMS via REST API"
     }
 
     fn example_url(&self) -> &str {
@@ -45,7 +48,15 @@ impl NotifyProvider for SinchProvider {
             ParamDef::required("to", "Recipient phone number (E.164 format)")
                 .with_example("+15559876543"),
             ParamDef::optional("region", "API region: us or eu (default: us)").with_example("us"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for MMS media (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -73,11 +84,39 @@ impl NotifyProvider for SinchProvider {
             message.text.clone()
         };
 
-        let payload = json!({
+        let mut payload = json!({
             "from": from,
             "to": [to],
             "body": body_text
         });
+
+        // Add MMS media attachments
+        if message.has_attachments() {
+            let mut media_body = Vec::new();
+            for attachment in &message.attachments {
+                if matches!(
+                    attachment.kind,
+                    AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio
+                ) {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    media_body.push(json!({
+                        "url": format!("data:{mime};base64,{b64}"),
+                        "content_type": mime
+                    }));
+                }
+            }
+            if !media_body.is_empty() {
+                payload["type"] = json!("mt_media");
+                payload["media_body"] = json!(media_body);
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            payload["type"] = json!("mt_media");
+            payload["media_body"] = json!([{
+                "url": media_url
+            }]);
+        }
 
         let resp = self
             .client
@@ -96,11 +135,14 @@ impl NotifyProvider for SinchProvider {
 
         if (200..300).contains(&(status as usize)) {
             let batch_id = raw.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-            Ok(
-                SendResponse::success("sinch", format!("SMS sent (batch: {batch_id})"))
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            let msg = if message.has_attachments() {
+                format!("MMS sent with attachments (batch: {batch_id})")
+            } else {
+                format!("SMS sent (batch: {batch_id})")
+            };
+            Ok(SendResponse::success("sinch", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             let error = raw
                 .get("text")

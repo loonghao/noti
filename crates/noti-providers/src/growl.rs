@@ -1,11 +1,16 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// Growl notification provider via HTTP relay.
 ///
 /// Growl uses GNTP (Growl Notification Transport Protocol).
+/// Supports image attachments via the GNTP `Notification-Icon` resource header.
+///
 /// This implementation uses a Growl-compatible HTTP relay (e.g., prowl-like
 /// forwarding) or a Growl REST endpoint if available.
 pub struct GrowlProvider {
@@ -50,6 +55,10 @@ impl NotifyProvider for GrowlProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -67,23 +76,60 @@ impl NotifyProvider for GrowlProvider {
         // Use GNTP over HTTP (some Growl-compatible implementations support REST)
         let url = format!("{scheme}://{host}:{port}/gntp");
 
-        let gntp_message = format!(
+        // Build GNTP message with optional icon resource
+        let mut gntp_message = format!(
             "GNTP/1.0 NOTIFY NONE\r\n\
             Application-Name: noti\r\n\
             Notification-Name: General\r\n\
             Notification-Title: {title}\r\n\
             Notification-Text: {text}\r\n\
             Notification-Priority: {priority}\r\n\
-            Notification-Sticky: {sticky}\r\n\
-            \r\n",
+            Notification-Sticky: {sticky}\r\n",
             text = message.text,
         );
+
+        // Embed image attachment as Notification-Icon resource
+        let mut icon_data: Option<Vec<u8>> = None;
+        if message.has_attachments() {
+            if let Some(img) = message
+                .attachments
+                .iter()
+                .find(|a| matches!(a.kind, AttachmentKind::Image))
+            {
+                let data = img.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let mime = img.effective_mime();
+                // Use data URI as icon URL (GNTP 1.0 supports resource identifiers)
+                gntp_message.push_str(&format!(
+                    "Notification-Icon: data:{mime};base64,{b64}\r\n"
+                ));
+                icon_data = Some(data);
+            }
+        }
+
+        gntp_message.push_str("\r\n");
+
+        // If we have icon data, append it as GNTP binary resource section
+        let body = if let Some(ref data) = icon_data {
+            let mut full = gntp_message.into_bytes();
+            // GNTP binary resource identifier section
+            let resource_header = format!(
+                "Identifier: icon\r\nLength: {}\r\n\r\n",
+                data.len()
+            );
+            full.extend_from_slice(resource_header.as_bytes());
+            full.extend_from_slice(data);
+            full.extend_from_slice(b"\r\n\r\n");
+            full
+        } else {
+            gntp_message.into_bytes()
+        };
 
         let mut req = self
             .client
             .post(&url)
             .header("Content-Type", "application/x-gntp")
-            .body(gntp_message);
+            .body(body);
 
         if let Some(password) = config.get("password") {
             req = req.header("X-Growl-Password", password);
@@ -95,7 +141,7 @@ impl NotifyProvider for GrowlProvider {
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
         let status = resp.status().as_u16();
-        let body = resp
+        let resp_body = resp
             .text()
             .await
             .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
@@ -107,9 +153,9 @@ impl NotifyProvider for GrowlProvider {
             )
         } else {
             Ok(
-                SendResponse::failure("growl", format!("GNTP error: {body}"))
+                SendResponse::failure("growl", format!("GNTP error: {resp_body}"))
                     .with_status_code(status)
-                    .with_raw_response(json!({ "body": body })),
+                    .with_raw_response(json!({ "body": resp_body })),
             )
         }
     }

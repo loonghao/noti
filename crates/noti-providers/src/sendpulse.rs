@@ -1,8 +1,12 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
+use serde_json::json;
 
 /// SendPulse transactional email via SMTP API.
+///
+/// Supports file attachments via base64-encoded content in the email payload.
 ///
 /// API reference: https://sendpulse.com/integrations/api
 pub struct SendPulseProvider {
@@ -44,6 +48,10 @@ impl NotifyProvider for SendPulseProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -63,7 +71,7 @@ impl NotifyProvider for SendPulseProvider {
         let token_resp = self
             .client
             .post("https://api.sendpulse.com/oauth/access_token")
-            .json(&serde_json::json!({
+            .json(&json!({
                 "grant_type": "client_credentials",
                 "client_id": client_id,
                 "client_secret": client_secret
@@ -85,8 +93,8 @@ impl NotifyProvider for SendPulseProvider {
                 )
             })?;
 
-        // Step 2: Send email
-        let body = serde_json::json!({
+        // Step 2: Build email payload
+        let mut email_payload = json!({
             "email": {
                 "subject": subject,
                 "from": { "name": from_name, "email": from },
@@ -96,11 +104,24 @@ impl NotifyProvider for SendPulseProvider {
             }
         });
 
+        // Step 3: Add attachments if present
+        if message.has_attachments() {
+            let mut attachments_map = serde_json::Map::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                attachments_map.insert(file_name, json!(b64));
+            }
+            email_payload["email"]["attachments_binary"] =
+                serde_json::Value::Object(attachments_map);
+        }
+
         let resp = self
             .client
             .post("https://api.sendpulse.com/smtp/emails")
             .bearer_auth(access_token)
-            .json(&body)
+            .json(&email_payload)
             .send()
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;
@@ -109,11 +130,14 @@ impl NotifyProvider for SendPulseProvider {
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
         if (200..300).contains(&status) {
-            Ok(
-                SendResponse::success("sendpulse", "email sent successfully")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            let msg = if message.has_attachments() {
+                "email with attachments sent successfully"
+            } else {
+                "email sent successfully"
+            };
+            Ok(SendResponse::success("sendpulse", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             Ok(
                 SendResponse::failure("sendpulse", format!("SendPulse API error: {raw}"))

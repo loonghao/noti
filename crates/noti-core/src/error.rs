@@ -22,6 +22,10 @@ pub enum NotiError {
     /// Parameter validation error.
     #[error("validation error: {0}")]
     Validation(String),
+
+    /// File I/O error (e.g. reading an attachment).
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl NotiError {

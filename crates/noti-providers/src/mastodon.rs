@@ -6,6 +6,7 @@ use serde_json::json;
 /// Mastodon provider.
 ///
 /// Posts a status (toot) via the Mastodon REST API.
+/// Supports media attachments (images, video, audio) via the media upload endpoint.
 ///
 /// API reference: <https://docs.joinmastodon.org/methods/statuses/#create>
 pub struct MastodonProvider {
@@ -52,6 +53,10 @@ impl NotifyProvider for MastodonProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -61,7 +66,57 @@ impl NotifyProvider for MastodonProvider {
         let access_token = config.require("access_token", "mastodon")?;
         let instance = config.require("instance", "mastodon")?;
 
-        let url = format!("https://{instance}/api/v1/statuses");
+        // Upload media attachments first
+        let mut media_ids: Vec<String> = Vec::new();
+        for attachment in &message.attachments {
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
+
+            let file_part = reqwest::multipart::Part::bytes(data)
+                .file_name(file_name.clone())
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+            let form = reqwest::multipart::Form::new()
+                .part("file", file_part)
+                .text("description", file_name);
+
+            let upload_url = format!("https://{instance}/api/v2/media");
+            let resp = self
+                .client
+                .post(&upload_url)
+                .header("Authorization", format!("Bearer {access_token}"))
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let status = resp.status().as_u16();
+            let raw: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
+
+            // v2 media upload returns 200 or 202 with an id
+            if (200..300).contains(&status) {
+                if let Some(id) = raw.get("id").and_then(|v| v.as_str()) {
+                    media_ids.push(id.to_string());
+                }
+            } else {
+                let error_msg = raw
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("upload failed");
+                return Ok(
+                    SendResponse::failure("mastodon", format!("media upload error: {error_msg}"))
+                        .with_status_code(status)
+                        .with_raw_response(raw),
+                );
+            }
+        }
+
+        let status_url = format!("https://{instance}/api/v1/statuses");
 
         let status_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)
@@ -80,9 +135,13 @@ impl NotifyProvider for MastodonProvider {
             payload["spoiler_text"] = json!(spoiler);
         }
 
+        if !media_ids.is_empty() {
+            payload["media_ids"] = json!(media_ids);
+        }
+
         let resp = self
             .client
-            .post(&url)
+            .post(&status_url)
             .header("Authorization", format!("Bearer {access_token}"))
             .json(&payload)
             .send()

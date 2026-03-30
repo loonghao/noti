@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -47,6 +50,10 @@ impl NotifyProvider for WxPusherProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -63,16 +70,40 @@ impl NotifyProvider for WxPusherProvider {
             .and_then(|v| v.parse::<i32>().ok())
             .unwrap_or(1);
 
-        let content = if let Some(ref title) = message.title {
-            format!("{title}\n\n{}", message.text)
+        // Build content with embedded images for attachments
+        let (content, effective_content_type) = if message.has_attachments() {
+            let mut html = if let Some(ref title) = message.title {
+                format!("<h3>{title}</h3><p>{}</p>", message.text)
+            } else {
+                format!("<p>{}</p>", message.text)
+            };
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    html.push_str(&format!(
+                        "<p><img src=\"data:{mime};base64,{b64}\" alt=\"{file_name}\" style=\"max-width:100%\" /></p>"
+                    ));
+                } else {
+                    html.push_str(&format!("<p>📎 Attachment: {file_name}</p>"));
+                }
+            }
+            (html, 2) // contentType 2 = HTML
         } else {
-            message.text.clone()
+            let content = if let Some(ref title) = message.title {
+                format!("{title}\n\n{}", message.text)
+            } else {
+                message.text.clone()
+            };
+            (content, content_type)
         };
 
         let mut payload = json!({
             "appToken": app_token,
             "content": content,
-            "contentType": content_type,
+            "contentType": effective_content_type,
             "uids": [uid],
         });
 

@@ -1,11 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// ClickSend SMS provider.
+/// ClickSend SMS/MMS provider.
 ///
 /// Sends SMS messages via the ClickSend REST API v3.
+/// Supports MMS media attachments (images) via the ClickSend MMS API.
 ///
 /// API reference: <https://developers.clicksend.com/docs/rest/v3/>
 pub struct ClickSendProvider {
@@ -29,7 +33,7 @@ impl NotifyProvider for ClickSendProvider {
     }
 
     fn description(&self) -> &str {
-        "ClickSend SMS messaging gateway"
+        "ClickSend SMS/MMS messaging gateway"
     }
 
     fn example_url(&self) -> &str {
@@ -47,6 +51,10 @@ impl NotifyProvider for ClickSendProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -57,6 +65,75 @@ impl NotifyProvider for ClickSendProvider {
         let api_key = config.require("api_key", "clicksend")?;
         let to = config.require("to", "clicksend")?;
 
+        let auth =
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{api_key}"));
+
+        // If there are image attachments, use MMS API
+        if let Some(img) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = img.read_bytes().await?;
+            let mime_str = img.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            let data_uri = format!("data:{mime_str};base64,{b64}");
+
+            let mut mms_message = json!({
+                "body": message.text,
+                "to": to,
+                "subject": message.title.as_deref().unwrap_or("MMS"),
+                "media_file": data_uri,
+                "source": "noti-cli",
+            });
+
+            if let Some(from) = config.get("from") {
+                mms_message["from"] = json!(from);
+            }
+
+            let payload = json!({
+                "media_file": data_uri,
+                "messages": [mms_message],
+            });
+
+            let resp = self
+                .client
+                .post("https://rest.clicksend.com/v3/mms/send")
+                .header("Authorization", format!("Basic {auth}"))
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let status = resp.status().as_u16();
+            let raw: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| {
+                    NotiError::Network(format!("failed to parse response: {e}"))
+                })?;
+
+            let http_code = raw.get("http_code").and_then(|v| v.as_u64()).unwrap_or(0);
+            if http_code == 200 {
+                return Ok(
+                    SendResponse::success("clicksend", "MMS sent with image via ClickSend")
+                        .with_status_code(status)
+                        .with_raw_response(raw),
+                );
+            } else {
+                let msg = raw
+                    .get("response_msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown error");
+                return Ok(
+                    SendResponse::failure("clicksend", format!("MMS API error: {msg}"))
+                        .with_status_code(status)
+                        .with_raw_response(raw),
+                );
+            }
+        }
+
+        // Standard SMS
         let url = "https://rest.clicksend.com/v3/sms/send";
 
         let mut sms_message = json!({
@@ -75,9 +152,6 @@ impl NotifyProvider for ClickSendProvider {
         let payload = json!({
             "messages": [sms_message],
         });
-
-        let auth =
-            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{api_key}"));
 
         let resp = self
             .client
@@ -113,5 +187,3 @@ impl NotifyProvider for ClickSendProvider {
         }
     }
 }
-
-use base64::Engine;

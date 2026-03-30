@@ -1,11 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// LaMetric Time smart clock notification provider.
 ///
-/// Sends notifications to LaMetric Time devices via local API or LaMetric Cloud.
+/// Sends notifications to LaMetric Time devices via local API.
+/// Supports custom icon images via file attachments (base64-encoded).
 pub struct LaMetricProvider {
     client: Client,
 }
@@ -51,6 +55,10 @@ impl NotifyProvider for LaMetricProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -62,7 +70,6 @@ impl NotifyProvider for LaMetricProvider {
 
         let url = format!("https://{host}:4343/api/v2/device/notifications");
 
-        let icon = config.get("icon").unwrap_or("i124");
         let priority = config.get("priority").unwrap_or("info");
         let cycles = config
             .get("cycles")
@@ -75,8 +82,22 @@ impl NotifyProvider for LaMetricProvider {
             message.text.clone()
         };
 
+        // Determine icon: use attachment image as base64, or config icon ID
+        let icon_value = if let Some(attachment) = message
+            .attachments
+            .iter()
+            .find(|a| matches!(a.kind, AttachmentKind::Image))
+        {
+            let data = attachment.read_bytes().await?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            // LaMetric supports base64 icon data with "data:" prefix
+            json!(format!("data:image/png;base64,{b64}"))
+        } else {
+            json!(config.get("icon").unwrap_or("i124"))
+        };
+
         let frame = json!({
-            "icon": icon,
+            "icon": icon_value,
             "text": text
         });
 
@@ -112,11 +133,14 @@ impl NotifyProvider for LaMetricProvider {
             .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
 
         if (200..300).contains(&(status as usize)) {
-            Ok(
-                SendResponse::success("lametric", "notification sent to LaMetric device")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            let msg = if message.has_attachments() {
+                "notification with custom icon sent to LaMetric device"
+            } else {
+                "notification sent to LaMetric device"
+            };
+            Ok(SendResponse::success("lametric", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             let error = raw
                 .get("errors")

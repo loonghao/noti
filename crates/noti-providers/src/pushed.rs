@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,6 +7,7 @@ use serde_json::json;
 /// Pushed.co push notification provider.
 ///
 /// Uses the Pushed.co REST API to send push notifications.
+/// Supports image attachments via content_extra with base64 data URI.
 /// API docs: https://about.pushed.co/docs/api
 pub struct PushedProvider {
     client: Client,
@@ -50,6 +52,10 @@ impl NotifyProvider for PushedProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -70,6 +76,16 @@ impl NotifyProvider for PushedProvider {
 
         if let Some(alias) = config.get("target_alias") {
             payload["target_alias"] = json!(alias);
+        }
+
+        // Embed first image attachment as base64 data URI in content_extra
+        if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["content_extra"] = json!(format!("data:{mime};base64,{b64}"));
+                payload["content_type"] = json!("url");
+            }
         }
 
         let resp = self
