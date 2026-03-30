@@ -14,6 +14,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/send/batch", post(handlers::send::send_batch))
         // Async queue-based notification
         .route("/api/v1/send/async", post(handlers::queue::send_async))
+        .route(
+            "/api/v1/send/async/batch",
+            post(handlers::queue::send_async_batch),
+        )
         // Status endpoints
         .route(
             "/api/v1/status/{notification_id}",

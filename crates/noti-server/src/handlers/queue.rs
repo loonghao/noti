@@ -107,6 +107,72 @@ pub struct CancelResponse {
     pub message: String,
 }
 
+// ───────────────────── Batch async types ─────────────────────
+
+/// A single notification item within a batch async request.
+#[derive(Debug, Deserialize)]
+pub struct BatchAsyncItem {
+    /// Provider name (e.g. "slack", "email", "webhook").
+    pub provider: String,
+    /// Provider-specific configuration values.
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+    /// Message body text.
+    pub text: String,
+    /// Optional message title/subject.
+    pub title: Option<String>,
+    /// Message format: "text", "markdown", or "html".
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Priority: "low", "normal", "high", "urgent".
+    pub priority: Option<String>,
+    /// Extra provider-specific parameters.
+    #[serde(default)]
+    pub extra: HashMap<String, serde_json::Value>,
+    /// Retry policy configuration.
+    pub retry: Option<RetryConfig>,
+    /// Optional metadata for tracking/correlation.
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Request body for batch async notification enqueue.
+#[derive(Debug, Deserialize)]
+pub struct BatchAsyncRequest {
+    /// List of notifications to enqueue.
+    pub items: Vec<BatchAsyncItem>,
+}
+
+/// Per-item result in a batch enqueue response.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchEnqueueItemResult {
+    /// Index of the item in the request.
+    pub index: usize,
+    /// Provider name.
+    pub provider: String,
+    /// Whether the enqueue succeeded.
+    pub success: bool,
+    /// Task ID if successful.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    /// Error message if failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Response for batch async enqueue.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchEnqueueResponse {
+    /// Per-item results.
+    pub results: Vec<BatchEnqueueItemResult>,
+    /// Number of successfully enqueued items.
+    pub enqueued: usize,
+    /// Number of failed items.
+    pub failed: usize,
+    /// Total items in the request.
+    pub total: usize,
+}
+
 // ───────────────────── Helpers ─────────────────────
 
 fn build_message(
@@ -240,6 +306,95 @@ pub async fn send_async(
     ))
 }
 
+/// POST /api/v1/send/async/batch — Enqueue multiple notifications for async processing.
+pub async fn send_async_batch(
+    State(state): State<AppState>,
+    Json(req): Json<BatchAsyncRequest>,
+) -> Result<(StatusCode, Json<BatchEnqueueResponse>), (StatusCode, Json<serde_json::Value>)> {
+    if req.items.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "items array must not be empty"
+            })),
+        ));
+    }
+
+    let total = req.items.len();
+    let mut results = Vec::with_capacity(total);
+    let mut enqueued = 0usize;
+    let mut failed = 0usize;
+
+    for (index, item) in req.items.into_iter().enumerate() {
+        // Validate provider exists
+        if state.registry.get_by_name(&item.provider).is_none() {
+            results.push(BatchEnqueueItemResult {
+                index,
+                provider: item.provider,
+                success: false,
+                task_id: None,
+                error: Some("provider not found".to_string()),
+            });
+            failed += 1;
+            continue;
+        }
+
+        let config = ProviderConfig {
+            values: item.config,
+        };
+
+        let msg = build_message(
+            &item.text,
+            item.title.as_deref(),
+            item.format.as_deref(),
+            item.priority.as_deref(),
+            &item.extra,
+        );
+
+        let policy = build_retry_policy(item.retry.as_ref());
+
+        let mut task = NotificationTask::new(&item.provider, config, msg)
+            .with_retry_policy(policy);
+
+        for (k, v) in &item.metadata {
+            task = task.with_metadata(k, v);
+        }
+
+        match state.queue.enqueue(task).await {
+            Ok(task_id) => {
+                results.push(BatchEnqueueItemResult {
+                    index,
+                    provider: item.provider,
+                    success: true,
+                    task_id: Some(task_id),
+                    error: None,
+                });
+                enqueued += 1;
+            }
+            Err(e) => {
+                results.push(BatchEnqueueItemResult {
+                    index,
+                    provider: item.provider,
+                    success: false,
+                    task_id: None,
+                    error: Some(e.to_string()),
+                });
+                failed += 1;
+            }
+        }
+    }
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(BatchEnqueueResponse {
+            results,
+            enqueued,
+            failed,
+            total,
+        }),
+    ))
+}
+
 /// GET /api/v1/queue/tasks/{task_id} — Get status of a queued task.
 pub async fn get_task(
     State(state): State<AppState>,
@@ -352,6 +507,7 @@ mod tests {
         let state = AppState::new(ProviderRegistry::new());
         Router::new()
             .route("/api/v1/send/async", post(send_async))
+            .route("/api/v1/send/async/batch", post(send_async_batch))
             .route("/api/v1/queue/tasks", get(list_tasks))
             .route("/api/v1/queue/tasks/{task_id}", get(get_task))
             .route(
@@ -444,5 +600,62 @@ mod tests {
 
         let tasks: Vec<TaskInfo> = resp.json();
         assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_batch_async_empty_items() {
+        let server = TestServer::new(build_test_app());
+
+        let body = serde_json::json!({
+            "items": []
+        });
+
+        let resp = server.post("/api/v1/send/async/batch").json(&body).await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["error"], "items array must not be empty");
+    }
+
+    #[tokio::test]
+    async fn test_batch_async_all_unknown_providers() {
+        let server = TestServer::new(build_test_app());
+
+        let body = serde_json::json!({
+            "items": [
+                {"provider": "nonexistent1", "text": "hello"},
+                {"provider": "nonexistent2", "text": "world"}
+            ]
+        });
+
+        let resp = server.post("/api/v1/send/async/batch").json(&body).await;
+        resp.assert_status(StatusCode::ACCEPTED);
+
+        let result: BatchEnqueueResponse = resp.json();
+        assert_eq!(result.total, 2);
+        assert_eq!(result.enqueued, 0);
+        assert_eq!(result.failed, 2);
+        assert!(!result.results[0].success);
+        assert!(result.results[0].error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_batch_async_response_structure() {
+        let server = TestServer::new(build_test_app());
+
+        let body = serde_json::json!({
+            "items": [
+                {"provider": "unknown", "text": "test"}
+            ]
+        });
+
+        let resp = server.post("/api/v1/send/async/batch").json(&body).await;
+        resp.assert_status(StatusCode::ACCEPTED);
+
+        let result: BatchEnqueueResponse = resp.json();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.results.len(), 1);
+        assert_eq!(result.results[0].index, 0);
+        assert_eq!(result.results[0].provider, "unknown");
     }
 }
