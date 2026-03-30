@@ -43,7 +43,7 @@ impl NotifyProvider for StatuspageProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        false
+        true
     }
 
     fn params(&self) -> Vec<ParamDef> {
