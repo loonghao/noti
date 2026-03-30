@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use noti_core::ProviderRegistry;
+use noti_queue::WorkerConfig;
 use noti_server::state::AppState;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -19,6 +20,10 @@ async fn main() {
 
     let state = AppState::new(registry);
 
+    // Start background worker pool (4 concurrent workers by default)
+    let worker_handle = state.start_workers(WorkerConfig::default());
+    tracing::info!("queue worker pool started");
+
     let app = noti_server::routes::build_router(state)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
@@ -28,4 +33,7 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+
+    // Graceful shutdown of workers (reached on server exit)
+    worker_handle.shutdown_and_join().await;
 }

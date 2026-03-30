@@ -1382,6 +1382,7 @@ dependencies = [
  "axum-test",
  "noti-core",
  "noti-providers",
+ "noti-queue",
  "rstest",
  "serde",
  "serde_json",

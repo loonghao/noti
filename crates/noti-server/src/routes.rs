@@ -9,9 +9,11 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Health check
         .route("/health", get(handlers::health::health_check))
-        // Notification endpoints
+        // Synchronous notification endpoints
         .route("/api/v1/send", post(handlers::send::send_notification))
         .route("/api/v1/send/batch", post(handlers::send::send_batch))
+        // Async queue-based notification
+        .route("/api/v1/send/async", post(handlers::queue::send_async))
         // Status endpoints
         .route(
             "/api/v1/status/{notification_id}",
@@ -35,5 +37,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/providers/{name}",
             get(handlers::providers::get_provider),
         )
+        // Queue management endpoints
+        .route("/api/v1/queue/stats", get(handlers::queue::get_stats))
+        .route("/api/v1/queue/tasks", get(handlers::queue::list_tasks))
+        .route(
+            "/api/v1/queue/tasks/{task_id}",
+            get(handlers::queue::get_task),
+        )
+        .route(
+            "/api/v1/queue/tasks/{task_id}/cancel",
+            post(handlers::queue::cancel_task),
+        )
+        .route("/api/v1/queue/purge", post(handlers::queue::purge_tasks))
         .with_state(state)
 }
