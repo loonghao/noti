@@ -1,15 +1,17 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
 
 /// Gotify self-hosted push notification provider.
 ///
-/// Gotify does not natively support file attachments in its API,
-/// but images can be embedded in markdown messages. For file attachments,
-/// the file info is mentioned in the message body.
+/// Gotify supports markdown rendering via `extras.client::display.contentType`.
+/// For image attachments, images are embedded as base64 data URIs in markdown.
+/// For file attachments, the file name and size info are displayed in the message.
 pub struct GotifyProvider {
     client: Client,
 }
@@ -64,12 +66,22 @@ impl NotifyProvider for GotifyProvider {
 
         let priority: i32 = config.get("priority").unwrap_or("5").parse().unwrap_or(5);
 
-        // Build message text — if attachments present, embed info in markdown
+        // Build message text — if attachments present, embed images and list files
         let (body_text, content_type) = if message.has_attachments() {
             let mut md = message.text.clone();
             for attachment in &message.attachments {
                 let file_name = attachment.effective_file_name();
-                md.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+                if attachment.kind == AttachmentKind::Image {
+                    // Embed image as base64 data URI in markdown
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    md.push_str(&format!(
+                        "\n\n![{file_name}](data:{mime};base64,{b64})"
+                    ));
+                } else {
+                    md.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+                }
             }
             (md, "text/markdown")
         } else {

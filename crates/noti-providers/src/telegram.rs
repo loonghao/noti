@@ -59,7 +59,9 @@ impl TelegramProvider {
         Self::parse_response(resp).await
     }
 
-    /// Send a file attachment via the appropriate Telegram endpoint.
+    /// Send file attachments via the appropriate Telegram endpoints.
+    /// Sends the first attachment with the message caption, additional
+    /// attachments are sent as separate documents.
     async fn send_attachment(
         &self,
         message: &Message,
@@ -67,56 +69,67 @@ impl TelegramProvider {
         chat_id: &str,
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
-        let attachment = &message.attachments[0];
-        let data = attachment.read_bytes().await?;
+        let mut last_response = None;
 
-        let (method, field_name) = match attachment.kind {
-            AttachmentKind::Image => ("sendPhoto", "photo"),
-            AttachmentKind::Audio => ("sendAudio", "audio"),
-            AttachmentKind::Video => ("sendVideo", "video"),
-            AttachmentKind::File => ("sendDocument", "document"),
-        };
+        for (i, attachment) in message.attachments.iter().enumerate() {
+            let data = attachment.read_bytes().await?;
 
-        let url = format!("https://api.telegram.org/bot{bot_token}/{method}");
-        let file_name = attachment.effective_file_name();
-        let mime_str = attachment.effective_mime();
+            let (method, field_name) = match attachment.kind {
+                AttachmentKind::Image => ("sendPhoto", "photo"),
+                AttachmentKind::Audio => ("sendAudio", "audio"),
+                AttachmentKind::Video => ("sendVideo", "video"),
+                AttachmentKind::File => ("sendDocument", "document"),
+            };
 
-        let file_part = multipart::Part::bytes(data)
-            .file_name(file_name)
-            .mime_str(&mime_str)
-            .map_err(|e| NotiError::Network(format!("invalid MIME type: {e}")))?;
+            let url = format!("https://api.telegram.org/bot{bot_token}/{method}");
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
 
-        let mut form = multipart::Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part(field_name.to_string(), file_part);
+            let file_part = multipart::Part::bytes(data)
+                .file_name(file_name)
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("invalid MIME type: {e}")))?;
 
-        // Caption = message text
-        if !message.text.is_empty() {
-            form = form.text("caption", message.text.clone());
-            match message.format {
-                MessageFormat::Markdown => {
-                    form = form.text("parse_mode", "MarkdownV2".to_string());
+            let mut form = multipart::Form::new()
+                .text("chat_id", chat_id.to_string())
+                .part(field_name.to_string(), file_part);
+
+            // Only add caption to the first attachment
+            if i == 0 && !message.text.is_empty() {
+                form = form.text("caption", message.text.clone());
+                match message.format {
+                    MessageFormat::Markdown => {
+                        form = form.text("parse_mode", "MarkdownV2".to_string());
+                    }
+                    MessageFormat::Html => {
+                        form = form.text("parse_mode", "HTML".to_string());
+                    }
+                    MessageFormat::Text => {}
                 }
-                MessageFormat::Html => {
-                    form = form.text("parse_mode", "HTML".to_string());
-                }
-                MessageFormat::Text => {}
             }
+
+            if config.get("disable_notification") == Some("true") {
+                form = form.text("disable_notification", "true".to_string());
+            }
+
+            let resp = self
+                .client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let result = Self::parse_response(resp).await?;
+            if !result.success {
+                return Ok(result);
+            }
+            last_response = Some(result);
         }
 
-        if config.get("disable_notification") == Some("true") {
-            form = form.text("disable_notification", "true".to_string());
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
-
-        Self::parse_response(resp).await
+        Ok(last_response.unwrap_or_else(|| {
+            SendResponse::success("telegram", "message sent successfully")
+        }))
     }
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {

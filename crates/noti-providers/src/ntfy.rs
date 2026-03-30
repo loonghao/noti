@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use noti_core::{
+    Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -85,71 +87,97 @@ impl NotifyProvider for NtfyProvider {
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
         let status = resp.status().as_u16();
-        let raw: serde_json::Value = resp.json().await.unwrap_or(json!({ "status": status }));
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .unwrap_or(json!({ "status": status }));
 
         if status == 200 {
-            Ok(SendResponse::success("ntfy", "message sent successfully")
-                .with_status_code(status)
-                .with_raw_response(raw))
+            Ok(
+                SendResponse::success("ntfy", "message sent successfully")
+                    .with_status_code(status)
+                    .with_raw_response(raw),
+            )
         } else {
-            Ok(SendResponse::failure("ntfy", format!("HTTP {status}"))
-                .with_status_code(status)
-                .with_raw_response(raw))
+            Ok(
+                SendResponse::failure("ntfy", format!("HTTP {status}"))
+                    .with_status_code(status)
+                    .with_raw_response(raw),
+            )
         }
     }
 }
 
 impl NtfyProvider {
-    /// Send message with a file attachment using PUT.
+    /// Send message with file attachments using PUT.
+    /// ntfy supports one attachment per request, so we send the first file
+    /// with the message text, and additional files as separate messages.
     async fn send_with_attachment(
         &self,
         message: &Message,
         url: &str,
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
-        let attachment = &message.attachments[0];
-        let data = attachment.read_bytes().await?;
-        let file_name = attachment.effective_file_name();
+        let mut last_response = None;
 
-        let mut req = self
-            .client
-            .put(url)
-            .header("Filename", &file_name)
-            .body(data);
+        for (i, attachment) in message.attachments.iter().enumerate() {
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
 
-        // Use message text as the notification body
-        if !message.text.is_empty() {
-            req = req.header("Message", message.text.as_str());
-        }
-        if let Some(title) = &message.title {
-            req = req.header("Title", title.as_str());
-        }
-        if let Some(priority) = config.get("priority") {
-            req = req.header("Priority", priority);
-        }
-        if let Some(tags) = config.get("tags") {
-            req = req.header("Tags", tags);
-        }
-        if let Some(token) = config.get("token") {
-            req = req.bearer_auth(token);
+            let mut req = self
+                .client
+                .put(url)
+                .header("Filename", &file_name)
+                .body(data);
+
+            // Only first attachment gets the message text
+            if i == 0 && !message.text.is_empty() {
+                req = req.header("Message", message.text.as_str());
+            }
+            if i == 0 {
+                if let Some(title) = &message.title {
+                    req = req.header("Title", title.as_str());
+                }
+            }
+            if let Some(priority) = config.get("priority") {
+                req = req.header("Priority", priority);
+            }
+            if let Some(tags) = config.get("tags") {
+                req = req.header("Tags", tags);
+            }
+            if let Some(token) = config.get("token") {
+                req = req.bearer_auth(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let status = resp.status().as_u16();
+            let raw: serde_json::Value = resp
+                .json()
+                .await
+                .unwrap_or(json!({ "status": status }));
+
+            if status != 200 {
+                return Ok(
+                    SendResponse::failure("ntfy", format!("HTTP {status}"))
+                        .with_status_code(status)
+                        .with_raw_response(raw),
+                );
+            }
+            last_response = Some((status, raw));
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
-
-        let status = resp.status().as_u16();
-        let raw: serde_json::Value = resp.json().await.unwrap_or(json!({ "status": status }));
-
-        if status == 200 {
-            Ok(SendResponse::success("ntfy", "file sent successfully")
-                .with_status_code(status)
-                .with_raw_response(raw))
+        if let Some((status, raw)) = last_response {
+            Ok(
+                SendResponse::success("ntfy", "file(s) sent successfully")
+                    .with_status_code(status)
+                    .with_raw_response(raw),
+            )
         } else {
-            Ok(SendResponse::failure("ntfy", format!("HTTP {status}"))
-                .with_status_code(status)
-                .with_raw_response(raw))
+            Ok(SendResponse::success("ntfy", "message sent successfully"))
         }
     }
 }
