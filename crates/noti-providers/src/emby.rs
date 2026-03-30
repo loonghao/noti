@@ -42,7 +42,7 @@ impl NotifyProvider for EmbyProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     fn params(&self) -> Vec<ParamDef> {

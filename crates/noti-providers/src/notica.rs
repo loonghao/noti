@@ -39,7 +39,7 @@ impl NotifyProvider for NoticaProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     fn params(&self) -> Vec<ParamDef> {

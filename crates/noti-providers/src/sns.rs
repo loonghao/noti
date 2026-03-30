@@ -40,7 +40,7 @@ impl NotifyProvider for SnsProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     fn params(&self) -> Vec<ParamDef> {

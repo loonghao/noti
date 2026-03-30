@@ -51,7 +51,7 @@ impl NotifyProvider for VictorOpsProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(

@@ -54,7 +54,7 @@ impl NotifyProvider for PushcutProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(
