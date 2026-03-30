@@ -20,3 +20,6 @@ url = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
+tempfile = "3.18"
+serde_json = { workspace = true }
+tokio = { workspace = true }
