@@ -1,7 +1,6 @@
 use async_trait::async_trait;
-use base64::Engine;
 use noti_core::{
-    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -10,6 +9,7 @@ use serde_json::json;
 ///
 /// Sends messages to Gitter rooms via the Gitter REST API.
 /// Gitter is a developer-focused chat platform (now part of Matrix/Element).
+/// File uploads require a separate API endpoint with multipart upload.
 ///
 /// API reference: <https://developer.gitter.im/docs/messages-resource>
 pub struct GitterProvider {
@@ -63,26 +63,11 @@ impl NotifyProvider for GitterProvider {
 
         let url = format!("https://api.gitter.im/v1/rooms/{room_id}/chatMessages");
 
-        let mut text = if let Some(ref title) = message.title {
+        let text = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)
         } else {
             message.text.clone()
         };
-
-        // Embed images as markdown and list files
-        if message.has_attachments() {
-            for attachment in &message.attachments {
-                let file_name = attachment.effective_file_name();
-                if attachment.kind == AttachmentKind::Image {
-                    let data = attachment.read_bytes().await?;
-                    let mime = attachment.effective_mime();
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    text.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
-                } else {
-                    text.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
-                }
-            }
-        }
 
         let payload = json!({
             "text": text
