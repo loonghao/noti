@@ -1,10 +1,15 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
+use serde_json::json;
 
 /// Seven (formerly sms77) SMS provider.
 ///
-/// Sends SMS via the Seven.io REST API.
+/// Sends SMS via the Seven.io REST API. Supports file attachments via the
+/// `files` parameter — each file is base64-encoded and a placeholder
+/// `[[filename]]` is inserted into the SMS text. Seven generates a download
+/// link that replaces the placeholder.
 ///
 /// API reference: <https://docs.seven.io/en/rest-api/endpoints/sms>
 pub struct SevenProvider {
@@ -45,6 +50,10 @@ impl NotifyProvider for SevenProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,33 +65,54 @@ impl NotifyProvider for SevenProvider {
 
         let url = "https://gateway.seven.io/api/sms";
 
-        let text = if let Some(ref title) = message.title {
+        let mut text = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)
         } else {
             message.text.clone()
         };
 
-        let mut params = vec![
-            ("to", to.to_string()),
-            ("text", text),
-            ("json", "1".to_string()),
-        ];
+        // Append file placeholders to the text for each attachment
+        for attachment in &message.attachments {
+            let file_name = attachment.effective_file_name();
+            text.push_str(&format!(" [[{file_name}]]"));
+        }
+
+        let mut payload = json!({
+            "to": to,
+            "text": text,
+            "json": 1,
+        });
 
         if let Some(from) = config.get("from") {
-            params.push(("from", from.to_string()));
+            payload["from"] = json!(from);
         }
         if let Some(flash) = config.get("flash") {
-            params.push(("flash", flash.to_string()));
+            payload["flash"] = json!(flash);
         }
         if let Some(foreign_id) = config.get("foreign_id") {
-            params.push(("foreign_id", foreign_id.to_string()));
+            payload["foreign_id"] = json!(foreign_id);
+        }
+
+        // Add file attachments as base64-encoded content
+        if message.has_attachments() {
+            let mut files = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let file_name = attachment.effective_file_name();
+                files.push(json!({
+                    "name": file_name,
+                    "contents": b64,
+                }));
+            }
+            payload["files"] = json!(files);
         }
 
         let resp = self
             .client
             .post(url)
             .header("X-Api-Key", api_key)
-            .form(&params)
+            .json(&payload)
             .send()
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;

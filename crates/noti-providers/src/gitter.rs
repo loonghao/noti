@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -9,7 +10,8 @@ use serde_json::json;
 ///
 /// Sends messages to Gitter rooms via the Gitter REST API.
 /// Gitter is a developer-focused chat platform (now part of Matrix/Element).
-/// File uploads require a separate API endpoint with multipart upload.
+/// Supports attachments by embedding base64 data URIs in Markdown — images
+/// are rendered inline, and other files are sent as download links.
 ///
 /// API reference: <https://developer.gitter.im/docs/messages-resource>
 pub struct GitterProvider {
@@ -49,7 +51,7 @@ impl NotifyProvider for GitterProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        false
+        true
     }
 
     async fn send(
@@ -63,11 +65,29 @@ impl NotifyProvider for GitterProvider {
 
         let url = format!("https://api.gitter.im/v1/rooms/{room_id}/chatMessages");
 
-        let text = if let Some(ref title) = message.title {
+        let mut text = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)
         } else {
             message.text.clone()
         };
+
+        // Embed attachments as Markdown image/links with base64 data URIs
+        for attachment in &message.attachments {
+            let data = attachment.read_bytes().await?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            let mime = attachment.effective_mime();
+            let file_name = attachment.effective_file_name();
+            let data_uri = format!("data:{mime};base64,{b64}");
+
+            match attachment.kind {
+                AttachmentKind::Image => {
+                    text.push_str(&format!("\n\n![{file_name}]({data_uri})"));
+                }
+                _ => {
+                    text.push_str(&format!("\n\n📎 [{file_name}]({data_uri})"));
+                }
+            }
+        }
 
         let payload = json!({
             "text": text
