@@ -33,22 +33,6 @@ pub fn print_error(mode: OutputMode, message: &str) {
     }
 }
 
-/// Print a serializable value as JSON or formatted text.
-#[allow(dead_code)]
-pub fn print_value<T: Serialize + std::fmt::Display>(mode: OutputMode, value: &T) {
-    match mode {
-        OutputMode::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value}"))
-            );
-        }
-        OutputMode::Human => {
-            println!("{value}");
-        }
-    }
-}
-
 /// Print a serializable value as JSON (always).
 pub fn print_json<T: Serialize>(value: &T) {
     println!(

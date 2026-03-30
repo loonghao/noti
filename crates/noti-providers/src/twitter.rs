@@ -104,9 +104,8 @@ impl NotifyProvider for TwitterProvider {
                 ) {
                     let data = attachment.read_bytes().await?;
                     let mime = attachment.effective_mime();
-                    match self.upload_media(bearer_token, &data, &mime).await {
-                        Ok(media_id) => media_ids.push(media_id),
-                        Err(_) => {} // Skip failed uploads
+                    if let Ok(media_id) = self.upload_media(bearer_token, &data, &mime).await {
+                        media_ids.push(media_id);
                     }
                 }
             }

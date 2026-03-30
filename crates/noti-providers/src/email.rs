@@ -15,6 +15,12 @@ impl EmailProvider {
     }
 }
 
+impl Default for EmailProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl NotifyProvider for EmailProvider {
     fn name(&self) -> &str {
