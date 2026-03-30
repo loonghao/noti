@@ -1,15 +1,20 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
 
 /// Flock team messaging provider.
 ///
-/// Sends messages via Flock incoming webhooks.
-/// Flock webhooks only support JSON payloads (text and flockml).
-/// File uploads require the Flock API with OAuth tokens.
+/// Sends messages via Flock incoming webhooks. Supports attachments through
+/// Flock's webhook attachment objects — images are sent as inline image
+/// attachments with base64 data URIs, and other files are sent as download
+/// attachments with base64-encoded content.
+///
+/// API reference: <https://docs.flock.com/display/flockos/Sending+Attachments>
 pub struct FlockProvider {
     client: Client,
 }
@@ -45,6 +50,10 @@ impl NotifyProvider for FlockProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -70,11 +79,50 @@ impl NotifyProvider for FlockProvider {
             }
         };
 
-        let payload = if matches!(message.format, MessageFormat::Html) {
+        let mut payload = if matches!(message.format, MessageFormat::Html) {
             json!({ "flockml": text })
         } else {
             json!({ "text": text })
         };
+
+        // Add attachments as Flock attachment objects
+        if message.has_attachments() {
+            let mut attachments = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let mime = attachment.effective_mime();
+                let file_name = attachment.effective_file_name();
+                let data_uri = format!("data:{mime};base64,{b64}");
+
+                match attachment.kind {
+                    AttachmentKind::Image => {
+                        // Flock image attachment
+                        attachments.push(json!({
+                            "title": file_name,
+                            "images": [{
+                                "original": data_uri,
+                                "width": 400,
+                                "height": 300
+                            }]
+                        }));
+                    }
+                    _ => {
+                        // Flock download/file attachment
+                        attachments.push(json!({
+                            "title": file_name,
+                            "downloads": [{
+                                "src": data_uri,
+                                "mime": mime,
+                                "filename": file_name,
+                                "size": data.len()
+                            }]
+                        }));
+                    }
+                }
+            }
+            payload["attachments"] = json!(attachments);
+        }
 
         let resp = self
             .client
