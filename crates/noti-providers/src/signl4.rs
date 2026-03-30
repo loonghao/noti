@@ -52,7 +52,7 @@ impl NotifyProvider for Signl4Provider {
     }
 
     fn supports_attachments(&self) -> bool {
-        false
+        true
     }
 
     async fn send(
