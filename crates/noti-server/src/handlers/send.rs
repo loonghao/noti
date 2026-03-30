@@ -6,10 +6,9 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use noti_core::{
-    DeliveryStatus, Message, MessageFormat, Priority, ProviderConfig, RetryPolicy, SendResponse,
-};
+use noti_core::{DeliveryStatus, ProviderConfig, RetryPolicy, SendResponse};
 
+use crate::handlers::common::{self, RetryConfig};
 use crate::state::AppState;
 
 /// Request body for sending a single notification.
@@ -34,15 +33,6 @@ pub struct SendRequest {
     pub extra: HashMap<String, serde_json::Value>,
     /// Retry policy configuration.
     pub retry: Option<RetryConfig>,
-}
-
-/// Retry configuration for the API.
-#[derive(Debug, Deserialize)]
-pub struct RetryConfig {
-    /// Maximum number of retries.
-    pub max_retries: Option<u32>,
-    /// Base delay in milliseconds.
-    pub delay_ms: Option<u64>,
 }
 
 /// Request body for batch sending.
@@ -125,49 +115,6 @@ pub struct TargetApiResult {
     pub attempts: u32,
 }
 
-fn build_message(
-    text: &str,
-    title: Option<&str>,
-    format: Option<&str>,
-    priority: Option<&str>,
-    extra: &HashMap<String, serde_json::Value>,
-) -> Message {
-    let mut msg = Message::text(text);
-
-    if let Some(t) = title {
-        msg = msg.with_title(t);
-    }
-
-    if let Some(f) = format {
-        if let Ok(fmt) = f.parse::<MessageFormat>() {
-            msg = msg.with_format(fmt);
-        }
-    }
-
-    if let Some(p) = priority {
-        if let Ok(pri) = p.parse::<Priority>() {
-            msg = msg.with_priority(pri);
-        }
-    }
-
-    for (k, v) in extra {
-        msg = msg.with_extra(k, v.clone());
-    }
-
-    msg
-}
-
-fn build_retry_policy(retry: Option<&RetryConfig>) -> RetryPolicy {
-    match retry {
-        Some(cfg) => {
-            let max_retries = cfg.max_retries.unwrap_or(3);
-            let delay = std::time::Duration::from_millis(cfg.delay_ms.unwrap_or(1000));
-            RetryPolicy::fixed(max_retries, delay)
-        }
-        None => RetryPolicy::none(),
-    }
-}
-
 /// POST /api/v1/send — Send a single notification.
 pub async fn send_notification(
     State(state): State<AppState>,
@@ -193,7 +140,7 @@ pub async fn send_notification(
         ));
     }
 
-    let msg = build_message(
+    let msg = common::build_message(
         &req.text,
         req.title.as_deref(),
         req.format.as_deref(),
@@ -219,7 +166,7 @@ pub async fn send_notification(
         )
         .await;
 
-    let policy = build_retry_policy(req.retry.as_ref());
+    let policy = common::build_retry_policy(req.retry.as_ref(), RetryPolicy::none());
 
     let result: Result<SendResponse, _> = if policy.max_retries == 0 {
         provider.send(&msg, &config).await
@@ -299,7 +246,7 @@ pub async fn send_batch(
         });
     }
 
-    let msg = build_message(
+    let msg = common::build_message(
         &req.text,
         req.title.as_deref(),
         req.format.as_deref(),
@@ -308,7 +255,7 @@ pub async fn send_batch(
     );
 
     let notification_id = Uuid::new_v4().to_string();
-    let policy = build_retry_policy(req.retry.as_ref());
+    let policy = common::build_retry_policy(req.retry.as_ref(), RetryPolicy::none());
 
     // Track all targets
     for p in &providers {

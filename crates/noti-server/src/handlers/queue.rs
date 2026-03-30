@@ -5,9 +5,10 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
-use noti_core::{Message, MessageFormat, Priority, ProviderConfig, RetryPolicy};
+use noti_core::{ProviderConfig, RetryPolicy};
 use noti_queue::{NotificationTask, QueueStats, TaskStatus};
 
+use crate::handlers::common::{self, RetryConfig};
 use crate::state::AppState;
 
 // ───────────────────── Request types ─────────────────────
@@ -39,15 +40,6 @@ pub struct AsyncSendRequest {
     pub metadata: HashMap<String, String>,
     /// Optional webhook URL to call when the task completes or fails.
     pub callback_url: Option<String>,
-}
-
-/// Retry configuration for the API.
-#[derive(Debug, Deserialize)]
-pub struct RetryConfig {
-    /// Maximum number of retries.
-    pub max_retries: Option<u32>,
-    /// Base delay in milliseconds.
-    pub delay_ms: Option<u64>,
 }
 
 /// Query parameters for listing tasks.
@@ -179,49 +171,6 @@ pub struct BatchEnqueueResponse {
 
 // ───────────────────── Helpers ─────────────────────
 
-fn build_message(
-    text: &str,
-    title: Option<&str>,
-    format: Option<&str>,
-    priority: Option<&str>,
-    extra: &HashMap<String, serde_json::Value>,
-) -> Message {
-    let mut msg = Message::text(text);
-
-    if let Some(t) = title {
-        msg = msg.with_title(t);
-    }
-
-    if let Some(f) = format {
-        if let Ok(fmt) = f.parse::<MessageFormat>() {
-            msg = msg.with_format(fmt);
-        }
-    }
-
-    if let Some(p) = priority {
-        if let Ok(pri) = p.parse::<Priority>() {
-            msg = msg.with_priority(pri);
-        }
-    }
-
-    for (k, v) in extra {
-        msg = msg.with_extra(k, v.clone());
-    }
-
-    msg
-}
-
-fn build_retry_policy(retry: Option<&RetryConfig>) -> RetryPolicy {
-    match retry {
-        Some(cfg) => {
-            let max_retries = cfg.max_retries.unwrap_or(3);
-            let delay = std::time::Duration::from_millis(cfg.delay_ms.unwrap_or(1000));
-            RetryPolicy::fixed(max_retries, delay)
-        }
-        None => RetryPolicy::default(),
-    }
-}
-
 fn task_to_info(task: &NotificationTask) -> TaskInfo {
     TaskInfo {
         id: task.id.clone(),
@@ -277,7 +226,7 @@ pub async fn send_async(
         values: req.config,
     };
 
-    let msg = build_message(
+    let msg = common::build_message(
         &req.text,
         req.title.as_deref(),
         req.format.as_deref(),
@@ -285,7 +234,7 @@ pub async fn send_async(
         &req.extra,
     );
 
-    let policy = build_retry_policy(req.retry.as_ref());
+    let policy = common::build_retry_policy(req.retry.as_ref(), RetryPolicy::default());
 
     let mut task = NotificationTask::new(&req.provider, config, msg)
         .with_retry_policy(policy);
@@ -351,7 +300,7 @@ pub async fn send_async_batch(
             values: item.config,
         };
 
-        let msg = build_message(
+        let msg = common::build_message(
             &item.text,
             item.title.as_deref(),
             item.format.as_deref(),
@@ -359,7 +308,7 @@ pub async fn send_async_batch(
             &item.extra,
         );
 
-        let policy = build_retry_policy(item.retry.as_ref());
+        let policy = common::build_retry_policy(item.retry.as_ref(), RetryPolicy::default());
 
         let mut task = NotificationTask::new(&item.provider, config, msg)
             .with_retry_policy(policy);
