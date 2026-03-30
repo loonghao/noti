@@ -1622,7 +1622,7 @@ mod email_tests {
 
     #[tokio::test]
     async fn test_default_trait() {
-        let provider = EmailProvider::default();
+        let provider = EmailProvider::new();
         assert_eq!(provider.name(), "email");
     }
 }
