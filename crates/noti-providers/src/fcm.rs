@@ -65,7 +65,7 @@ impl NotifyProvider for FcmProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        true
+        false
     }
 
     async fn send(
