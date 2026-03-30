@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::priority::Priority;
+
 /// Supported message formats.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -161,6 +163,10 @@ pub struct Message {
     #[serde(default)]
     pub format: MessageFormat,
 
+    /// Message priority level.
+    #[serde(default)]
+    pub priority: Priority,
+
     /// File attachments (images, documents, etc.).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
@@ -177,6 +183,7 @@ impl Message {
             text: text.into(),
             title: None,
             format: MessageFormat::Text,
+            priority: Priority::default(),
             attachments: Vec::new(),
             extra: HashMap::new(),
         }
@@ -188,6 +195,7 @@ impl Message {
             text: text.into(),
             title: None,
             format: MessageFormat::Markdown,
+            priority: Priority::default(),
             attachments: Vec::new(),
             extra: HashMap::new(),
         }
@@ -202,6 +210,12 @@ impl Message {
     /// Set the format.
     pub fn with_format(mut self, format: MessageFormat) -> Self {
         self.format = format;
+        self
+    }
+
+    /// Set the priority.
+    pub fn with_priority(mut self, priority: Priority) -> Self {
+        self.priority = priority;
         self
     }
 
