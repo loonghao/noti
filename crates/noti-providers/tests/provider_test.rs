@@ -3,12 +3,17 @@ use noti_providers::bluesky::BlueskyProvider;
 use noti_providers::dingtalk::DingTalkProvider;
 use noti_providers::discord::DiscordProvider;
 use noti_providers::feishu::FeishuProvider;
+use noti_providers::flock::FlockProvider;
+use noti_providers::gitter::GitterProvider;
+use noti_providers::googlechat::GoogleChatProvider;
 use noti_providers::guilded::GuildedProvider;
+use noti_providers::httpsms::HttpSmsProvider;
 use noti_providers::misskey::MisskeyProvider;
 use noti_providers::nctalk::NcTalkProvider;
 use noti_providers::pushsafer::PushsaferProvider;
 use noti_providers::revolt::RevoltProvider;
 use noti_providers::rocketchat::RocketChatProvider;
+use noti_providers::seven::SevenProvider;
 use noti_providers::signal::SignalProvider;
 use noti_providers::slack::SlackProvider;
 use noti_providers::telegram::TelegramProvider;
@@ -212,4 +217,20 @@ fn test_providers_supports_attachments() {
 
     let dingtalk = DingTalkProvider::new(client.clone());
     assert!(dingtalk.supports_attachments());
+
+    // Providers with newly added attachment support
+    let googlechat = GoogleChatProvider::new(client.clone());
+    assert!(googlechat.supports_attachments());
+
+    let flock = FlockProvider::new(client.clone());
+    assert!(flock.supports_attachments());
+
+    let gitter = GitterProvider::new(client.clone());
+    assert!(gitter.supports_attachments());
+
+    let seven = SevenProvider::new(client.clone());
+    assert!(seven.supports_attachments());
+
+    let httpsms = HttpSmsProvider::new(client.clone());
+    assert!(httpsms.supports_attachments());
 }
