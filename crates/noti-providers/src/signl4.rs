@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -7,6 +10,7 @@ use serde_json::json;
 ///
 /// Sends alerts to SIGNL4, a mobile alerting and incident response platform.
 /// Alerts are delivered to on-call teams via the SIGNL4 app.
+/// Image attachments are embedded as base64 data URIs in the message body.
 ///
 /// API reference: <https://connect.signl4.com/webhook/docs>
 pub struct Signl4Provider {
@@ -67,14 +71,26 @@ impl NotifyProvider for Signl4Provider {
 
         let title = message.title.as_deref().unwrap_or("Alert");
 
-        // Include attachment info in the message body
+        // Embed image attachments as base64 data URIs, list non-image files
         let message_text = if message.has_attachments() {
             let mut text = message.text.clone();
             for attachment in &message.attachments {
-                text.push_str(&format!(
-                    "\n📎 Attachment: {}",
-                    attachment.effective_file_name()
-                ));
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    text.push_str(&format!(
+                        "\n\n![{file_name}](data:{mime};base64,{b64})"
+                    ));
+                } else {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    text.push_str(&format!(
+                        "\n📎 {file_name} (data:{mime};base64,{b64})"
+                    ));
+                }
             }
             text
         } else {
