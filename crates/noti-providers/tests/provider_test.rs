@@ -1,37 +1,39 @@
-use noti_core::{Attachment, AttachmentKind, Message, MessageFormat, NotifyProvider, ProviderConfig};
+use noti_core::{
+    Attachment, AttachmentKind, Message, MessageFormat, NotifyProvider, ProviderConfig,
+};
+use noti_providers::apprise::AppriseProvider;
+use noti_providers::bluesky::BlueskyProvider;
 use noti_providers::boxcar::BoxcarProvider;
 use noti_providers::discord::DiscordProvider;
+use noti_providers::growl::GrowlProvider;
+use noti_providers::guilded::GuildedProvider;
 use noti_providers::ifttt::IftttProvider;
 use noti_providers::kodi::KodiProvider;
 use noti_providers::kumulos::KumulosProvider;
 use noti_providers::lunasea::LunaseaProvider;
+use noti_providers::misskey::MisskeyProvider;
+use noti_providers::nctalk::NcTalkProvider;
 use noti_providers::nextcloud::NextcloudProvider;
 use noti_providers::pagertree::PagerTreeProvider;
 use noti_providers::parse::ParseProvider;
 use noti_providers::prowl::ProwlProvider;
 use noti_providers::pushed::PushedProvider;
 use noti_providers::reddit::RedditProvider;
+use noti_providers::revolt::RevoltProvider;
+use noti_providers::rocketchat::RocketChatProvider;
+use noti_providers::signal::SignalProvider;
 use noti_providers::slack::SlackProvider;
+use noti_providers::smseagle::SmsEagleProvider;
 use noti_providers::spike::SpikeProvider;
 use noti_providers::spugpush::SpugPushProvider;
+use noti_providers::techulus::TechulusProvider;
 use noti_providers::telegram::TelegramProvider;
 use noti_providers::twitter::TwitterProvider;
 use noti_providers::victorops::VictorOpsProvider;
+use noti_providers::voipms::VoipMsProvider;
 use noti_providers::webpush::WebPushProvider;
 use noti_providers::wecom::WeComProvider;
 use noti_providers::zulip::ZulipProvider;
-use noti_providers::revolt::RevoltProvider;
-use noti_providers::guilded::GuildedProvider;
-use noti_providers::misskey::MisskeyProvider;
-use noti_providers::signal::SignalProvider;
-use noti_providers::bluesky::BlueskyProvider;
-use noti_providers::apprise::AppriseProvider;
-use noti_providers::nctalk::NcTalkProvider;
-use noti_providers::rocketchat::RocketChatProvider;
-use noti_providers::smseagle::SmsEagleProvider;
-use noti_providers::voipms::VoipMsProvider;
-use noti_providers::techulus::TechulusProvider;
-use noti_providers::growl::GrowlProvider;
 use reqwest::Client;
 use rstest::rstest;
 
@@ -148,8 +150,7 @@ fn test_attachment_overrides() {
 
 #[rstest]
 fn test_message_with_attachment() {
-    let msg = Message::text("check this out")
-        .with_file("image.jpg");
+    let msg = Message::text("check this out").with_file("image.jpg");
 
     assert!(msg.has_attachments());
     assert_eq!(msg.attachments.len(), 1);

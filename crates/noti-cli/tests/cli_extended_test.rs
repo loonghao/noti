@@ -320,10 +320,7 @@ fn test_config_set_overwrites_existing() {
 
 #[rstest]
 fn test_no_subcommand() {
-    Command::cargo_bin("noti")
-        .unwrap()
-        .assert()
-        .failure();
+    Command::cargo_bin("noti").unwrap().assert().failure();
 }
 
 // ======================== Config test subcommand ========================

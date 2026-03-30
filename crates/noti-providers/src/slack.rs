@@ -63,9 +63,7 @@ impl NotifyProvider for SlackProvider {
         // If attachments are present and a bot_token is provided, use file upload API
         if message.has_attachments() {
             if let Some(bot_token) = config.get("bot_token") {
-                return self
-                    .send_with_files(message, bot_token, config)
-                    .await;
+                return self.send_with_files(message, bot_token, config).await;
             }
             // Fall through to normal webhook if no bot_token — files will be ignored
         }

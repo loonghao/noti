@@ -1,7 +1,7 @@
+use async_trait::async_trait;
 use noti_core::{
     Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, ProviderRegistry, SendResponse,
 };
-use async_trait::async_trait;
 use rstest::rstest;
 use std::sync::Arc;
 

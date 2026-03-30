@@ -123,10 +123,7 @@ impl NotifyProvider for O365Provider {
         if message.has_attachments() {
             for attachment in &message.attachments {
                 let data = attachment.read_bytes().await?;
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &data,
-                );
+                let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
                 graph_attachments.push(serde_json::json!({
                     "@odata.type": "#microsoft.graph.fileAttachment",
                     "name": attachment.effective_file_name(),

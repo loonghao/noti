@@ -31,9 +31,7 @@ impl NcTalkProvider {
 
         // Upload to Nextcloud WebDAV (Talk attachments folder)
         let upload_path = format!("Talk/{file_name}");
-        let dav_url = format!(
-            "{scheme}://{host}/remote.php/dav/files/{user}/{upload_path}"
-        );
+        let dav_url = format!("{scheme}://{host}/remote.php/dav/files/{user}/{upload_path}");
 
         let upload_resp = self
             .client
@@ -54,9 +52,7 @@ impl NcTalkProvider {
         }
 
         // Share file in Talk room via the share API
-        let share_url = format!(
-            "{scheme}://{host}/ocs/v2.php/apps/files_sharing/api/v1/shares"
-        );
+        let share_url = format!("{scheme}://{host}/ocs/v2.php/apps/files_sharing/api/v1/shares");
 
         let share_body = serde_json::json!({
             "shareType": 10,

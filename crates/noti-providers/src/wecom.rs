@@ -70,10 +70,7 @@ impl NotifyProvider for WeComProvider {
         // If has image attachment, try sending as image message
         if let Some(img) = message.first_image() {
             let data = img.read_bytes().await?;
-            let b64 = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &data,
-            );
+            let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
             let md5 = md5_hex(&data);
 
             let body = json!({

@@ -130,7 +130,10 @@ impl NotifyProvider for NotifiarrProvider {
         if !non_image_attachments.is_empty() {
             let mut desc = message.text.clone();
             for att in &non_image_attachments {
-                desc.push_str(&format!("\n📎 **Attachment:** {}", att.effective_file_name()));
+                desc.push_str(&format!(
+                    "\n📎 **Attachment:** {}",
+                    att.effective_file_name()
+                ));
             }
             notification["discord"]["embeds"][0]["text"] = json!(desc);
         }

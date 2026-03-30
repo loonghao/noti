@@ -91,9 +91,7 @@ impl Attachment {
     /// Create an attachment from a file path, auto-detecting MIME and kind.
     pub fn from_path(path: impl AsRef<Path>) -> Self {
         let path = path.as_ref().to_path_buf();
-        let mime = mime_guess::from_path(&path)
-            .first()
-            .map(|m| m.to_string());
+        let mime = mime_guess::from_path(&path).first().map(|m| m.to_string());
         let kind = mime
             .as_deref()
             .map(kind_from_mime)

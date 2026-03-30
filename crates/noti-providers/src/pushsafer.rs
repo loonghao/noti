@@ -104,10 +104,7 @@ impl NotifyProvider for PushsaferProvider {
                 .enumerate()
             {
                 let data = attachment.read_bytes().await?;
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &data,
-                );
+                let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
                 let mime = attachment.effective_mime();
                 form.push((pic_fields[i], format!("data:{mime};base64,{b64}")));
             }

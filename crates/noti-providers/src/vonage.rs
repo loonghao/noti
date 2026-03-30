@@ -115,29 +115,23 @@ impl NotifyProvider for VonageProvider {
                 let raw: serde_json::Value = resp
                     .json()
                     .await
-                    .map_err(|e| {
-                        NotiError::Network(format!("failed to parse response: {e}"))
-                    })?;
+                    .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
 
                 if (200..300).contains(&status) {
-                    return Ok(
-                        SendResponse::success("vonage", "MMS sent with image")
-                            .with_status_code(status)
-                            .with_raw_response(raw),
-                    );
+                    return Ok(SendResponse::success("vonage", "MMS sent with image")
+                        .with_status_code(status)
+                        .with_raw_response(raw));
                 } else {
                     let error_msg = raw
                         .get("title")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown error");
-                    return Ok(
-                        SendResponse::failure(
-                            "vonage",
-                            format!("MMS API error: {error_msg}"),
-                        )
-                        .with_status_code(status)
-                        .with_raw_response(raw),
-                    );
+                    return Ok(SendResponse::failure(
+                        "vonage",
+                        format!("MMS API error: {error_msg}"),
+                    )
+                    .with_status_code(status)
+                    .with_raw_response(raw));
                 }
             }
             // Fall through to SMS for non-image attachments (mention in text)

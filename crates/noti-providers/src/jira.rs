@@ -66,8 +66,7 @@ impl NotifyProvider for JiraProvider {
 
         // Step 1: Upload attachments if present
         if message.has_attachments() {
-            let attach_url =
-                format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/attachments");
+            let attach_url = format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/attachments");
 
             for attachment in &message.attachments {
                 let data = attachment.read_bytes().await?;
@@ -95,21 +94,18 @@ impl NotifyProvider for JiraProvider {
                 if !(200..300).contains(&status) {
                     let raw: serde_json::Value =
                         resp.json().await.unwrap_or(serde_json::Value::Null);
-                    return Ok(
-                        SendResponse::failure(
-                            "jira",
-                            format!("attachment upload failed (HTTP {status})"),
-                        )
-                        .with_status_code(status)
-                        .with_raw_response(raw),
-                    );
+                    return Ok(SendResponse::failure(
+                        "jira",
+                        format!("attachment upload failed (HTTP {status})"),
+                    )
+                    .with_status_code(status)
+                    .with_raw_response(raw));
                 }
             }
         }
 
         // Step 2: Add comment
-        let comment_url =
-            format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/comment");
+        let comment_url = format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/comment");
 
         let body = serde_json::json!({
             "body": {

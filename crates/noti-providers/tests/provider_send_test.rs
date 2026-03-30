@@ -25,12 +25,10 @@ mod wecom_tests {
 
         Mock::given(method("POST"))
             .and(path("/cgi-bin/webhook/send"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "errcode": 0,
-                    "errmsg": "ok"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -280,9 +278,7 @@ mod webhook_tests {
 
         Mock::given(method("POST"))
             .and(header("Content-Type", "application/json"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
             .mount(&mock_server)
             .await;
 
@@ -419,9 +415,10 @@ mod webhook_tests {
             .await;
 
         let provider = WebhookProvider::new(client());
-        let config = ProviderConfig::new()
-            .set("url", mock_server.uri())
-            .set("body_template", r#"{"text":"{message}","subject":"{title}"}"#);
+        let config = ProviderConfig::new().set("url", mock_server.uri()).set(
+            "body_template",
+            r#"{"text":"{message}","subject":"{title}"}"#,
+        );
         let message = Message::text("Hello").with_title("Greeting");
 
         let result = provider.send(&message, &config).await;
@@ -581,7 +578,12 @@ mod ntfy_tests {
         let provider = NtfyProvider::new(client());
         assert_eq!(provider.name(), "ntfy");
         assert_eq!(provider.url_scheme(), "ntfy");
-        assert!(provider.params().iter().any(|p| p.name == "topic" && p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "topic" && p.required)
+        );
     }
 }
 
@@ -599,8 +601,7 @@ mod gotify_tests {
             .and(path("/message"))
             .and(header("X-Gotify-Key", "test-token"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"id": 1, "appid": 1})),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1, "appid": 1})),
             )
             .mount(&mock_server)
             .await;
@@ -625,8 +626,7 @@ mod gotify_tests {
         Mock::given(method("POST"))
             .and(path("/message"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"id": 1, "appid": 1})),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1, "appid": 1})),
             )
             .mount(&mock_server)
             .await;
@@ -707,7 +707,12 @@ mod feishu_tests {
         assert_eq!(provider.name(), "feishu");
         assert_eq!(provider.url_scheme(), "feishu");
         assert!(provider.description().len() > 0);
-        assert!(provider.params().iter().any(|p| p.name == "hook_id" && p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "hook_id" && p.required)
+        );
     }
 }
 
@@ -829,12 +834,10 @@ mod googlechat_send_tests {
     async fn test_send_success() {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "name": "spaces/xxx/messages/yyy",
-                    "text": "Hello"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "name": "spaces/xxx/messages/yyy",
+                "text": "Hello"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -925,7 +928,12 @@ mod googlechat_send_tests {
         assert_eq!(provider.name(), "googlechat");
         assert_eq!(provider.url_scheme(), "gchat");
         assert!(!provider.description().is_empty());
-        assert!(provider.params().iter().any(|p| p.name == "webhook_url" && p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "webhook_url" && p.required)
+        );
     }
 }
 
@@ -1042,12 +1050,16 @@ mod mattermost_send_tests {
     async fn test_validate_missing_fields() {
         let provider = MattermostProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("host", "example.com"))
-            .is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("hook_id", "abc"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("host", "example.com"))
+                .is_err()
+        );
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("hook_id", "abc"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1055,8 +1067,18 @@ mod mattermost_send_tests {
         let provider = MattermostProvider::new(client());
         assert_eq!(provider.name(), "mattermost");
         assert_eq!(provider.url_scheme(), "mattermost");
-        assert!(provider.params().iter().any(|p| p.name == "host" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "hook_id" && p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "host" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "hook_id" && p.required)
+        );
     }
 }
 
@@ -1079,11 +1101,9 @@ mod matrix_send_tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("PUT"))
             .and(header("Authorization", "Bearer test-access-token"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "event_id": "$abc123:matrix.org"
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "event_id": "$abc123:matrix.org"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -1109,8 +1129,7 @@ mod matrix_send_tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("PUT"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"event_id": "$xyz"})),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"event_id": "$xyz"})),
             )
             .mount(&mock_server)
             .await;
@@ -1134,8 +1153,7 @@ mod matrix_send_tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("PUT"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"event_id": "$md"})),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"event_id": "$md"})),
             )
             .mount(&mock_server)
             .await;
@@ -1185,12 +1203,16 @@ mod matrix_send_tests {
     async fn test_validate_missing_fields() {
         let provider = MatrixProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("access_token", "tok"))
-            .is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("room_id", "!r:s"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("access_token", "tok"))
+                .is_err()
+        );
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("room_id", "!r:s"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1198,9 +1220,24 @@ mod matrix_send_tests {
         let provider = MatrixProvider::new(client());
         assert_eq!(provider.name(), "matrix");
         assert_eq!(provider.url_scheme(), "matrix");
-        assert!(provider.params().iter().any(|p| p.name == "access_token" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "room_id" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "server" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "access_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "room_id" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "server" && !p.required)
+        );
     }
 }
 
@@ -1290,8 +1327,18 @@ mod bark_send_tests {
         let provider = BarkProvider::new(client());
         assert_eq!(provider.name(), "bark");
         assert_eq!(provider.url_scheme(), "bark");
-        assert!(provider.params().iter().any(|p| p.name == "device_key" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "server" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "device_key" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "server" && !p.required)
+        );
     }
 }
 
@@ -1326,8 +1373,18 @@ mod pushbullet_send_tests {
         let provider = PushBulletProvider::new(client());
         assert_eq!(provider.name(), "pushbullet");
         assert_eq!(provider.url_scheme(), "pushbullet");
-        assert!(provider.params().iter().any(|p| p.name == "access_token" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "device_iden" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "access_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "device_iden" && !p.required)
+        );
     }
 }
 
@@ -1348,7 +1405,9 @@ mod simplepush_send_tests {
     #[tokio::test]
     async fn test_validate_with_event() {
         let provider = SimplePushProvider::new(client());
-        let config = ProviderConfig::new().set("key", "HuxgBB").set("event", "alerts");
+        let config = ProviderConfig::new()
+            .set("key", "HuxgBB")
+            .set("event", "alerts");
         assert!(provider.validate_config(&config).is_ok());
     }
 
@@ -1357,8 +1416,18 @@ mod simplepush_send_tests {
         let provider = SimplePushProvider::new(client());
         assert_eq!(provider.name(), "simplepush");
         assert_eq!(provider.url_scheme(), "simplepush");
-        assert!(provider.params().iter().any(|p| p.name == "key" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "event" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "key" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "event" && !p.required)
+        );
     }
 }
 
@@ -1384,17 +1453,21 @@ mod twilio_send_tests {
         let provider = TwilioProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
         // Missing auth_token, from, to
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("account_sid", "ACxxx"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("account_sid", "ACxxx"))
+                .is_err()
+        );
         // Missing from, to
-        assert!(provider
-            .validate_config(
-                &ProviderConfig::new()
-                    .set("account_sid", "ACxxx")
-                    .set("auth_token", "tok")
-            )
-            .is_err());
+        assert!(
+            provider
+                .validate_config(
+                    &ProviderConfig::new()
+                        .set("account_sid", "ACxxx")
+                        .set("auth_token", "tok")
+                )
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1402,10 +1475,30 @@ mod twilio_send_tests {
         let provider = TwilioProvider::new(client());
         assert_eq!(provider.name(), "twilio");
         assert_eq!(provider.url_scheme(), "twilio");
-        assert!(provider.params().iter().any(|p| p.name == "account_sid" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "auth_token" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "from" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "to" && p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "account_sid" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "auth_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "from" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "to" && p.required)
+        );
     }
 }
 
@@ -1428,12 +1521,16 @@ mod ifttt_send_tests {
     async fn test_validate_missing_fields() {
         let provider = IftttProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("webhook_key", "x"))
-            .is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("event", "x"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("webhook_key", "x"))
+                .is_err()
+        );
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("event", "x"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1441,9 +1538,24 @@ mod ifttt_send_tests {
         let provider = IftttProvider::new(client());
         assert_eq!(provider.name(), "ifttt");
         assert_eq!(provider.url_scheme(), "ifttt");
-        assert!(provider.params().iter().any(|p| p.name == "webhook_key" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "event" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "value1" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "webhook_key" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "event" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "value1" && !p.required)
+        );
     }
 }
 
@@ -1475,8 +1587,18 @@ mod dingtalk_send_tests {
         let provider = DingTalkProvider::new(client());
         assert_eq!(provider.name(), "dingtalk");
         assert_eq!(provider.url_scheme(), "dingtalk");
-        assert!(provider.params().iter().any(|p| p.name == "access_token" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "secret" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "access_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "secret" && !p.required)
+        );
     }
 }
 
@@ -1509,8 +1631,18 @@ mod feishu_send_tests {
         assert_eq!(provider.name(), "feishu");
         assert_eq!(provider.url_scheme(), "feishu");
         assert!(!provider.description().is_empty());
-        assert!(provider.params().iter().any(|p| p.name == "hook_id" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "secret" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "hook_id" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "secret" && !p.required)
+        );
     }
 }
 
@@ -1534,7 +1666,12 @@ mod teams_send_tests {
         assert_eq!(provider.name(), "teams");
         assert_eq!(provider.url_scheme(), "teams");
         assert!(!provider.description().is_empty());
-        assert!(provider.params().iter().any(|p| p.name == "webhook_url" && p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "webhook_url" && p.required)
+        );
     }
 }
 
@@ -1557,12 +1694,16 @@ mod pushover_send_tests {
     async fn test_validate_missing_fields() {
         let provider = PushoverProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("user_key", "x"))
-            .is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("api_token", "x"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("user_key", "x"))
+                .is_err()
+        );
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("api_token", "x"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1570,10 +1711,30 @@ mod pushover_send_tests {
         let provider = PushoverProvider::new(client());
         assert_eq!(provider.name(), "pushover");
         assert_eq!(provider.url_scheme(), "pushover");
-        assert!(provider.params().iter().any(|p| p.name == "user_key" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "api_token" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "priority" && !p.required));
-        assert!(provider.params().iter().any(|p| p.name == "sound" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "user_key" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "api_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "priority" && !p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "sound" && !p.required)
+        );
     }
 }
 
@@ -1599,13 +1760,15 @@ mod email_tests {
         let provider = EmailProvider::new();
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
         // Missing password, to
-        assert!(provider
-            .validate_config(
-                &ProviderConfig::new()
-                    .set("host", "smtp.gmail.com")
-                    .set("username", "user@gmail.com")
-            )
-            .is_err());
+        assert!(
+            provider
+                .validate_config(
+                    &ProviderConfig::new()
+                        .set("host", "smtp.gmail.com")
+                        .set("username", "user@gmail.com")
+                )
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1613,11 +1776,36 @@ mod email_tests {
         let provider = EmailProvider::new();
         assert_eq!(provider.name(), "email");
         assert_eq!(provider.url_scheme(), "smtp");
-        assert!(provider.params().iter().any(|p| p.name == "host" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "username" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "password" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "to" && p.required));
-        assert!(provider.params().iter().any(|p| p.name == "port" && !p.required));
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "host" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "username" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "password" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "to" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "port" && !p.required)
+        );
     }
 
     #[tokio::test]
@@ -1648,12 +1836,16 @@ mod telegram_extended_tests {
     async fn test_validate_missing_fields() {
         let provider = TelegramProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("bot_token", "x"))
-            .is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("chat_id", "x"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("bot_token", "x"))
+                .is_err()
+        );
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("chat_id", "x"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1666,10 +1858,16 @@ mod telegram_extended_tests {
         let params = provider.params();
         assert!(params.iter().any(|p| p.name == "bot_token" && p.required));
         assert!(params.iter().any(|p| p.name == "chat_id" && p.required));
-        assert!(params.iter().any(|p| p.name == "disable_notification" && !p.required));
-        assert!(params
-            .iter()
-            .any(|p| p.name == "disable_web_page_preview" && !p.required));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "disable_notification" && !p.required)
+        );
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "disable_web_page_preview" && !p.required)
+        );
     }
 }
 
@@ -1694,12 +1892,16 @@ mod discord_extended_tests {
     async fn test_validate_missing_fields() {
         let provider = DiscordProvider::new(client());
         assert!(provider.validate_config(&ProviderConfig::new()).is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("webhook_id", "123"))
-            .is_err());
-        assert!(provider
-            .validate_config(&ProviderConfig::new().set("webhook_token", "abc"))
-            .is_err());
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("webhook_id", "123"))
+                .is_err()
+        );
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("webhook_token", "abc"))
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1711,7 +1913,11 @@ mod discord_extended_tests {
         assert!(!provider.example_url().is_empty());
         let params = provider.params();
         assert!(params.iter().any(|p| p.name == "webhook_id" && p.required));
-        assert!(params.iter().any(|p| p.name == "webhook_token" && p.required));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "webhook_token" && p.required)
+        );
         assert!(params.iter().any(|p| p.name == "username" && !p.required));
         assert!(params.iter().any(|p| p.name == "avatar_url" && !p.required));
     }

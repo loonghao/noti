@@ -21,8 +21,7 @@ impl DingTalkProvider {
     }
 
     fn build_url(access_token: &str, secret: Option<&str>) -> String {
-        let mut url =
-            format!("https://oapi.dingtalk.com/robot/send?access_token={access_token}");
+        let mut url = format!("https://oapi.dingtalk.com/robot/send?access_token={access_token}");
 
         if let Some(secret) = secret {
             let timestamp = std::time::SystemTime::now()
@@ -106,10 +105,7 @@ impl NotifyProvider for DingTalkProvider {
         // If there's an image attachment, send as markdown with inline image
         if let Some(img) = message.first_image() {
             let data = img.read_bytes().await?;
-            let b64 = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &data,
-            );
+            let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
             let mime = img.effective_mime();
 
             let title = message.title.as_deref().unwrap_or("Image");

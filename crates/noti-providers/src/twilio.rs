@@ -70,8 +70,7 @@ impl NotifyProvider for TwilioProvider {
         let from = config.require("from", "twilio")?;
         let to = config.require("to", "twilio")?;
 
-        let url =
-            format!("https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json");
+        let url = format!("https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)
@@ -122,9 +121,7 @@ impl NotifyProvider for TwilioProvider {
                     Ok(resp) if resp.status().is_success() => {
                         let upload_raw: serde_json::Value =
                             resp.json().await.unwrap_or(serde_json::Value::Null);
-                        if let Some(media_url) =
-                            upload_raw.get("uri").and_then(|v| v.as_str())
-                        {
+                        if let Some(media_url) = upload_raw.get("uri").and_then(|v| v.as_str()) {
                             form_params.push(("MediaUrl", media_url.to_string()));
                         }
                     }
