@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use noti_core::{
-    AppConfig, Attachment, Message, MessageFormat, ProviderConfig, ProviderRegistry,
+    AppConfig, Attachment, Message, MessageFormat, Priority, ProviderConfig, ProviderRegistry,
     parse_notification_url,
 };
 
@@ -38,6 +38,10 @@ pub struct SendArgs {
     #[arg(long, default_value = "text")]
     pub format: String,
 
+    /// Message priority: low, normal, high, urgent.
+    #[arg(long, default_value = "normal")]
+    pub priority: String,
+
     /// File attachment(s) to send (image, document, etc.).
     /// Can be specified multiple times.
     #[arg(long = "file", short = 'f', value_name = "PATH")]
@@ -68,7 +72,14 @@ pub async fn execute(
         .parse::<MessageFormat>()
         .map_err(|e| anyhow::anyhow!(e))?;
 
-    let mut message = Message::text(&args.message).with_format(format);
+    let priority = args
+        .priority
+        .parse::<Priority>()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    let mut message = Message::text(&args.message)
+        .with_format(format)
+        .with_priority(priority);
     if let Some(ref title) = args.title {
         message = message.with_title(title);
     }
