@@ -38,10 +38,11 @@ impl std::str::FromStr for MessageFormat {
 }
 
 /// The kind of attachment being sent.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AttachmentKind {
     /// A generic file attachment.
+    #[default]
     File,
     /// An image (may be displayed inline by some providers).
     Image,
@@ -49,12 +50,6 @@ pub enum AttachmentKind {
     Audio,
     /// A video file.
     Video,
-}
-
-impl Default for AttachmentKind {
-    fn default() -> Self {
-        Self::File
-    }
 }
 
 /// Infer `AttachmentKind` from a MIME type string.
