@@ -10,7 +10,8 @@ use serde_json::json;
 /// Google Chat (formerly Hangouts Chat) webhook provider.
 ///
 /// Uses the Google Chat Spaces webhook URL to post messages.
-/// Supports image attachments via cardsV2 Image widget (base64 data URI or URL).
+/// Supports image attachments via cardsV2 Image widget with base64 data URI.
+/// Non-image attachments are listed as file references in the text.
 ///
 /// The webhook URL looks like:
 /// `https://chat.googleapis.com/v1/spaces/<space>/messages?key=<key>&token=<token>`
@@ -75,37 +76,32 @@ impl NotifyProvider for GoogleChatProvider {
         }
         text.push_str(&message.text);
 
-        // If there are image attachments, use cardsV2 with Image widgets
+        // Build payload — use cardsV2 when image attachments are present
         let payload = if message.has_attachments() {
             let mut widgets = Vec::new();
 
             // Text widget
             widgets.push(json!({
-                "textParagraph": {
-                    "text": text
-                }
+                "textParagraph": { "text": text }
             }));
 
-            // Add image widgets for image attachments
+            // Image widgets for image attachments
             for attachment in &message.attachments {
                 if attachment.kind == AttachmentKind::Image {
                     let data = attachment.read_bytes().await?;
-                    let mime_str = attachment.effective_mime();
+                    let mime = attachment.effective_mime();
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    let data_uri = format!("data:{mime_str};base64,{b64}");
-
                     widgets.push(json!({
                         "image": {
-                            "imageUrl": data_uri,
+                            "imageUrl": format!("data:{mime};base64,{b64}"),
                             "altText": attachment.effective_file_name()
                         }
                     }));
                 } else {
-                    // For non-image files, mention in text
                     let file_name = attachment.effective_file_name();
                     widgets.push(json!({
                         "textParagraph": {
-                            "text": format!("📎 <b>Attachment:</b> {file_name}")
+                            "text": format!("📎 Attachment: {file_name}")
                         }
                     }));
                 }
@@ -113,7 +109,7 @@ impl NotifyProvider for GoogleChatProvider {
 
             json!({
                 "cardsV2": [{
-                    "cardId": "noti-card",
+                    "cardId": "noti-attachment",
                     "card": {
                         "sections": [{
                             "widgets": widgets

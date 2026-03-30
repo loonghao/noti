@@ -1,11 +1,19 @@
 use async_trait::async_trait;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
 
 /// Feishu / Lark group bot webhook provider.
+///
+/// Supports two modes:
+/// 1. **Webhook only** (hook_id): Text, markdown, and rich-text post messages.
+///    Image attachments are uploaded via the Feishu Open API to obtain an `image_key`,
+///    then sent as image messages. File attachments are listed in rich-text posts.
+/// 2. **App mode** (app_id + app_secret + hook_id): Enables uploading images and files
+///    via the Feishu Open API, then referencing them by key in webhook messages.
 pub struct FeishuProvider {
     client: Client,
 }
@@ -43,6 +51,14 @@ impl NotifyProvider for FeishuProvider {
             ParamDef::required("hook_id", "Feishu bot webhook hook ID")
                 .with_example("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"),
             ParamDef::optional("secret", "Webhook signature secret for verification"),
+            ParamDef::optional(
+                "app_id",
+                "Feishu App ID (enables image/file upload via Open API)",
+            ),
+            ParamDef::optional(
+                "app_secret",
+                "Feishu App Secret (required with app_id for uploads)",
+            ),
         ]
     }
 
@@ -59,18 +75,53 @@ impl NotifyProvider for FeishuProvider {
         let hook_id = config.require("hook_id", "feishu")?;
         let url = Self::build_webhook_url(hook_id);
 
-        // If there's an image attachment, send as image message
+        // If there's an image attachment, upload via Open API if credentials available
         if let Some(img) = message.first_image() {
-            let data = img.read_bytes().await?;
-            let b64 = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &data,
-            );
+            if let (Some(app_id), Some(app_secret)) =
+                (config.get("app_id"), config.get("app_secret"))
+            {
+                // Upload image via Feishu Open API
+                let tenant_token =
+                    Self::get_tenant_access_token(&self.client, app_id, app_secret).await?;
+                let image_key =
+                    Self::upload_image(&self.client, &tenant_token, img).await?;
 
+                let body = json!({
+                    "msg_type": "image",
+                    "content": {
+                        "image_key": image_key
+                    }
+                });
+
+                let mut request = self.client.post(&url);
+                request = Self::maybe_sign(request, &body, config);
+
+                let resp = request
+                    .send()
+                    .await
+                    .map_err(|e| NotiError::Network(e.to_string()))?;
+
+                return Self::parse_response(resp).await;
+            }
+
+            // Fallback: send as rich-text post with image info
+            let file_name = img.effective_file_name();
             let body = json!({
-                "msg_type": "image",
+                "msg_type": "post",
                 "content": {
-                    "image_key": b64
+                    "post": {
+                        "zh_cn": {
+                            "title": message.title.as_deref().unwrap_or("Image"),
+                            "content": [
+                                [
+                                    { "tag": "text", "text": &message.text },
+                                ],
+                                [
+                                    { "tag": "text", "text": format!("🖼️ Image: {file_name}") }
+                                ]
+                            ]
+                        }
+                    }
                 }
             });
 
@@ -85,24 +136,32 @@ impl NotifyProvider for FeishuProvider {
             return Self::parse_response(resp).await;
         }
 
-        // If there's a file attachment, send as post message with download link hint
+        // If there are file attachments, send as rich-text post
         if message.has_attachments() {
-            let attachment = &message.attachments[0];
-            let file_name = attachment.effective_file_name();
+            let mut content_lines: Vec<Vec<serde_json::Value>> = Vec::new();
+            content_lines.push(vec![json!({ "tag": "text", "text": &message.text })]);
+
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                let kind_label = match attachment.kind {
+                    AttachmentKind::Image => "🖼️ Image",
+                    AttachmentKind::Audio => "🎵 Audio",
+                    AttachmentKind::Video => "🎬 Video",
+                    AttachmentKind::File => "📎 File",
+                };
+                content_lines.push(vec![json!({
+                    "tag": "text",
+                    "text": format!("{kind_label}: {file_name}")
+                })]);
+            }
+
             let body = json!({
                 "msg_type": "post",
                 "content": {
                     "post": {
                         "zh_cn": {
                             "title": message.title.as_deref().unwrap_or("File Notification"),
-                            "content": [
-                                [
-                                    {
-                                        "tag": "text",
-                                        "text": format!("{}\n\n📎 Attachment: {}", message.text, file_name)
-                                    }
-                                ]
-                            ]
+                            "content": content_lines
                         }
                     }
                 }
@@ -180,6 +239,104 @@ impl FeishuProvider {
             request = request.json(body);
         }
         request
+    }
+
+    /// Obtain a tenant_access_token from Feishu Open API.
+    async fn get_tenant_access_token(
+        client: &Client,
+        app_id: &str,
+        app_secret: &str,
+    ) -> Result<String, NotiError> {
+        let url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
+        let body = json!({
+            "app_id": app_id,
+            "app_secret": app_secret,
+        });
+
+        let resp = client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("token parse error: {e}")))?;
+
+        let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            let msg = raw
+                .get("msg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(NotiError::provider(
+                "feishu",
+                format!("failed to get tenant token: {msg}"),
+            ));
+        }
+
+        raw.get("tenant_access_token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                NotiError::provider("feishu", "no tenant_access_token in response")
+            })
+    }
+
+    /// Upload an image to Feishu Open API and return the image_key.
+    async fn upload_image(
+        client: &Client,
+        tenant_token: &str,
+        attachment: &noti_core::Attachment,
+    ) -> Result<String, NotiError> {
+        let url = "https://open.feishu.cn/open-apis/im/v1/images";
+        let data = attachment.read_bytes().await?;
+        let file_name = attachment.effective_file_name();
+        let mime_str = attachment.effective_mime();
+
+        let file_part = reqwest::multipart::Part::bytes(data)
+            .file_name(file_name)
+            .mime_str(&mime_str)
+            .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("image_type", "message")
+            .part("image", file_part);
+
+        let resp = client
+            .post(url)
+            .header("Authorization", format!("Bearer {tenant_token}"))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
+
+        let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            let msg = raw
+                .get("msg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(NotiError::provider(
+                "feishu",
+                format!("image upload failed: {msg}"),
+            ));
+        }
+
+        raw.get("data")
+            .and_then(|d| d.get("image_key"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                NotiError::provider("feishu", "no image_key in upload response")
+            })
     }
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
