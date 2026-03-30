@@ -40,7 +40,7 @@ impl NotifyProvider for SimplePushProvider {
     }
 
     fn supports_attachments(&self) -> bool {
-        false
+        true
     }
 
     fn params(&self) -> Vec<ParamDef> {
