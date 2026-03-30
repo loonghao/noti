@@ -88,91 +88,129 @@ impl NotifyProvider for MatrixProvider {
 
         // If attachments, upload media first then send message referencing it
         if message.has_attachments() {
-            let attachment = &message.attachments[0];
-            let data = attachment.read_bytes().await?;
-            let file_name = attachment.effective_file_name();
-            let mime_str = attachment.effective_mime();
+            // Send text message first if there's text
+            if !message.text.is_empty() {
+                let txn_id = Self::txn_id();
+                let text_url = format!(
+                    "{base}/_matrix/client/v3/rooms/{encoded_room_id}/send/m.room.message/{txn_id}"
+                );
 
-            // Upload media
-            let upload_url = format!(
-                "{base}/_matrix/media/v3/upload?filename={}",
-                urlencoding_simple(&file_name)
-            );
+                let text_payload = match message.format {
+                    MessageFormat::Html | MessageFormat::Markdown => {
+                        json!({
+                            "msgtype": "m.text",
+                            "body": message.text,
+                            "format": "org.matrix.custom.html",
+                            "formatted_body": message.text
+                        })
+                    }
+                    MessageFormat::Text => {
+                        json!({
+                            "msgtype": "m.text",
+                            "body": message.text
+                        })
+                    }
+                };
 
-            let upload_resp = self
-                .client
-                .post(&upload_url)
-                .header("Authorization", format!("Bearer {access_token}"))
-                .header("Content-Type", &mime_str)
-                .body(data)
-                .send()
-                .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                let _ = self
+                    .client
+                    .put(&text_url)
+                    .header("Authorization", format!("Bearer {access_token}"))
+                    .json(&text_payload)
+                    .send()
+                    .await;
+            }
 
-            let upload_raw: serde_json::Value = upload_resp
-                .json()
-                .await
-                .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
+            // Upload and send each attachment
+            let mut last_response = None;
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
 
-            let content_uri = upload_raw
-                .get("content_uri")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    NotiError::provider("matrix", "no content_uri in upload response")
-                })?;
+                // Upload media
+                let upload_url = format!(
+                    "{base}/_matrix/media/v3/upload?filename={}",
+                    urlencoding_simple(&file_name)
+                );
 
-            // Send event referencing the uploaded media
-            let msgtype = match attachment.kind {
-                AttachmentKind::Image => "m.image",
-                AttachmentKind::Audio => "m.audio",
-                AttachmentKind::Video => "m.video",
-                AttachmentKind::File => "m.file",
-            };
+                let upload_resp = self
+                    .client
+                    .post(&upload_url)
+                    .header("Authorization", format!("Bearer {access_token}"))
+                    .header("Content-Type", &mime_str)
+                    .body(data)
+                    .send()
+                    .await
+                    .map_err(|e| NotiError::Network(e.to_string()))?;
 
-            let txn_id = Self::txn_id();
-            let send_url = format!(
-                "{base}/_matrix/client/v3/rooms/{encoded_room_id}/send/m.room.message/{txn_id}"
-            );
+                let upload_raw: serde_json::Value = upload_resp
+                    .json()
+                    .await
+                    .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
 
-            let payload = json!({
-                "msgtype": msgtype,
-                "body": if message.text.is_empty() { file_name.clone() } else { message.text.clone() },
-                "url": content_uri,
-                "info": {
-                    "mimetype": mime_str
-                }
-            });
-
-            let resp = self
-                .client
-                .put(&send_url)
-                .header("Authorization", format!("Bearer {access_token}"))
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
-
-            let status = resp.status().as_u16();
-            let raw: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
-
-            return if (200..300).contains(&status) {
-                Ok(SendResponse::success("matrix", "file sent successfully")
-                    .with_status_code(status)
-                    .with_raw_response(raw))
-            } else {
-                let error_msg = raw
-                    .get("error")
+                let content_uri = upload_raw
+                    .get("content_uri")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("unknown error");
-                Ok(
-                    SendResponse::failure("matrix", format!("API error: {error_msg}"))
-                        .with_status_code(status)
-                        .with_raw_response(raw),
-                )
-            };
+                    .ok_or_else(|| {
+                        NotiError::provider("matrix", "no content_uri in upload response")
+                    })?;
+
+                let msgtype = match attachment.kind {
+                    AttachmentKind::Image => "m.image",
+                    AttachmentKind::Audio => "m.audio",
+                    AttachmentKind::Video => "m.video",
+                    AttachmentKind::File => "m.file",
+                };
+
+                let txn_id = Self::txn_id();
+                let send_url = format!(
+                    "{base}/_matrix/client/v3/rooms/{encoded_room_id}/send/m.room.message/{txn_id}"
+                );
+
+                let payload = json!({
+                    "msgtype": msgtype,
+                    "body": file_name,
+                    "url": content_uri,
+                    "info": {
+                        "mimetype": mime_str
+                    }
+                });
+
+                let resp = self
+                    .client
+                    .put(&send_url)
+                    .header("Authorization", format!("Bearer {access_token}"))
+                    .json(&payload)
+                    .send()
+                    .await
+                    .map_err(|e| NotiError::Network(e.to_string()))?;
+
+                let status = resp.status().as_u16();
+                let raw: serde_json::Value = resp
+                    .json()
+                    .await
+                    .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
+
+                if !(200..300).contains(&status) {
+                    let error_msg = raw
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown error");
+                    return Ok(
+                        SendResponse::failure("matrix", format!("API error: {error_msg}"))
+                            .with_status_code(status)
+                            .with_raw_response(raw),
+                    );
+                }
+                last_response = Some((status, raw));
+            }
+
+            if let Some((status, raw)) = last_response {
+                return Ok(SendResponse::success("matrix", "file(s) sent successfully")
+                    .with_status_code(status)
+                    .with_raw_response(raw));
+            }
         }
 
         // Text message

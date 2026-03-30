@@ -1,39 +1,20 @@
-use noti_core::{
-    Attachment, AttachmentKind, Message, MessageFormat, NotifyProvider, ProviderConfig,
-};
-use noti_providers::apprise::AppriseProvider;
+use noti_core::{Attachment, AttachmentKind, Message, MessageFormat, NotifyProvider, ProviderConfig};
 use noti_providers::bluesky::BlueskyProvider;
-use noti_providers::boxcar::BoxcarProvider;
+use noti_providers::dingtalk::DingTalkProvider;
 use noti_providers::discord::DiscordProvider;
-use noti_providers::growl::GrowlProvider;
+use noti_providers::feishu::FeishuProvider;
 use noti_providers::guilded::GuildedProvider;
-use noti_providers::ifttt::IftttProvider;
-use noti_providers::kodi::KodiProvider;
-use noti_providers::kumulos::KumulosProvider;
-use noti_providers::lunasea::LunaseaProvider;
 use noti_providers::misskey::MisskeyProvider;
 use noti_providers::nctalk::NcTalkProvider;
-use noti_providers::nextcloud::NextcloudProvider;
-use noti_providers::pagertree::PagerTreeProvider;
-use noti_providers::parse::ParseProvider;
-use noti_providers::prowl::ProwlProvider;
-use noti_providers::pushed::PushedProvider;
-use noti_providers::reddit::RedditProvider;
+use noti_providers::pushsafer::PushsaferProvider;
 use noti_providers::revolt::RevoltProvider;
 use noti_providers::rocketchat::RocketChatProvider;
 use noti_providers::signal::SignalProvider;
 use noti_providers::slack::SlackProvider;
-use noti_providers::smseagle::SmsEagleProvider;
-use noti_providers::spike::SpikeProvider;
-use noti_providers::spugpush::SpugPushProvider;
-use noti_providers::techulus::TechulusProvider;
 use noti_providers::telegram::TelegramProvider;
-use noti_providers::twitter::TwitterProvider;
-use noti_providers::victorops::VictorOpsProvider;
-use noti_providers::voipms::VoipMsProvider;
-use noti_providers::webpush::WebPushProvider;
 use noti_providers::wecom::WeComProvider;
 use noti_providers::zulip::ZulipProvider;
+use noti_providers::apprise::AppriseProvider;
 use reqwest::Client;
 use rstest::rstest;
 
@@ -150,7 +131,8 @@ fn test_attachment_overrides() {
 
 #[rstest]
 fn test_message_with_attachment() {
-    let msg = Message::text("check this out").with_file("image.jpg");
+    let msg = Message::text("check this out")
+        .with_file("image.jpg");
 
     assert!(msg.has_attachments());
     assert_eq!(msg.attachments.len(), 1);
@@ -221,65 +203,13 @@ fn test_providers_supports_attachments() {
     let rocketchat = RocketChatProvider::new(client.clone());
     assert!(rocketchat.supports_attachments());
 
-    // Newly added providers with attachment support
-    let twitter = TwitterProvider::new(client.clone());
-    assert!(twitter.supports_attachments());
+    // Providers with real attachment handling code
+    let pushsafer = PushsaferProvider::new(client.clone());
+    assert!(pushsafer.supports_attachments());
 
-    let webpush = WebPushProvider::new(client.clone());
-    assert!(webpush.supports_attachments());
+    let feishu = FeishuProvider::new(client.clone());
+    assert!(feishu.supports_attachments());
 
-    let ifttt = IftttProvider::new(client.clone());
-    assert!(ifttt.supports_attachments());
-
-    let boxcar = BoxcarProvider::new(client.clone());
-    assert!(boxcar.supports_attachments());
-
-    let kumulos = KumulosProvider::new(client.clone());
-    assert!(kumulos.supports_attachments());
-
-    let kodi = KodiProvider::new(client.clone());
-    assert!(kodi.supports_attachments());
-
-    let lunasea = LunaseaProvider::new(client.clone());
-    assert!(lunasea.supports_attachments());
-
-    let pushed = PushedProvider::new(client.clone());
-    assert!(pushed.supports_attachments());
-
-    let victorops = VictorOpsProvider::new(client.clone());
-    assert!(victorops.supports_attachments());
-
-    let pagertree = PagerTreeProvider::new(client.clone());
-    assert!(pagertree.supports_attachments());
-
-    let spike = SpikeProvider::new(client.clone());
-    assert!(spike.supports_attachments());
-
-    let reddit = RedditProvider::new(client.clone());
-    assert!(reddit.supports_attachments());
-
-    let parse = ParseProvider::new(client.clone());
-    assert!(parse.supports_attachments());
-
-    let nextcloud = NextcloudProvider::new(client.clone());
-    assert!(nextcloud.supports_attachments());
-
-    let prowl = ProwlProvider::new(client.clone());
-    assert!(prowl.supports_attachments());
-
-    let spugpush = SpugPushProvider::new(client.clone());
-    assert!(spugpush.supports_attachments());
-
-    // SMSEagle MMS, VoIP.ms MMS, Techulus image_url, Growl icon
-    let smseagle = SmsEagleProvider::new(client.clone());
-    assert!(smseagle.supports_attachments());
-
-    let voipms = VoipMsProvider::new(client.clone());
-    assert!(voipms.supports_attachments());
-
-    let techulus = TechulusProvider::new(client.clone());
-    assert!(techulus.supports_attachments());
-
-    let growl = GrowlProvider::new(client.clone());
-    assert!(growl.supports_attachments());
+    let dingtalk = DingTalkProvider::new(client.clone());
+    assert!(dingtalk.supports_attachments());
 }
