@@ -7,6 +7,7 @@ use noti_core::{
 };
 
 /// Email (SMTP) notification provider via lettre.
+#[derive(Default)]
 pub struct EmailProvider;
 
 impl EmailProvider {

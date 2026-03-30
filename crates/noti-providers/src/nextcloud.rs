@@ -82,7 +82,7 @@ impl NotifyProvider for NextcloudProvider {
                     .client
                     .request(
                         reqwest::Method::from_bytes(b"MKCOL").unwrap_or(reqwest::Method::PUT),
-                        &format!("{scheme}://{host}/remote.php/dav/files/{user}/noti-attachments/"),
+                        format!("{scheme}://{host}/remote.php/dav/files/{user}/noti-attachments/"),
                     )
                     .basic_auth(user, Some(password))
                     .send()
