@@ -260,7 +260,7 @@ fn test_send_response_serde_complete() {
         .with_raw_response(serde_json::json!({"result": "ok", "code": 0}));
     let json = serde_json::to_string(&resp).unwrap();
     let parsed: SendResponse = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.success, true);
+    assert!(parsed.success);
     assert_eq!(parsed.provider, "test");
     assert_eq!(parsed.message, "message sent");
     assert_eq!(parsed.status_code, Some(200));
