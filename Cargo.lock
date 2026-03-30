@@ -1039,6 +1039,7 @@ version = "0.1.2"
 dependencies = [
  "async-trait",
  "dirs",
+ "futures",
  "mime_guess",
  "rstest",
  "serde",

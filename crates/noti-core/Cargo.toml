@@ -10,13 +10,15 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 dirs = { workspace = true }
+futures = { workspace = true }
 mime_guess = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "time"] }
 toml = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
+tokio = { workspace = true, features = ["fs", "time", "macros", "rt-multi-thread"] }
