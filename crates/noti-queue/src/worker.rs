@@ -132,7 +132,14 @@ impl WorkerPool {
                                     let err =
                                         format!("provider '{}' not found", provider_name);
                                     tracing::error!(worker_id, task_id = %task_id, %err);
-                                    let _ = queue.nack(&task_id, &err).await;
+                                    if let Err(nack_err) = queue.nack(&task_id, &err).await {
+                                        tracing::error!(
+                                            worker_id,
+                                            task_id = %task_id,
+                                            error = %nack_err,
+                                            "failed to nack task after provider-not-found"
+                                        );
+                                    }
                                     // Fire callback if task reached terminal state
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {
@@ -152,7 +159,14 @@ impl WorkerPool {
                                         provider = %provider_name,
                                         "task completed successfully"
                                     );
-                                    let _ = queue.ack(&task_id).await;
+                                    if let Err(ack_err) = queue.ack(&task_id).await {
+                                        tracing::error!(
+                                            worker_id,
+                                            task_id = %task_id,
+                                            error = %ack_err,
+                                            "failed to ack completed task"
+                                        );
+                                    }
                                     // Fire callback on success
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {
@@ -168,7 +182,14 @@ impl WorkerPool {
                                         message = %resp.message,
                                         "provider returned failure response"
                                     );
-                                    let _ = queue.nack(&task_id, &resp.message).await;
+                                    if let Err(nack_err) = queue.nack(&task_id, &resp.message).await {
+                                        tracing::error!(
+                                            worker_id,
+                                            task_id = %task_id,
+                                            error = %nack_err,
+                                            "failed to nack task after provider failure"
+                                        );
+                                    }
                                     // Fire callback only if task reached terminal state (not retrying)
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {
@@ -184,7 +205,14 @@ impl WorkerPool {
                                         error = %e,
                                         "task send failed"
                                     );
-                                    let _ = queue.nack(&task_id, &e.to_string()).await;
+                                    if let Err(nack_err) = queue.nack(&task_id, &e.to_string()).await {
+                                        tracing::error!(
+                                            worker_id,
+                                            task_id = %task_id,
+                                            error = %nack_err,
+                                            "failed to nack task after send error"
+                                        );
+                                    }
                                     // Fire callback only if task reached terminal state (not retrying)
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {

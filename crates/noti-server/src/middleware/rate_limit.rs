@@ -420,7 +420,7 @@ mod tests {
         // After consuming 1 token from a 10-token bucket, remaining should be ~9
         // (may be exactly 9 due to micro-refill between calls)
         let remaining = bucket.remaining();
-        assert!(remaining >= 8 && remaining <= 9, "expected 8-9, got {remaining}");
+        assert!((8..=9).contains(&remaining), "expected 8-9, got {remaining}");
 
         // Tokens refill over time — for a 10/10s bucket, that's 1 token/sec
         assert!(bucket.remaining() <= 10);
