@@ -1,6 +1,10 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+
+use crate::error::NotiError;
+use crate::message::Message;
+use crate::provider::{NotifyProvider, ProviderConfig, SendResponse};
 
 /// Configuration for retry behavior when sending notifications.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +89,98 @@ pub struct RetryOutcome<T> {
     pub total_duration: Option<Duration>,
 }
 
+/// Send a message through a provider with automatic retry according to the given policy.
+///
+/// On transient failures (network errors, provider errors with retryable status codes),
+/// the function will retry up to `policy.max_retries` times with exponential backoff.
+/// Validation errors are never retried since they indicate a permanent problem.
+pub async fn send_with_retry(
+    provider: &dyn NotifyProvider,
+    message: &Message,
+    config: &ProviderConfig,
+    policy: &RetryPolicy,
+) -> RetryOutcome<Result<SendResponse, NotiError>> {
+    let start = Instant::now();
+    let mut attempt = 0u32;
+
+    loop {
+        match provider.send(message, config).await {
+            Ok(response) => {
+                return RetryOutcome {
+                    result: Ok(response),
+                    attempts: attempt + 1,
+                    total_duration: Some(start.elapsed()),
+                };
+            }
+            Err(err) => {
+                if !is_retryable(&err) || !policy.should_retry(attempt) {
+                    return RetryOutcome {
+                        result: Err(err),
+                        attempts: attempt + 1,
+                        total_duration: Some(start.elapsed()),
+                    };
+                }
+                attempt += 1;
+                let delay = policy.delay_for_attempt(attempt);
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
+/// Execute an arbitrary async closure with retry logic.
+///
+/// This is a generic helper that can be used for any fallible async operation,
+/// not just provider sends.
+pub async fn execute_with_retry<F, Fut, T>(
+    policy: &RetryPolicy,
+    mut operation: F,
+) -> RetryOutcome<Result<T, NotiError>>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, NotiError>>,
+{
+    let start = Instant::now();
+    let mut attempt = 0u32;
+
+    loop {
+        match operation().await {
+            Ok(value) => {
+                return RetryOutcome {
+                    result: Ok(value),
+                    attempts: attempt + 1,
+                    total_duration: Some(start.elapsed()),
+                };
+            }
+            Err(err) => {
+                if !is_retryable(&err) || !policy.should_retry(attempt) {
+                    return RetryOutcome {
+                        result: Err(err),
+                        attempts: attempt + 1,
+                        total_duration: Some(start.elapsed()),
+                    };
+                }
+                attempt += 1;
+                let delay = policy.delay_for_attempt(attempt);
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
+/// Determine whether an error is transient and worth retrying.
+///
+/// Validation errors are never retried (they indicate permanent problems).
+/// Network and provider errors are considered retryable.
+fn is_retryable(err: &NotiError) -> bool {
+    match err {
+        NotiError::Network(_) => true,
+        NotiError::Provider { .. } => true,
+        NotiError::Io(_) => true,
+        NotiError::Validation(_) | NotiError::Config(_) | NotiError::UrlParse(_) => false,
+    }
+}
+
 /// Serde helper: serialize/deserialize `Duration` as milliseconds.
 mod duration_millis {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -103,6 +199,10 @@ mod duration_millis {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{ParamDef, SendResponse};
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn test_default_policy() {
@@ -165,5 +265,213 @@ mod tests {
         assert_eq!(parsed.max_retries, policy.max_retries);
         assert_eq!(parsed.initial_delay, policy.initial_delay);
         assert_eq!(parsed.max_delay, policy.max_delay);
+    }
+
+    #[test]
+    fn test_is_retryable_network() {
+        assert!(is_retryable(&NotiError::Network("timeout".into())));
+    }
+
+    #[test]
+    fn test_is_retryable_provider() {
+        assert!(is_retryable(&NotiError::provider("slack", "500")));
+    }
+
+    #[test]
+    fn test_is_not_retryable_validation() {
+        assert!(!is_retryable(&NotiError::Validation("bad param".into())));
+    }
+
+    #[test]
+    fn test_is_not_retryable_config() {
+        assert!(!is_retryable(&NotiError::Config("bad config".into())));
+    }
+
+    #[test]
+    fn test_is_not_retryable_url_parse() {
+        assert!(!is_retryable(&NotiError::UrlParse("bad url".into())));
+    }
+
+    // --- Mock provider for async tests ---
+
+    struct MockProvider {
+        fail_count: AtomicU32,
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl MockProvider {
+        fn new(fail_first_n: u32) -> Self {
+            Self {
+                fail_count: AtomicU32::new(fail_first_n),
+                call_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+
+        fn calls(&self) -> u32 {
+            self.call_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl NotifyProvider for MockProvider {
+        fn name(&self) -> &str { "mock" }
+        fn url_scheme(&self) -> &str { "mock" }
+        fn params(&self) -> Vec<ParamDef> { vec![] }
+        fn description(&self) -> &str { "mock provider" }
+        fn example_url(&self) -> &str { "mock://test" }
+
+        async fn send(
+            &self,
+            _message: &Message,
+            _config: &ProviderConfig,
+        ) -> Result<SendResponse, NotiError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            let remaining = self.fail_count.load(Ordering::SeqCst);
+            if remaining > 0 {
+                self.fail_count.fetch_sub(1, Ordering::SeqCst);
+                Err(NotiError::Network("simulated transient error".into()))
+            } else {
+                Ok(SendResponse::success("mock", "ok"))
+            }
+        }
+    }
+
+    /// A mock that always returns a validation error (non-retryable).
+    struct ValidationErrorProvider;
+
+    #[async_trait]
+    impl NotifyProvider for ValidationErrorProvider {
+        fn name(&self) -> &str { "validation-mock" }
+        fn url_scheme(&self) -> &str { "validation-mock" }
+        fn params(&self) -> Vec<ParamDef> { vec![] }
+        fn description(&self) -> &str { "always fails with validation" }
+        fn example_url(&self) -> &str { "validation-mock://test" }
+
+        async fn send(
+            &self,
+            _message: &Message,
+            _config: &ProviderConfig,
+        ) -> Result<SendResponse, NotiError> {
+            Err(NotiError::Validation("permanent error".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_success_first_try() {
+        let provider = MockProvider::new(0);
+        let msg = Message::text("hello");
+        let config = ProviderConfig::new();
+        let policy = RetryPolicy::fixed(3, Duration::from_millis(1));
+
+        let outcome = send_with_retry(&provider, &msg, &config, &policy).await;
+        assert!(outcome.result.is_ok());
+        assert_eq!(outcome.attempts, 1);
+        assert_eq!(provider.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_succeeds_after_retries() {
+        let provider = MockProvider::new(2); // fail first 2, succeed on 3rd
+        let msg = Message::text("hello");
+        let config = ProviderConfig::new();
+        let policy = RetryPolicy::fixed(3, Duration::from_millis(1));
+
+        let outcome = send_with_retry(&provider, &msg, &config, &policy).await;
+        assert!(outcome.result.is_ok());
+        assert_eq!(outcome.attempts, 3);
+        assert_eq!(provider.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_exhausts_retries() {
+        let provider = MockProvider::new(10); // always fail
+        let msg = Message::text("hello");
+        let config = ProviderConfig::new();
+        let policy = RetryPolicy::fixed(2, Duration::from_millis(1));
+
+        let outcome = send_with_retry(&provider, &msg, &config, &policy).await;
+        assert!(outcome.result.is_err());
+        // 1 initial + 2 retries = 3 attempts
+        assert_eq!(outcome.attempts, 3);
+        assert_eq!(provider.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_no_retry_on_validation() {
+        let provider = ValidationErrorProvider;
+        let msg = Message::text("hello");
+        let config = ProviderConfig::new();
+        let policy = RetryPolicy::fixed(3, Duration::from_millis(1));
+
+        let outcome = send_with_retry(&provider, &msg, &config, &policy).await;
+        assert!(outcome.result.is_err());
+        assert_eq!(outcome.attempts, 1); // no retries for validation errors
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_none_policy() {
+        let provider = MockProvider::new(1); // fail once
+        let msg = Message::text("hello");
+        let config = ProviderConfig::new();
+        let policy = RetryPolicy::none();
+
+        let outcome = send_with_retry(&provider, &msg, &config, &policy).await;
+        assert!(outcome.result.is_err());
+        assert_eq!(outcome.attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_retry_tracks_duration() {
+        let provider = MockProvider::new(0);
+        let msg = Message::text("hello");
+        let config = ProviderConfig::new();
+        let policy = RetryPolicy::none();
+
+        let outcome = send_with_retry(&provider, &msg, &config, &policy).await;
+        assert!(outcome.total_duration.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_retry_success() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let c = counter.clone();
+        let policy = RetryPolicy::fixed(3, Duration::from_millis(1));
+
+        let outcome = execute_with_retry(&policy, || {
+            let c = c.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, NotiError>("done".to_string())
+            }
+        })
+        .await;
+
+        assert!(outcome.result.is_ok());
+        assert_eq!(outcome.attempts, 1);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_retry_retries_then_succeeds() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let c = counter.clone();
+        let policy = RetryPolicy::fixed(3, Duration::from_millis(1));
+
+        let outcome = execute_with_retry(&policy, || {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    Err(NotiError::Network("transient".into()))
+                } else {
+                    Ok::<_, NotiError>(42u32)
+                }
+            }
+        })
+        .await;
+
+        assert!(outcome.result.is_ok());
+        assert_eq!(outcome.result.unwrap(), 42);
+        assert_eq!(outcome.attempts, 3);
     }
 }
