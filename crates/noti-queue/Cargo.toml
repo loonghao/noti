@@ -1,0 +1,22 @@
+[package]
+name = "noti-queue"
+description = "Message queue abstraction for async notification processing"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+noti-core = { path = "../noti-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+rstest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

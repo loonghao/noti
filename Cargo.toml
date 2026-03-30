@@ -3,6 +3,7 @@ members = [
   "crates/noti-cli",
   "crates/noti-core",
   "crates/noti-providers",
+  "crates/noti-queue",
   "crates/noti-server",
 ]
 resolver = "2"
