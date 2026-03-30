@@ -15,18 +15,22 @@ rounds or require coordination with the iteration agent.
 
 ## Code — Structural Refactoring (noti-server)
 
-> These affect the iteration agent's in-progress `noti-server` code. Do **not** refactor until their work is committed.
-
-- [ ] `handlers/send.rs` and `handlers/queue.rs` share identical `build_message()` function — extract to `handlers/common.rs`
-- [ ] `handlers/send.rs` and `handlers/queue.rs` share identical `RetryConfig` struct — extract to common module
-- [ ] `build_retry_policy()` has intentional(?) behavioral difference: `send.rs` defaults to `RetryPolicy::none()`, `queue.rs` defaults to `RetryPolicy::default()` — verify intent and document
+- [x] ~~`handlers/send.rs` and `handlers/queue.rs` share identical `build_message()` function~~ — extracted to `handlers/common.rs` (293b523)
+- [x] ~~`handlers/send.rs` and `handlers/queue.rs` share identical `RetryConfig` struct~~ — extracted to `handlers/common.rs` (293b523)
+- [x] ~~`build_retry_policy()` default behavior difference~~ — resolved: `common::build_retry_policy` now takes explicit `default_policy` param; `send.rs` passes `RetryPolicy::none()`, `queue.rs` passes `RetryPolicy::default()` (293b523)
 - [ ] "provider not found" error pattern repeated 4× across handlers — extract helper function
 - [ ] Consider defining a unified `ApiError` type implementing `IntoResponse` to replace `(StatusCode, Json<Value>)` pattern
 - [ ] `health.rs` response type lacks `Debug` derive (all other handlers have it)
+- [ ] `BatchAsyncItem` and `AsyncSendRequest` share near-identical fields — consider shared base type
+- [ ] `StatsResponse` (queue.rs) and `QueueMetrics` (metrics.rs) have identical fields — unify
+- [ ] `send_batch` function exceeds 100 lines — extract result-mapping helper
+- [ ] `main.rs` uses `.unwrap()` for TCP bind and serve — use `.expect()` or proper error handling
+- [ ] `main.rs` graceful shutdown (`worker_handle.shutdown_and_join()`) is unreachable — implement signal handling with `axum::serve().with_graceful_shutdown()`
+- [ ] `fire_callback` creates a new `reqwest::Client` per call — pass shared client or use `LazyLock`
 
 ## Code — Silent Error Discards (noti-queue)
 
-- [ ] `worker.rs` lines 133/147/157/167: `let _ = queue.ack/nack(...)` silently discards errors — consider adding `tracing::warn!` logging
+- [x] ~~`worker.rs` `let _ = queue.ack/nack(...)` silently discards errors~~ — replaced with `if let Err(e) = ... { tracing::error!(...) }` (1de1311)
 
 ## Build
 
