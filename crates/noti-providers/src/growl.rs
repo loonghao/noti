@@ -100,9 +100,7 @@ impl NotifyProvider for GrowlProvider {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                 let mime = img.effective_mime();
                 // Use data URI as icon URL (GNTP 1.0 supports resource identifiers)
-                gntp_message.push_str(&format!(
-                    "Notification-Icon: data:{mime};base64,{b64}\r\n"
-                ));
+                gntp_message.push_str(&format!("Notification-Icon: data:{mime};base64,{b64}\r\n"));
                 icon_data = Some(data);
             }
         }
@@ -113,10 +111,7 @@ impl NotifyProvider for GrowlProvider {
         let body = if let Some(ref data) = icon_data {
             let mut full = gntp_message.into_bytes();
             // GNTP binary resource identifier section
-            let resource_header = format!(
-                "Identifier: icon\r\nLength: {}\r\n\r\n",
-                data.len()
-            );
+            let resource_header = format!("Identifier: icon\r\nLength: {}\r\n\r\n", data.len());
             full.extend_from_slice(resource_header.as_bytes());
             full.extend_from_slice(data);
             full.extend_from_slice(b"\r\n\r\n");

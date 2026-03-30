@@ -84,10 +84,7 @@ impl NotifyProvider for SignalProvider {
             let mut base64_attachments = Vec::new();
             for attachment in &message.attachments {
                 let data = attachment.read_bytes().await?;
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &data,
-                );
+                let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
                 let mime_str = attachment.effective_mime();
                 let file_name = attachment.effective_file_name();
                 base64_attachments.push(json!({

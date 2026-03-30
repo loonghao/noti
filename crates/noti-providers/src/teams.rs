@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use base64::Engine;
 use noti_core::{
-    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig,
-    SendResponse,
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;

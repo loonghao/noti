@@ -108,11 +108,12 @@ impl NotifyProvider for MastodonProvider {
                     .get("error")
                     .and_then(|v| v.as_str())
                     .unwrap_or("upload failed");
-                return Ok(
-                    SendResponse::failure("mastodon", format!("media upload error: {error_msg}"))
-                        .with_status_code(status)
-                        .with_raw_response(raw),
-                );
+                return Ok(SendResponse::failure(
+                    "mastodon",
+                    format!("media upload error: {error_msg}"),
+                )
+                .with_status_code(status)
+                .with_raw_response(raw));
             }
         }
 

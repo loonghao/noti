@@ -70,11 +70,12 @@ impl RocketChatProvider {
                     .get("error")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
-                return Ok(
-                    SendResponse::failure("rocketchat", format!("file upload error: {error}"))
-                        .with_status_code(status)
-                        .with_raw_response(raw),
-                );
+                return Ok(SendResponse::failure(
+                    "rocketchat",
+                    format!("file upload error: {error}"),
+                )
+                .with_status_code(status)
+                .with_raw_response(raw));
             }
         }
 

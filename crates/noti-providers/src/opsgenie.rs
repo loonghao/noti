@@ -143,9 +143,7 @@ impl NotifyProvider for OpsgenieProvider {
                     .map(|s| format!("alias={s}"))
                     .unwrap_or_else(|| request_id.to_string());
 
-                let attach_url = format!(
-                    "{base_url}/v2/alerts/{alert_id}/attachments"
-                );
+                let attach_url = format!("{base_url}/v2/alerts/{alert_id}/attachments");
 
                 for attachment in &message.attachments {
                     let data = attachment.read_bytes().await?;
@@ -155,19 +153,14 @@ impl NotifyProvider for OpsgenieProvider {
                     let part = reqwest::multipart::Part::bytes(data)
                         .file_name(file_name)
                         .mime_str(&mime_str)
-                        .map_err(|e| {
-                            NotiError::Network(format!("MIME error: {e}"))
-                        })?;
+                        .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
 
                     let form = reqwest::multipart::Form::new().part("file", part);
 
                     let _attach_resp = self
                         .client
                         .post(&attach_url)
-                        .header(
-                            "Authorization",
-                            format!("GenieKey {api_key}"),
-                        )
+                        .header("Authorization", format!("GenieKey {api_key}"))
                         .multipart(form)
                         .send()
                         .await
@@ -176,9 +169,7 @@ impl NotifyProvider for OpsgenieProvider {
             }
 
             let msg = if message.has_attachments() {
-                format!(
-                    "alert created with attachments (requestId: {request_id})"
-                )
+                format!("alert created with attachments (requestId: {request_id})")
             } else {
                 format!("alert created (requestId: {request_id})")
             };

@@ -75,7 +75,10 @@ impl NotifyProvider for PushMeProvider {
             // Non-image attachments: include file info in markdown
             let mut md = message.text.clone();
             for att in &message.attachments {
-                md.push_str(&format!("\n\n📎 **Attachment:** {}", att.effective_file_name()));
+                md.push_str(&format!(
+                    "\n\n📎 **Attachment:** {}",
+                    att.effective_file_name()
+                ));
             }
             (md, "markdown")
         } else {

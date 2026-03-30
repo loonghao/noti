@@ -91,9 +91,11 @@ impl NotifyProvider for BurstSmsProvider {
         ];
 
         if message.has_attachments() {
-            if let Some(attachment) = message.attachments.iter().find(|a| {
-                matches!(a.kind, AttachmentKind::Image)
-            }) {
+            if let Some(attachment) = message
+                .attachments
+                .iter()
+                .find(|a| matches!(a.kind, AttachmentKind::Image))
+            {
                 let data = attachment.read_bytes().await?;
                 let mime = attachment.effective_mime();
                 let b64 = base64::engine::general_purpose::STANDARD.encode(&data);

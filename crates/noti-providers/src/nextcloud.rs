@@ -80,9 +80,10 @@ impl NotifyProvider for NextcloudProvider {
                 // Ensure directory exists (MKCOL)
                 let _ = self
                     .client
-                    .request(reqwest::Method::from_bytes(b"MKCOL").unwrap_or(reqwest::Method::PUT), format!(
-                        "{scheme}://{host}/remote.php/dav/files/{user}/noti-attachments/"
-                    ))
+                    .request(
+                        reqwest::Method::from_bytes(b"MKCOL").unwrap_or(reqwest::Method::PUT),
+                        format!("{scheme}://{host}/remote.php/dav/files/{user}/noti-attachments/"),
+                    )
                     .basic_auth(user, Some(password))
                     .send()
                     .await;
@@ -92,10 +93,7 @@ impl NotifyProvider for NextcloudProvider {
                     .client
                     .put(&webdav_url)
                     .basic_auth(user, Some(password))
-                    .header(
-                        "Content-Type",
-                        attachment.effective_mime(),
-                    )
+                    .header("Content-Type", attachment.effective_mime())
                     .body(data)
                     .send()
                     .await;

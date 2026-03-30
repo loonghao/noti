@@ -108,8 +108,7 @@ impl NotifyProvider for RedditProvider {
                     let mime = attachment.effective_mime();
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                     let name = attachment.effective_file_name();
-                    body_text
-                        .push_str(&format!("\n\n![{name}](data:{mime};base64,{b64})"));
+                    body_text.push_str(&format!("\n\n![{name}](data:{mime};base64,{b64})"));
                 }
             }
         }

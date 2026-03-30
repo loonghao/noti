@@ -116,7 +116,10 @@ impl NotifyProvider for TwitterProvider {
             let mut msg_obj = json!({ "text": message.text });
             if !media_ids.is_empty() {
                 msg_obj["attachments"] = json!(
-                    media_ids.iter().map(|id| json!({"media_id": id})).collect::<Vec<_>>()
+                    media_ids
+                        .iter()
+                        .map(|id| json!({"media_id": id}))
+                        .collect::<Vec<_>>()
                 );
             }
             (

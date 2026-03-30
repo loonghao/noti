@@ -4,23 +4,20 @@ use serde::{Deserialize, Serialize};
 ///
 /// Higher priority messages may be processed first in queue-based systems,
 /// and some providers support mapping these to native priority fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     /// Lowest priority — informational, non-urgent.
     Low,
     /// Normal priority (default).
+    #[default]
     Normal,
     /// Higher than normal — should be noticed promptly.
     High,
     /// Highest priority — urgent / critical alert.
     Urgent,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl std::fmt::Display for Priority {
