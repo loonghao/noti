@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -54,6 +57,10 @@ impl NotifyProvider for HomeAssistantProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -75,6 +82,38 @@ impl NotifyProvider for HomeAssistantProvider {
 
         if let Some(ref title) = message.title {
             payload["title"] = json!(title);
+        }
+
+        // Handle image attachments via data.image (for HA mobile app)
+        if message.has_attachments() {
+            let mut data = json!({});
+
+            if let Some(image_att) = message
+                .attachments
+                .iter()
+                .find(|a| a.kind == AttachmentKind::Image)
+            {
+                let img_data = image_att.read_bytes().await?;
+                let mime = image_att.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&img_data);
+                data["image"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+
+            // List non-image attachments in the message
+            let non_images: Vec<_> = message
+                .attachments
+                .iter()
+                .filter(|a| a.kind != AttachmentKind::Image)
+                .collect();
+            if !non_images.is_empty() {
+                let mut msg = message.text.clone();
+                for att in &non_images {
+                    msg.push_str(&format!("\n📎 {}", att.effective_file_name()));
+                }
+                payload["message"] = json!(msg);
+            }
+
+            payload["data"] = data;
         }
 
         let resp = self

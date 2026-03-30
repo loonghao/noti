@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -54,6 +55,10 @@ impl NotifyProvider for MqttProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -70,9 +75,31 @@ impl NotifyProvider for MqttProvider {
         // EMQX-style HTTP publish API
         let url = format!("{scheme}://{host}/api/v5/publish");
 
+        // Build payload: if attachments present, use structured JSON with base64 data
+        let mqtt_payload = if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                attachments_json.push(json!({
+                    "filename": attachment.effective_file_name(),
+                    "mime_type": attachment.effective_mime(),
+                    "data": b64,
+                }));
+            }
+            serde_json::to_string(&json!({
+                "message": message.text,
+                "title": message.title,
+                "attachments": attachments_json,
+            }))
+            .unwrap_or_else(|_| message.text.clone())
+        } else {
+            message.text.clone()
+        };
+
         let payload = json!({
             "topic": topic,
-            "payload": message.text,
+            "payload": mqtt_payload,
             "qos": qos,
             "retain": retain,
         });

@@ -1,6 +1,8 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -11,6 +13,8 @@ use serde_json::json;
 /// for the deprecated Office 365 connectors).  The webhook URL is the full
 /// URL obtained when configuring a "Post to a channel when a webhook request
 /// is received" workflow in Teams.
+///
+/// Supports image attachments via Adaptive Card Image elements (base64 data URI).
 pub struct TeamsProvider {
     client: Client,
 }
@@ -47,6 +51,10 @@ impl NotifyProvider for TeamsProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,23 +64,11 @@ impl NotifyProvider for TeamsProvider {
         let webhook_url = config.require("webhook_url", "teams")?;
         let theme_color = config.get("theme_color").unwrap_or("0076D7");
 
-        // Build Adaptive Card payload (works with modern Workflows webhooks)
-        let text_block = match message.format {
-            MessageFormat::Markdown => {
-                json!({
-                    "type": "TextBlock",
-                    "text": message.text,
-                    "wrap": true
-                })
-            }
-            _ => {
-                json!({
-                    "type": "TextBlock",
-                    "text": message.text,
-                    "wrap": true
-                })
-            }
-        };
+        let text_block = json!({
+            "type": "TextBlock",
+            "text": message.text,
+            "wrap": true
+        });
 
         let mut body_items = Vec::new();
 
@@ -88,6 +84,34 @@ impl NotifyProvider for TeamsProvider {
         }
 
         body_items.push(text_block);
+
+        // Add image attachments as Adaptive Card Image elements
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime_str = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let data_uri = format!("data:{mime_str};base64,{b64}");
+
+                    body_items.push(json!({
+                        "type": "Image",
+                        "url": data_uri,
+                        "altText": attachment.effective_file_name(),
+                        "size": "Large"
+                    }));
+                } else {
+                    // For non-image files, show as a text block with filename
+                    let file_name = attachment.effective_file_name();
+                    body_items.push(json!({
+                        "type": "TextBlock",
+                        "text": format!("📎 Attachment: {file_name}"),
+                        "wrap": true,
+                        "isSubtle": true
+                    }));
+                }
+            }
+        }
 
         let payload = json!({
             "type": "message",

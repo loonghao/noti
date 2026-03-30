@@ -23,6 +23,9 @@ features:
   - icon: 🔗
     title: URL Scheme Addressing
     details: "Intuitive provider://credentials format — wecom://key, slack://tokens, tg://bot/chat. Zero learning curve."
+  - icon: 📎
+    title: File Attachments
+    details: Send images, documents, and media files with your notifications — auto-detected MIME types, 100+ providers supported.
   - icon: 📋
     title: Profile Management
     details: Save, reuse, and test notification configs — set up once, use by name. Share across your team.

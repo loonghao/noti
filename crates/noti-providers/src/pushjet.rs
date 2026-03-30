@@ -1,11 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// Pushjet push notification provider.
 ///
 /// Sends push notifications via a Pushjet server.
+/// Supports image attachments via base64 data URI in the link field.
 ///
 /// API reference: <https://pushjet.io/docs/api>
 pub struct PushjetProvider {
@@ -50,6 +54,10 @@ impl NotifyProvider for PushjetProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -74,7 +82,18 @@ impl NotifyProvider for PushjetProvider {
         if let Some(ref title) = message.title {
             payload["title"] = json!(title);
         }
-        if let Some(link) = config.get("link") {
+
+        // Use attachment as link (base64 data URI for images)
+        if message.has_attachments() {
+            if let Some(attachment) = message.attachments.iter().find(|a| {
+                matches!(a.kind, AttachmentKind::Image)
+            }) {
+                let data = attachment.read_bytes().await?;
+                let mime = attachment.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["link"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+        } else if let Some(link) = config.get("link") {
             payload["link"] = json!(link);
         }
 
@@ -93,10 +112,12 @@ impl NotifyProvider for PushjetProvider {
             .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
 
         if (200..300).contains(&(status as usize)) {
-            Ok(
-                SendResponse::success("pushjet", "notification sent via Pushjet")
-                    .with_status_code(status),
-            )
+            let msg = if message.has_attachments() {
+                "notification with image sent via Pushjet"
+            } else {
+                "notification sent via Pushjet"
+            };
+            Ok(SendResponse::success("pushjet", msg).with_status_code(status))
         } else {
             Ok(
                 SendResponse::failure("pushjet", format!("API error ({status}): {body}"))

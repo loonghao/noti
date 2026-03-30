@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// Techulus Push notification provider.
 ///
 /// Sends push notifications via the Techulus Push API.
-/// Simple push notification service for developers.
+/// Supports image attachments via the `image_url` field (base64 data URI).
 pub struct TechulusProvider {
     client: Client,
 }
@@ -43,6 +46,10 @@ impl NotifyProvider for TechulusProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -69,6 +76,20 @@ impl NotifyProvider for TechulusProvider {
 
         if let Some(link) = config.get("link") {
             payload["link"] = json!(link);
+        }
+
+        // Attach image as base64 data URI in image_url field
+        if message.has_attachments() {
+            if let Some(img) = message
+                .attachments
+                .iter()
+                .find(|a| matches!(a.kind, AttachmentKind::Image))
+            {
+                let data = img.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let mime = img.effective_mime();
+                payload["image_url"] = json!(format!("data:{mime};base64,{b64}"));
+            }
         }
 
         let resp = self

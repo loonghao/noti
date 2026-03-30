@@ -52,6 +52,10 @@ impl NotifyProvider for O365Provider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -114,13 +118,32 @@ impl NotifyProvider for O365Provider {
             }));
         }
 
+        // Build attachments for Graph API
+        let mut graph_attachments = Vec::new();
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                graph_attachments.push(serde_json::json!({
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": attachment.effective_file_name(),
+                    "contentType": attachment.effective_mime(),
+                    "contentBytes": b64,
+                }));
+            }
+        }
+
         let body = serde_json::json!({
             "message": {
                 "subject": subject,
                 "body": { "contentType": "Text", "content": message.text },
                 "toRecipients": to_recipients,
                 "ccRecipients": cc_recipients,
-                "bccRecipients": bcc_recipients
+                "bccRecipients": bcc_recipients,
+                "attachments": graph_attachments
             },
             "saveToSentItems": save_to_sent
         });

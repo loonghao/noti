@@ -68,6 +68,37 @@ noti send --to "..." --message "plain text" --format text
 Not all providers support all formats — unsupported formats fall back to plain text.
 :::
 
+## File Attachments
+
+Send images, documents, and other files along with your notification using `--file` (`-f`):
+
+```bash
+# Single file
+noti send --to "slack://<tokens>" --message "Build report" --file report.pdf
+
+# Multiple files
+noti send --to "discord://<webhook>" --message "Screenshots" \
+  -f screenshot1.png -f screenshot2.png
+
+# Image to Telegram
+noti send --to "tg://<bot>/<chat>" --message "Daily chart" --file chart.png
+```
+
+::: tip
+Over 100 providers support file attachments. If a provider doesn't support attachments, noti will print a warning and send the message without the file.
+:::
+
+### Supported attachment types
+
+| Kind | Auto-detected from MIME |
+|:-----|:-----------------------|
+| **Image** | `image/*` (png, jpg, gif, webp, …) |
+| **Audio** | `audio/*` (mp3, wav, ogg, …) |
+| **Video** | `video/*` (mp4, webm, …) |
+| **File** | Everything else (pdf, zip, doc, …) |
+
+MIME types are auto-detected from the file extension. The attachment kind determines how some providers display the content (e.g., inline images vs. downloadable files).
+
 ## JSON Output
 
 Add the `--json` flag for structured, machine-readable output:

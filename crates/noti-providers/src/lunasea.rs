@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -46,6 +47,10 @@ impl NotifyProvider for LunaseaProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -65,8 +70,15 @@ impl NotifyProvider for LunaseaProvider {
             payload["title"] = json!(title);
         }
 
+        // Use explicit image config, or embed first image attachment as data URI
         if let Some(image) = config.get("image") {
             payload["image"] = json!(image);
+        } else if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["image"] = json!(format!("data:{mime};base64,{b64}"));
+            }
         }
 
         let resp = self

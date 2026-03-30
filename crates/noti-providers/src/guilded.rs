@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
+use reqwest::multipart;
 use serde_json::json;
 
 /// Guilded webhook provider.
 ///
 /// Sends messages via Guilded webhooks (Discord-compatible).
 /// Guilded is a chat platform for gaming communities.
+/// Supports file attachments via multipart upload.
 pub struct GuildedProvider {
     client: Client,
 }
@@ -46,6 +48,10 @@ impl NotifyProvider for GuildedProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -63,24 +69,56 @@ impl NotifyProvider for GuildedProvider {
             message.text.clone()
         };
 
-        let mut payload = json!({
-            "content": content
-        });
+        let resp = if message.has_attachments() {
+            let mut payload = json!({ "content": content });
 
-        if let Some(username) = config.get("username") {
-            payload["username"] = json!(username);
-        }
-        if let Some(avatar_url) = config.get("avatar_url") {
-            payload["avatar_url"] = json!(avatar_url);
-        }
+            if let Some(username) = config.get("username") {
+                payload["username"] = json!(username);
+            }
+            if let Some(avatar_url) = config.get("avatar_url") {
+                payload["avatar_url"] = json!(avatar_url);
+            }
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            let mut form = multipart::Form::new().text(
+                "payload_json",
+                serde_json::to_string(&payload)
+                    .map_err(|e| NotiError::Network(format!("JSON error: {e}")))?,
+            );
+
+            for (i, attachment) in message.attachments.iter().enumerate() {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
+                let part = multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("invalid MIME type: {e}")))?;
+                form = form.part(format!("files[{i}]"), part);
+            }
+
+            self.client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        } else {
+            let mut payload = json!({ "content": content });
+
+            if let Some(username) = config.get("username") {
+                payload["username"] = json!(username);
+            }
+            if let Some(avatar_url) = config.get("avatar_url") {
+                payload["avatar_url"] = json!(avatar_url);
+            }
+
+            self.client
+                .post(&url)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        };
 
         let status = resp.status().as_u16();
         let body = resp

@@ -1,11 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// Twitter/X notification provider.
 ///
 /// Uses the X (Twitter) API v2 to post tweets or send DMs.
+/// Supports image attachments via the media upload endpoint.
 /// API docs: https://developer.x.com/en/docs/x-api
 pub struct TwitterProvider {
     client: Client,
@@ -14,6 +18,40 @@ pub struct TwitterProvider {
 impl TwitterProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Upload media via X API v1.1 media/upload (base64) and return the media_id.
+    async fn upload_media(
+        &self,
+        bearer_token: &str,
+        data: &[u8],
+        mime: &str,
+    ) -> Result<String, NotiError> {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(data);
+
+        let resp = self
+            .client
+            .post("https://upload.twitter.com/1.1/media/upload.json")
+            .header("Authorization", format!("Bearer {bearer_token}"))
+            .form(&[("media_data", b64.as_str()), ("media_category", mime)])
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(format!("media upload failed: {e}")))?;
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("failed to parse upload response: {e}")))?;
+
+        body.get("media_id_string")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                NotiError::provider(
+                    "twitter",
+                    format!("media upload did not return media_id: {body}"),
+                )
+            })
     }
 }
 
@@ -43,6 +81,10 @@ impl NotifyProvider for TwitterProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -52,22 +94,45 @@ impl NotifyProvider for TwitterProvider {
         let bearer_token = config.require("bearer_token", "twitter")?;
         let mode = config.get("mode").unwrap_or("tweet");
 
+        // Upload image attachments and collect media IDs
+        let mut media_ids: Vec<String> = Vec::new();
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                if matches!(
+                    attachment.kind,
+                    AttachmentKind::Image | AttachmentKind::Video
+                ) {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    match self.upload_media(bearer_token, &data, &mime).await {
+                        Ok(media_id) => media_ids.push(media_id),
+                        Err(_) => {} // Skip failed uploads
+                    }
+                }
+            }
+        }
+
         let (url, payload) = if mode == "dm" {
             let dm_user_id = config.require("dm_user_id", "twitter")?;
+            let mut msg_obj = json!({ "text": message.text });
+            if !media_ids.is_empty() {
+                msg_obj["attachments"] = json!(
+                    media_ids.iter().map(|id| json!({"media_id": id})).collect::<Vec<_>>()
+                );
+            }
             (
                 "https://api.x.com/2/dm_conversations/with/messages".to_string(),
                 json!({
                     "participant_id": dm_user_id,
-                    "message": {
-                        "text": message.text
-                    }
+                    "message": msg_obj
                 }),
             )
         } else {
-            (
-                "https://api.x.com/2/tweets".to_string(),
-                json!({ "text": message.text }),
-            )
+            let mut tweet = json!({ "text": message.text });
+            if !media_ids.is_empty() {
+                tweet["media"] = json!({ "media_ids": media_ids });
+            }
+            ("https://api.x.com/2/tweets".to_string(), tweet)
         };
 
         let resp = self

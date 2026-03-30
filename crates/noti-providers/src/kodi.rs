@@ -1,9 +1,11 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
 /// Kodi (XBMC) notification provider via JSON-RPC.
 ///
+/// Supports image attachments via the `image` parameter (data URI or URL).
 /// API reference: https://kodi.wiki/view/JSON-RPC_API/v12#GUI.ShowNotification
 pub struct KodiProvider {
     client: Client,
@@ -48,6 +50,10 @@ impl NotifyProvider for KodiProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -63,10 +69,24 @@ impl NotifyProvider for KodiProvider {
             .unwrap_or("5000")
             .parse::<u32>()
             .unwrap_or(5000);
-        let image = config.get("image").unwrap_or("info");
         let title = message.title.as_deref().unwrap_or("noti");
 
         let url = format!("{scheme}://{host}:{port}/jsonrpc");
+
+        // Use explicit image config, or embed first image attachment as data URI
+        let image = if let Some(img_config) = config.get("image") {
+            img_config.to_string()
+        } else if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                format!("data:{mime};base64,{b64}")
+            } else {
+                "info".to_string()
+            }
+        } else {
+            "info".to_string()
+        };
 
         let body = serde_json::json!({
             "jsonrpc": "2.0",

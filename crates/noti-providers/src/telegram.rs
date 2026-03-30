@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
+use reqwest::multipart;
 use serde_json::json;
 
 /// Telegram Bot API provider.
@@ -13,6 +15,135 @@ pub struct TelegramProvider {
 impl TelegramProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Send a text-only message via sendMessage.
+    async fn send_text(
+        &self,
+        message: &Message,
+        bot_token: &str,
+        chat_id: &str,
+        config: &ProviderConfig,
+    ) -> Result<SendResponse, NotiError> {
+        let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+
+        let parse_mode = match message.format {
+            MessageFormat::Markdown => Some("MarkdownV2"),
+            MessageFormat::Html => Some("HTML"),
+            MessageFormat::Text => None,
+        };
+
+        let mut payload = json!({
+            "chat_id": chat_id,
+            "text": message.text,
+        });
+
+        if let Some(mode) = parse_mode {
+            payload["parse_mode"] = json!(mode);
+        }
+        if config.get("disable_notification") == Some("true") {
+            payload["disable_notification"] = json!(true);
+        }
+        if config.get("disable_web_page_preview") == Some("true") {
+            payload["disable_web_page_preview"] = json!(true);
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
+
+    /// Send a file attachment via the appropriate Telegram endpoint.
+    async fn send_attachment(
+        &self,
+        message: &Message,
+        bot_token: &str,
+        chat_id: &str,
+        config: &ProviderConfig,
+    ) -> Result<SendResponse, NotiError> {
+        let attachment = &message.attachments[0];
+        let data = attachment.read_bytes().await?;
+
+        let (method, field_name) = match attachment.kind {
+            AttachmentKind::Image => ("sendPhoto", "photo"),
+            AttachmentKind::Audio => ("sendAudio", "audio"),
+            AttachmentKind::Video => ("sendVideo", "video"),
+            AttachmentKind::File => ("sendDocument", "document"),
+        };
+
+        let url = format!("https://api.telegram.org/bot{bot_token}/{method}");
+        let file_name = attachment.effective_file_name();
+        let mime_str = attachment.effective_mime();
+
+        let file_part = multipart::Part::bytes(data)
+            .file_name(file_name)
+            .mime_str(&mime_str)
+            .map_err(|e| NotiError::Network(format!("invalid MIME type: {e}")))?;
+
+        let mut form = multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .part(field_name.to_string(), file_part);
+
+        // Caption = message text
+        if !message.text.is_empty() {
+            form = form.text("caption", message.text.clone());
+            match message.format {
+                MessageFormat::Markdown => {
+                    form = form.text("parse_mode", "MarkdownV2".to_string());
+                }
+                MessageFormat::Html => {
+                    form = form.text("parse_mode", "HTML".to_string());
+                }
+                MessageFormat::Text => {}
+            }
+        }
+
+        if config.get("disable_notification") == Some("true") {
+            form = form.text("disable_notification", "true".to_string());
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
+
+    async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
+        let status = resp.status().as_u16();
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
+
+        let ok = raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if ok {
+            Ok(
+                SendResponse::success("telegram", "message sent successfully")
+                    .with_status_code(status)
+                    .with_raw_response(raw),
+            )
+        } else {
+            let desc = raw
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            Ok(
+                SendResponse::failure("telegram", format!("API error: {desc}"))
+                    .with_status_code(status)
+                    .with_raw_response(raw),
+            )
+        }
     }
 }
 
@@ -47,6 +178,10 @@ impl NotifyProvider for TelegramProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,60 +191,11 @@ impl NotifyProvider for TelegramProvider {
         let bot_token = config.require("bot_token", "telegram")?;
         let chat_id = config.require("chat_id", "telegram")?;
 
-        let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
-
-        let parse_mode = match message.format {
-            MessageFormat::Markdown => Some("MarkdownV2"),
-            MessageFormat::Html => Some("HTML"),
-            MessageFormat::Text => None,
-        };
-
-        let mut payload = json!({
-            "chat_id": chat_id,
-            "text": message.text,
-        });
-
-        if let Some(mode) = parse_mode {
-            payload["parse_mode"] = json!(mode);
-        }
-        if config.get("disable_notification") == Some("true") {
-            payload["disable_notification"] = json!(true);
-        }
-        if config.get("disable_web_page_preview") == Some("true") {
-            payload["disable_web_page_preview"] = json!(true);
-        }
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
-
-        let status = resp.status().as_u16();
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
-
-        let ok = raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-        if ok {
-            Ok(
-                SendResponse::success("telegram", "message sent successfully")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+        if message.has_attachments() {
+            self.send_attachment(message, bot_token, chat_id, config)
+                .await
         } else {
-            let desc = raw
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            Ok(
-                SendResponse::failure("telegram", format!("API error: {desc}"))
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            self.send_text(message, bot_token, chat_id, config).await
         }
     }
 }

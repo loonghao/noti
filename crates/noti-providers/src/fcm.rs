@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -61,6 +64,10 @@ impl NotifyProvider for FcmProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -93,6 +100,28 @@ impl NotifyProvider for FcmProvider {
             notification["image"] = json!(image);
         }
 
+        // If there's an image attachment, use it as the notification image
+        if config.get("image").is_none() {
+            if let Some(img) = message
+                .attachments
+                .iter()
+                .find(|a| a.kind == AttachmentKind::Image)
+            {
+                let data = img.read_bytes().await?;
+                let mime_str = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                notification["image"] = json!(format!("data:{mime_str};base64,{b64}"));
+            }
+        }
+
+        // Add non-image file info as data payload for client-side handling
+        let file_attachments: Vec<_> = message
+            .attachments
+            .iter()
+            .filter(|a| a.kind != AttachmentKind::Image)
+            .collect();
+        let has_file_attachments = !file_attachments.is_empty();
+
         let mut payload = json!({
             "notification": notification,
         });
@@ -117,6 +146,18 @@ impl NotifyProvider for FcmProvider {
         }
         if let Some(ttl) = config.get("ttl") {
             payload["time_to_live"] = json!(ttl.parse::<u64>().unwrap_or(2419200));
+        }
+
+        // Add file attachment info as data payload for client-side handling
+        if has_file_attachments {
+            let file_names: Vec<String> = file_attachments
+                .iter()
+                .map(|a| a.effective_file_name())
+                .collect();
+            payload["data"] = json!({
+                "attachment_count": file_names.len(),
+                "attachment_names": file_names.join(","),
+            });
         }
 
         let resp = self

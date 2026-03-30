@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -53,6 +56,10 @@ impl NotifyProvider for WorkflowsProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -76,6 +83,44 @@ impl NotifyProvider for WorkflowsProvider {
 
         // Build Adaptive Card payload
         let title = message.title.clone().unwrap_or_else(|| "noti".to_string());
+        let mut body = vec![
+            json!({
+                "type": "TextBlock",
+                "text": title,
+                "weight": "Bolder",
+                "size": "Medium"
+            }),
+            json!({
+                "type": "TextBlock",
+                "text": message.text,
+                "wrap": true
+            }),
+        ];
+
+        // Add image attachments as Image elements in the Adaptive Card
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    body.push(json!({
+                        "type": "Image",
+                        "url": format!("data:{mime};base64,{b64}"),
+                        "altText": file_name,
+                        "size": "Auto"
+                    }));
+                } else {
+                    body.push(json!({
+                        "type": "TextBlock",
+                        "text": format!("📎 Attachment: {file_name}"),
+                        "wrap": true
+                    }));
+                }
+            }
+        }
+
         let payload = json!({
             "type": "message",
             "attachments": [{
@@ -85,19 +130,7 @@ impl NotifyProvider for WorkflowsProvider {
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.4",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": title,
-                            "weight": "Bolder",
-                            "size": "Medium"
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": message.text,
-                            "wrap": true
-                        }
-                    ]
+                    "body": body
                 }
             }]
         });

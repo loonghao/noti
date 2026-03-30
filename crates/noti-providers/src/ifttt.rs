@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,7 +7,8 @@ use serde_json::json;
 /// IFTTT Webhook provider.
 ///
 /// Triggers IFTTT Maker Webhooks (Webhooks service).
-/// The event is triggered with value1=message, value2=title, value3=format.
+/// The event is triggered with value1=message, value2=title, value3=format/image.
+/// Supports image attachments via base64 data URI in value3.
 pub struct IftttProvider {
     client: Client,
 }
@@ -42,8 +44,15 @@ impl NotifyProvider for IftttProvider {
             ParamDef::required("event", "IFTTT event name to trigger").with_example("notification"),
             ParamDef::optional("value1", "Override value1 (default: message text)"),
             ParamDef::optional("value2", "Override value2 (default: title)"),
-            ParamDef::optional("value3", "Override value3 (default: format)"),
+            ParamDef::optional(
+                "value3",
+                "Override value3 (default: format, or base64 image data URI if attachment present)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -63,10 +72,21 @@ impl NotifyProvider for IftttProvider {
             .map(|s| s.to_string())
             .or_else(|| message.title.clone())
             .unwrap_or_default();
-        let value3 = config
-            .get("value3")
-            .unwrap_or(&message.format.to_string())
-            .to_string();
+
+        // If there's an image attachment and no explicit value3, embed it as data URI
+        let value3 = if let Some(v3) = config.get("value3") {
+            v3.to_string()
+        } else if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                format!("data:{mime};base64,{b64}")
+            } else {
+                message.format.to_string()
+            }
+        } else {
+            message.format.to_string()
+        };
 
         let payload = json!({
             "value1": value1,

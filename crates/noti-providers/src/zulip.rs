@@ -7,7 +7,7 @@ use reqwest::Client;
 /// Zulip messaging provider.
 ///
 /// Sends messages via the Zulip API using a bot's email and API key.
-/// Supports both stream and direct messages.
+/// Supports both stream and direct messages, with file attachment upload.
 pub struct ZulipProvider {
     client: Client,
 }
@@ -15,6 +15,48 @@ pub struct ZulipProvider {
 impl ZulipProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Upload a file to Zulip and return the markdown link for embedding.
+    async fn upload_file(
+        &self,
+        domain: &str,
+        bot_email: &str,
+        api_key: &str,
+        attachment: &noti_core::Attachment,
+    ) -> Result<String, NotiError> {
+        let url = format!("https://{domain}/api/v1/user_uploads");
+        let data = attachment.read_bytes().await?;
+        let file_name = attachment.effective_file_name();
+        let mime_str = attachment.effective_mime();
+
+        let part = reqwest::multipart::Part::bytes(data)
+            .file_name(file_name.clone())
+            .mime_str(&mime_str)
+            .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new().part("filename", part);
+
+        let resp = self
+            .client
+            .post(&url)
+            .basic_auth(bot_email, Some(api_key))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
+
+        let uri = raw
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| NotiError::provider("zulip", "file upload failed: missing uri"))?;
+
+        Ok(format!("[{file_name}]({uri})"))
     }
 }
 
@@ -57,6 +99,10 @@ impl NotifyProvider for ZulipProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -70,7 +116,7 @@ impl NotifyProvider for ZulipProvider {
         let url = format!("https://{domain}/api/v1/messages");
 
         let msg_type = config.get("type").unwrap_or("stream");
-        let content = match message.format {
+        let mut content = match message.format {
             MessageFormat::Markdown | MessageFormat::Html => {
                 if let Some(ref title) = message.title {
                     format!("**{title}**\n\n{}", message.text)
@@ -86,6 +132,16 @@ impl NotifyProvider for ZulipProvider {
                 }
             }
         };
+
+        // Upload attachments and append markdown links
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                let link = self
+                    .upload_file(domain, bot_email, api_key, attachment)
+                    .await?;
+                content.push_str(&format!("\n{link}"));
+            }
+        }
 
         let mut form: Vec<(&str, String)> =
             vec![("type", msg_type.to_string()), ("content", content)];

@@ -7,6 +7,7 @@ use reqwest::Client;
 /// Mailgun transactional email provider.
 ///
 /// Sends emails via the Mailgun REST API.
+/// Supports file attachments via multipart form upload.
 pub struct MailgunProvider {
     client: Client,
 }
@@ -48,6 +49,10 @@ impl NotifyProvider for MailgunProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -69,6 +74,48 @@ impl NotifyProvider for MailgunProvider {
 
         let url = format!("{api_base}/{domain}/messages");
 
+        if message.has_attachments() {
+            // Use multipart form for attachments
+            let mut form = reqwest::multipart::Form::new()
+                .text("from", from.to_string())
+                .text("to", to.to_string())
+                .text("subject", subject.to_string());
+
+            match message.format {
+                MessageFormat::Html => {
+                    form = form.text("html", message.text.clone());
+                }
+                _ => {
+                    form = form.text("text", message.text.clone());
+                }
+            }
+
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
+
+                let part = reqwest::multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+                form = form.part("attachment", part);
+            }
+
+            let resp = self
+                .client
+                .post(&url)
+                .basic_auth("api", Some(api_key))
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // No attachments — use simple form POST
         let mut form = vec![
             ("from", from.to_string()),
             ("to", to.to_string()),
@@ -93,6 +140,12 @@ impl NotifyProvider for MailgunProvider {
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
+        Self::parse_response(resp).await
+    }
+}
+
+impl MailgunProvider {
+    async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp
             .json()

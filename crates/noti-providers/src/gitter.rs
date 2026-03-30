@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -45,6 +48,10 @@ impl NotifyProvider for GitterProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,11 +63,26 @@ impl NotifyProvider for GitterProvider {
 
         let url = format!("https://api.gitter.im/v1/rooms/{room_id}/chatMessages");
 
-        let text = if let Some(ref title) = message.title {
+        let mut text = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)
         } else {
             message.text.clone()
         };
+
+        // Embed images as markdown and list files
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    text.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
+                } else {
+                    text.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+                }
+            }
+        }
 
         let payload = json!({
             "text": text

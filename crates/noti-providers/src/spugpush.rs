@@ -1,13 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// SpugPush webhook notification provider.
 ///
 /// SpugPush is a simple webhook service from the Spug monitoring platform.
-/// It uses a single token for authentication and delivers alert messages
-/// via a REST API.
+/// Supports image attachments embedded as base64 data URI in content.
 ///
 /// API Reference: <https://push.spug.dev>
 pub struct SpugPushProvider {
@@ -45,6 +47,10 @@ impl NotifyProvider for SpugPushProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -55,8 +61,23 @@ impl NotifyProvider for SpugPushProvider {
 
         let url = format!("https://push.spug.dev/send/{token}");
 
+        // Embed image attachments as base64 in content
+        let mut content = message.text.clone();
+        for attachment in &message.attachments {
+            if attachment.kind == AttachmentKind::Image {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let name = attachment.effective_file_name();
+                    content.push_str(&format!(
+                        "\n\n![{name}](data:{mime};base64,{b64})"
+                    ));
+                }
+            }
+        }
+
         let mut payload = json!({
-            "content": message.text,
+            "content": content,
         });
 
         if let Some(ref title) = message.title {

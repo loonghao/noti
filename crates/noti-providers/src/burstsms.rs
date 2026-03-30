@@ -1,12 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// BurstSMS provider.
 ///
-/// Sends SMS messages via the BurstSMS (Transmit SMS) REST API.
-/// BurstSMS is an Australian-based SMS gateway service.
+/// Sends SMS/MMS messages via the BurstSMS (Transmit SMS) REST API.
+/// Supports MMS via the send-mms.json endpoint for image attachments.
 ///
 /// API reference: <https://burstsms.com/api>
 pub struct BurstSmsProvider {
@@ -44,7 +47,15 @@ impl NotifyProvider for BurstSmsProvider {
             ParamDef::required("from", "Sender caller ID or phone number").with_example("MyApp"),
             ParamDef::required("to", "Recipient phone number (E.164 format)")
                 .with_example("+61412345678"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for MMS image (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -58,19 +69,43 @@ impl NotifyProvider for BurstSmsProvider {
         let from = config.require("from", "burstsms")?;
         let to = config.require("to", "burstsms")?;
 
-        let url = "https://api.transmitsms.com/send-sms.json";
-
         let body_text = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)
         } else {
             message.text.clone()
         };
 
-        let params = [("message", body_text.as_str()), ("to", to), ("from", from)];
+        let has_media = message.has_attachments() || config.get("media_url").is_some();
+
+        // Use MMS endpoint for media attachments
+        let endpoint = if has_media {
+            "https://api.transmitsms.com/send-mms.json"
+        } else {
+            "https://api.transmitsms.com/send-sms.json"
+        };
+
+        let mut params: Vec<(&str, String)> = vec![
+            ("message", body_text),
+            ("to", to.to_string()),
+            ("from", from.to_string()),
+        ];
+
+        if message.has_attachments() {
+            if let Some(attachment) = message.attachments.iter().find(|a| {
+                matches!(a.kind, AttachmentKind::Image)
+            }) {
+                let data = attachment.read_bytes().await?;
+                let mime = attachment.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                params.push(("image", format!("data:{mime};base64,{b64}")));
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            params.push(("image", media_url.to_string()));
+        }
 
         let resp = self
             .client
-            .post(url)
+            .post(endpoint)
             .basic_auth(api_key, Some(api_secret))
             .form(&params)
             .send()
@@ -94,7 +129,12 @@ impl NotifyProvider for BurstSmsProvider {
                         .with_raw_response(raw),
                 );
             }
-            Ok(SendResponse::success("burstsms", "SMS sent via BurstSMS")
+            let msg = if has_media {
+                "MMS sent with image via BurstSMS"
+            } else {
+                "SMS sent via BurstSMS"
+            };
+            Ok(SendResponse::success("burstsms", msg)
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {

@@ -1,11 +1,17 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
-/// VoIP.ms SMS provider.
+/// VoIP.ms SMS/MMS provider.
 ///
-/// Uses the VoIP.ms REST API to send SMS messages.
+/// Uses the VoIP.ms REST API to send SMS and MMS messages.
+/// When image attachments are present, switches to the `sendMMS` method
+/// with base64-encoded media.
+///
 /// API docs: https://voip.ms/m/apidocs.php
 pub struct VoipMsProvider {
     client: Client,
@@ -28,7 +34,7 @@ impl NotifyProvider for VoipMsProvider {
     }
 
     fn description(&self) -> &str {
-        "VoIP.ms SMS messaging via REST API"
+        "VoIP.ms SMS/MMS messaging via REST API"
     }
 
     fn example_url(&self) -> &str {
@@ -45,6 +51,10 @@ impl NotifyProvider for VoipMsProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,12 +66,42 @@ impl NotifyProvider for VoipMsProvider {
         let did = config.require("did", "voipms")?;
         let to = config.require("to", "voipms")?;
 
-        let url = format!(
+        let has_image = message.has_attachments()
+            && message
+                .attachments
+                .iter()
+                .any(|a| matches!(a.kind, AttachmentKind::Image));
+
+        let (method, msg_type) = if has_image {
+            ("sendMMS", "MMS")
+        } else {
+            ("sendSMS", "SMS")
+        };
+
+        let mut url = format!(
             "https://voip.ms/api/v1/rest.php?\
             api_username={email}&api_password={password}&\
-            method=sendSMS&did={did}&dst={to}&message={}",
+            method={method}&did={did}&dst={to}&message={}",
             urlencoding(&message.text)
         );
+
+        // For MMS, append base64-encoded media
+        if has_image {
+            if let Some(img) = message
+                .attachments
+                .iter()
+                .find(|a| matches!(a.kind, AttachmentKind::Image))
+            {
+                let data = img.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let mime = img.effective_mime();
+                url.push_str(&format!(
+                    "&media1=data:{};base64,{}",
+                    urlencoding(&mime),
+                    urlencoding(&b64)
+                ));
+            }
+        }
 
         let resp = self
             .client
@@ -77,7 +117,10 @@ impl NotifyProvider for VoipMsProvider {
             .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
 
         if (200..300).contains(&status) && body.contains("\"status\":\"success\"") {
-            Ok(SendResponse::success("voipms", "SMS sent successfully").with_status_code(status))
+            Ok(
+                SendResponse::success("voipms", format!("{msg_type} sent successfully"))
+                    .with_status_code(status),
+            )
         } else {
             Ok(
                 SendResponse::failure("voipms", format!("API error: {body}"))

@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
 /// Reddit private message provider.
@@ -43,6 +46,10 @@ impl NotifyProvider for RedditProvider {
             ParamDef::required("password", "Reddit password").with_example("mypassword"),
             ParamDef::required("to", "Recipient Reddit username").with_example("targetuser"),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -90,8 +97,22 @@ impl NotifyProvider for RedditProvider {
                 )
             })?;
 
-        // Step 2: Send private message
+        // Step 2: Send private message with embedded images
         let subject = message.title.as_deref().unwrap_or("noti notification");
+
+        // Embed image attachments as markdown data URIs in message text
+        let mut body_text = message.text.clone();
+        for attachment in &message.attachments {
+            if attachment.kind == AttachmentKind::Image {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let name = attachment.effective_file_name();
+                    body_text
+                        .push_str(&format!("\n\n![{name}](data:{mime};base64,{b64})"));
+                }
+            }
+        }
 
         let resp = self
             .client
@@ -101,7 +122,7 @@ impl NotifyProvider for RedditProvider {
             .form(&[
                 ("to", to),
                 ("subject", subject),
-                ("text", message.text.as_str()),
+                ("text", body_text.as_str()),
                 ("api_type", "json"),
             ])
             .send()

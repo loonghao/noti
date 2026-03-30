@@ -1,11 +1,15 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
 /// PagerDuty Events API v2 provider.
 ///
 /// Triggers incidents or sends change events via the PagerDuty Events API v2.
+/// Supports image attachments via the `images` field (base64 data URI or URL).
 pub struct PagerDutyProvider {
     client: Client,
 }
@@ -60,6 +64,10 @@ impl NotifyProvider for PagerDutyProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -100,6 +108,39 @@ impl NotifyProvider for PagerDutyProvider {
         }
         if let Some(dedup_key) = config.get("dedup_key") {
             payload["dedup_key"] = json!(dedup_key);
+        }
+
+        // Add image attachments via the `images` field
+        if message.has_attachments() {
+            let mut images = Vec::new();
+            let mut links = Vec::new();
+
+            for attachment in &message.attachments {
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime_str = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let data_uri = format!("data:{mime_str};base64,{b64}");
+                    images.push(json!({
+                        "src": data_uri,
+                        "alt": attachment.effective_file_name()
+                    }));
+                } else {
+                    // Non-image files referenced as links
+                    let file_name = attachment.effective_file_name();
+                    links.push(json!({
+                        "href": format!("attachment://{file_name}"),
+                        "text": format!("📎 {file_name}")
+                    }));
+                }
+            }
+
+            if !images.is_empty() {
+                payload["images"] = json!(images);
+            }
+            if !links.is_empty() {
+                payload["links"] = json!(links);
+            }
         }
 
         let resp = self

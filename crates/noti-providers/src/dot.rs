@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -8,6 +11,7 @@ use serde_json::json;
 /// Dot. is an e-ink display device that can receive push notifications
 /// via a REST API. It supports text and image modes for displaying
 /// content on the device screen.
+/// When image attachments are present, automatically uses image mode.
 ///
 /// API Reference: <https://dot.mindreset.tech>
 pub struct DotProvider {
@@ -48,6 +52,10 @@ impl NotifyProvider for DotProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -57,7 +65,16 @@ impl NotifyProvider for DotProvider {
         let token = config.require("token", "dot")?;
         let device_id = config.require("device_id", "dot")?;
 
-        let mode = config.get("mode").unwrap_or("text");
+        // Auto-switch to image mode when image attachments are present
+        let has_image = message
+            .attachments
+            .iter()
+            .any(|a| matches!(a.kind, AttachmentKind::Image));
+        let mode = if has_image {
+            "image"
+        } else {
+            config.get("mode").unwrap_or("text")
+        };
 
         let url = format!("https://gateway.getdot.app/api/device/{device_id}/{mode}");
 
@@ -71,6 +88,16 @@ impl NotifyProvider for DotProvider {
 
         if let Some(signature) = config.get("signature") {
             payload["signature"] = json!(signature);
+        }
+
+        // Add image data for image mode
+        if has_image {
+            if let Some(attachment) = message.first_image() {
+                let data = attachment.read_bytes().await?;
+                let mime = attachment.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["image"] = json!(format!("data:{mime};base64,{b64}"));
+            }
         }
 
         let resp = self
@@ -89,11 +116,14 @@ impl NotifyProvider for DotProvider {
             .unwrap_or_else(|_| json!({"status": status}));
 
         if (200..300).contains(&status) {
-            Ok(
-                SendResponse::success("dot", "notification sent to Dot. device")
-                    .with_status_code(status)
-                    .with_raw_response(raw),
-            )
+            let msg = if has_image {
+                "image sent to Dot. device"
+            } else {
+                "notification sent to Dot. device"
+            };
+            Ok(SendResponse::success("dot", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             let msg = raw
                 .get("error")

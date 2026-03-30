@@ -51,6 +51,10 @@ impl NotifyProvider for PushsaferProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -87,6 +91,26 @@ impl NotifyProvider for PushsaferProvider {
         }
         if let Some(priority) = config.get("priority") {
             form.push(("pr", priority.to_string()));
+        }
+
+        // Add image attachments as base64 data URI (up to 3: p, p2, p3)
+        if message.has_attachments() {
+            let pic_fields = ["p", "p2", "p3"];
+            for (i, attachment) in message
+                .attachments
+                .iter()
+                .filter(|a| a.kind == noti_core::AttachmentKind::Image)
+                .take(3)
+                .enumerate()
+            {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                let mime = attachment.effective_mime();
+                form.push((pic_fields[i], format!("data:{mime};base64,{b64}")));
+            }
         }
 
         let resp = self

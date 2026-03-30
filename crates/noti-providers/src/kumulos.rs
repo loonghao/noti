@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,6 +7,7 @@ use serde_json::json;
 /// Kumulos push notification provider.
 ///
 /// Uses the Kumulos Push API to send push notifications.
+/// Supports rich media push with image attachments.
 /// API docs: https://docs.kumulos.com/messaging/api/
 pub struct KumulosProvider {
     client: Client,
@@ -46,6 +48,10 @@ impl NotifyProvider for KumulosProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -67,6 +73,16 @@ impl NotifyProvider for KumulosProvider {
             broadcast["channel"] = json!(channel);
         } else {
             broadcast["broadcast"] = json!(true);
+        }
+
+        // Embed first image attachment as rich push media
+        if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let data_uri = format!("data:{mime};base64,{b64}");
+                broadcast["data"] = json!({ "picture": data_uri });
+            }
         }
 
         let url = format!("https://messages.kumulos.com/v2/app-api-keys/{api_key}/messages");

@@ -47,6 +47,10 @@ impl NotifyProvider for BlueskyProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -97,7 +101,55 @@ impl NotifyProvider for BlueskyProvider {
             .and_then(|v| v.as_str())
             .ok_or_else(|| NotiError::provider("bluesky", "missing did in session"))?;
 
-        // Step 2: Create post
+        // Step 2: Upload image attachments as blobs (if any)
+        let mut embed = None;
+        if message.has_attachments() {
+            let mut images = Vec::new();
+            for attachment in &message.attachments {
+                if attachment.kind != noti_core::AttachmentKind::Image && images.is_empty() {
+                    // Bluesky only supports image embeds; skip non-images
+                    continue;
+                }
+                let data = attachment.read_bytes().await?;
+                let mime_str = attachment.effective_mime();
+
+                let blob_url = format!("{server}/xrpc/com.atproto.repo.uploadBlob");
+                let blob_resp = self
+                    .client
+                    .post(&blob_url)
+                    .bearer_auth(access_jwt)
+                    .header("Content-Type", &mime_str)
+                    .body(data)
+                    .send()
+                    .await
+                    .map_err(|e| NotiError::Network(e.to_string()))?;
+
+                let blob_raw: serde_json::Value = blob_resp
+                    .json()
+                    .await
+                    .map_err(|e| NotiError::Network(format!("blob upload error: {e}")))?;
+
+                if let Some(blob) = blob_raw.get("blob") {
+                    images.push(json!({
+                        "alt": attachment.effective_file_name(),
+                        "image": blob,
+                    }));
+                }
+
+                // Bluesky allows up to 4 images per post
+                if images.len() >= 4 {
+                    break;
+                }
+            }
+            if !images.is_empty() {
+                embed = Some(json!({
+                    "$type": "app.bsky.embed.images",
+                    "images": images,
+                }));
+            }
+        }
+
+        // Step 3: Create post
         let post_url = format!("{server}/xrpc/com.atproto.repo.createRecord");
 
         let text = if let Some(ref title) = message.title {
@@ -114,14 +166,18 @@ impl NotifyProvider for BlueskyProvider {
         };
 
         let now = chrono_now();
+        let mut record = json!({
+            "$type": "app.bsky.feed.post",
+            "text": post_text,
+            "createdAt": now,
+        });
+        if let Some(embed_val) = embed {
+            record["embed"] = embed_val;
+        }
         let post_payload = json!({
             "repo": did,
             "collection": "app.bsky.feed.post",
-            "record": {
-                "$type": "app.bsky.feed.post",
-                "text": post_text,
-                "createdAt": now,
-            }
+            "record": record
         });
 
         let resp = self

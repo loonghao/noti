@@ -1,10 +1,15 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{
-    Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+    AttachmentKind, Message, MessageFormat, NotiError, NotifyProvider, ParamDef, ProviderConfig,
+    SendResponse,
 };
 use reqwest::Client;
 
 /// PushDeer cross-platform push notification provider.
+///
+/// Supports image attachments via `type=image` with base64 data URI,
+/// and markdown-embedded images for other attachment types.
 pub struct PushDeerProvider {
     client: Client,
 }
@@ -44,6 +49,10 @@ impl NotifyProvider for PushDeerProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -55,15 +64,55 @@ impl NotifyProvider for PushDeerProvider {
 
         let url = format!("{}/message/push", server.trim_end_matches('/'));
 
-        let msg_type = match message.format {
-            MessageFormat::Markdown => "markdown",
-            MessageFormat::Html => "text",
-            MessageFormat::Text => "text",
+        // If there's an image attachment, send as image type
+        if let Some(image) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = image.read_bytes().await?;
+            let mime = image.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            let data_uri = format!("data:{mime};base64,{b64}");
+
+            let form = vec![
+                ("pushkey", push_key.to_string()),
+                ("text", data_uri),
+                ("type", "image".to_string()),
+            ];
+
+            let resp = self
+                .client
+                .post(&url)
+                .form(&form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // If there are non-image attachments, embed info in markdown
+        let (text, msg_type) = if message.has_attachments() {
+            let mut md = message.text.clone();
+            for attachment in &message.attachments {
+                md.push_str(&format!(
+                    "\n\n📎 **Attachment:** {}",
+                    attachment.effective_file_name()
+                ));
+            }
+            (md, "markdown")
+        } else {
+            let mt = match message.format {
+                MessageFormat::Markdown => "markdown",
+                MessageFormat::Html | MessageFormat::Text => "text",
+            };
+            (message.text.clone(), mt)
         };
 
         let mut form = vec![
             ("pushkey", push_key.to_string()),
-            ("text", message.text.clone()),
+            ("text", text),
             ("type", msg_type.to_string()),
         ];
 
@@ -79,6 +128,12 @@ impl NotifyProvider for PushDeerProvider {
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
+        Self::parse_response(resp).await
+    }
+}
+
+impl PushDeerProvider {
+    async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp
             .json()

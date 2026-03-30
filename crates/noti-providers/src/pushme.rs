@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
 /// PushMe push notification service.
@@ -43,6 +46,10 @@ impl NotifyProvider for PushMeProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -54,11 +61,32 @@ impl NotifyProvider for PushMeProvider {
         let title = message.title.as_deref().unwrap_or("noti");
         let msg_type = config.get("type").unwrap_or("text");
 
+        // If there's an image attachment, send as image type
+        let (content, effective_type) = if let Some(image_att) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = image_att.read_bytes().await?;
+            let mime = image_att.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            (format!("data:{mime};base64,{b64}"), "image")
+        } else if message.has_attachments() {
+            // Non-image attachments: include file info in markdown
+            let mut md = message.text.clone();
+            for att in &message.attachments {
+                md.push_str(&format!("\n\n📎 **Attachment:** {}", att.effective_file_name()));
+            }
+            (md, "markdown")
+        } else {
+            (message.text.clone(), msg_type)
+        };
+
         let body = serde_json::json!({
             "push_key": push_key,
             "title": title,
-            "content": message.text,
-            "type": msg_type
+            "content": content,
+            "type": effective_type
         });
 
         let resp = self

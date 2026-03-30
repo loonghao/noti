@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,6 +7,7 @@ use serde_json::json;
 /// PagerTree incident management provider.
 ///
 /// Creates incidents/alerts via PagerTree integration webhook.
+/// Supports image attachments embedded as base64 data URI in description.
 ///
 /// API reference: <https://pagertree.com/docs/integration/incoming>
 pub struct PagerTreeProvider {
@@ -45,6 +47,10 @@ impl NotifyProvider for PagerTreeProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -56,8 +62,22 @@ impl NotifyProvider for PagerTreeProvider {
         let url = format!("https://api.pagertree.com/integration/{integration_id}");
 
         let title = message.title.as_deref().unwrap_or("Alert");
-
         let urgency = config.get("urgency").unwrap_or("high");
+
+        // Embed image attachments as base64 in description
+        let mut description = message.text.clone();
+        for attachment in &message.attachments {
+            if attachment.kind == noti_core::AttachmentKind::Image {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let name = attachment.effective_file_name();
+                    description.push_str(&format!(
+                        "\n\n![{name}](data:{mime};base64,{b64})"
+                    ));
+                }
+            }
+        }
 
         let payload = json!({
             "event_type": "create",
@@ -66,7 +86,7 @@ impl NotifyProvider for PagerTreeProvider {
                 .unwrap_or_default()
                 .as_millis()),
             "Title": title,
-            "Description": message.text,
+            "Description": description,
             "Urgency": urgency,
         });
 

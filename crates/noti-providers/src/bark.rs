@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -43,6 +46,10 @@ impl NotifyProvider for BarkProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -68,8 +75,35 @@ impl NotifyProvider for BarkProvider {
         if let Some(sound) = config.get("sound") {
             payload["sound"] = json!(sound);
         }
+
+        // Handle icon from config or image attachments
         if let Some(icon) = config.get("icon") {
             payload["icon"] = json!(icon);
+        } else if let Some(image_att) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = image_att.read_bytes().await?;
+            let mime = image_att.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            payload["icon"] = json!(format!("data:{mime};base64,{b64}"));
+        }
+
+        // Include attachment info in body text for non-image attachments
+        if message.has_attachments() {
+            let non_images: Vec<_> = message
+                .attachments
+                .iter()
+                .filter(|a| a.kind != AttachmentKind::Image)
+                .collect();
+            if !non_images.is_empty() {
+                let mut body = message.text.clone();
+                for att in &non_images {
+                    body.push_str(&format!("\n📎 {}", att.effective_file_name()));
+                }
+                payload["body"] = json!(body);
+            }
         }
 
         let resp = self

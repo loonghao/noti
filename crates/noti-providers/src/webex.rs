@@ -8,6 +8,7 @@ use serde_json::json;
 /// Cisco Webex Teams messaging provider.
 ///
 /// Sends messages via the Webex REST API using a bot access token.
+/// Supports file attachments via multipart form upload.
 pub struct WebexProvider {
     client: Client,
 }
@@ -45,6 +46,10 @@ impl NotifyProvider for WebexProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -62,11 +67,52 @@ impl NotifyProvider for WebexProvider {
             message.text.clone()
         };
 
+        // If attachments, use multipart form
+        if message.has_attachments() {
+            let attachment = &message.attachments[0];
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
+
+            let file_part = reqwest::multipart::Part::bytes(data)
+                .file_name(file_name)
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+
+            let mut form = reqwest::multipart::Form::new().part("files", file_part);
+
+            if let Some(email) = config.get("to_person_email") {
+                form = form.text("toPersonEmail", email.to_string());
+            } else {
+                form = form.text("roomId", room_id.to_string());
+            }
+
+            match message.format {
+                MessageFormat::Markdown | MessageFormat::Html => {
+                    form = form.text("markdown", text);
+                }
+                MessageFormat::Text => {
+                    form = form.text("text", text);
+                }
+            }
+
+            let resp = self
+                .client
+                .post(url)
+                .header("Authorization", format!("Bearer {access_token}"))
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // Text-only message
         let mut payload = json!({
             "roomId": room_id,
         });
 
-        // If direct message is specified, use toPersonEmail instead
         if let Some(email) = config.get("to_person_email") {
             payload = json!({
                 "toPersonEmail": email,
@@ -91,6 +137,12 @@ impl NotifyProvider for WebexProvider {
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
+        Self::parse_response(resp).await
+    }
+}
+
+impl WebexProvider {
+    async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp
             .json()

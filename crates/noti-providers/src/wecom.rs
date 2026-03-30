@@ -18,6 +18,10 @@ impl WeComProvider {
     fn build_webhook_url(key: &str) -> String {
         format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}")
     }
+
+    fn build_upload_url(key: &str) -> String {
+        format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?key={key}&type=file")
+    }
 }
 
 #[async_trait]
@@ -50,6 +54,10 @@ impl NotifyProvider for WeComProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -59,6 +67,96 @@ impl NotifyProvider for WeComProvider {
         let key = config.require("key", "wecom")?;
         let url = Self::build_webhook_url(key);
 
+        // If has image attachment, try sending as image message
+        if let Some(img) = message.first_image() {
+            let data = img.read_bytes().await?;
+            let b64 = base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &data,
+            );
+            let md5 = md5_hex(&data);
+
+            let body = json!({
+                "msgtype": "image",
+                "image": {
+                    "base64": b64,
+                    "md5": md5
+                }
+            });
+
+            let resp = self
+                .client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // If has file attachment, upload media first then send file message
+        if message.has_attachments() {
+            let attachment = &message.attachments[0];
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
+
+            let upload_url = Self::build_upload_url(key);
+            let part = reqwest::multipart::Part::bytes(data)
+                .file_name(file_name)
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+            let form = reqwest::multipart::Form::new().part("media", part);
+
+            let upload_resp = self
+                .client
+                .post(&upload_url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            let upload_raw: serde_json::Value = upload_resp
+                .json()
+                .await
+                .map_err(|e| NotiError::Network(format!("upload parse error: {e}")))?;
+
+            let media_id = upload_raw
+                .get("media_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    NotiError::provider(
+                        "wecom",
+                        format!(
+                            "media upload failed: {}",
+                            upload_raw
+                                .get("errmsg")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown error")
+                        ),
+                    )
+                })?;
+
+            let body = json!({
+                "msgtype": "file",
+                "file": {
+                    "media_id": media_id
+                }
+            });
+
+            let resp = self
+                .client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // Text / Markdown message
         let body = match message.format {
             MessageFormat::Markdown => {
                 json!({
@@ -75,7 +173,6 @@ impl NotifyProvider for WeComProvider {
                         "content": message.text
                     }
                 });
-                // Add @mentions if provided
                 if let Some(mentioned) = config.get("mentioned_list") {
                     let list: Vec<&str> = mentioned.split(',').map(|s| s.trim()).collect();
                     payload["text"]["mentioned_list"] = json!(list);
@@ -96,6 +193,12 @@ impl NotifyProvider for WeComProvider {
             .await
             .map_err(|e| NotiError::Network(e.to_string()))?;
 
+        Self::parse_response(resp).await
+    }
+}
+
+impl WeComProvider {
+    async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp
             .json()
@@ -119,4 +222,12 @@ impl NotifyProvider for WeComProvider {
             )
         }
     }
+}
+
+/// Compute MD5 hex digest for WeCom image message.
+fn md5_hex(data: &[u8]) -> String {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
 }

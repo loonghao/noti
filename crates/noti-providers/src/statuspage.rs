@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -7,6 +10,8 @@ use serde_json::json;
 ///
 /// Statuspage lets you create and manage incidents on your status page.
 /// This provider creates incidents via the Statuspage REST API.
+/// Supports image attachments by embedding base64 data URIs as markdown
+/// images in the incident body.
 ///
 /// API Reference: <https://developer.statuspage.io/#tag/incidents>
 pub struct StatuspageProvider {
@@ -35,6 +40,10 @@ impl NotifyProvider for StatuspageProvider {
 
     fn example_url(&self) -> &str {
         "statuspage://<api_key>@<page_id>"
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     fn params(&self) -> Vec<ParamDef> {
@@ -80,12 +89,32 @@ impl NotifyProvider for StatuspageProvider {
             .as_deref()
             .unwrap_or("Incident reported by noti");
 
+        // Build body with embedded attachments
+        let mut body = message.text.clone();
+        if message.has_attachments() {
+            body.push('\n');
+            for attachment in &message.attachments {
+                if attachment.kind == AttachmentKind::Image {
+                    if let Ok(data) = attachment.read_bytes().await {
+                        let mime = attachment.effective_mime();
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        body.push_str(&format!(
+                            "\n![{}](data:{mime};base64,{b64})",
+                            attachment.effective_file_name()
+                        ));
+                    }
+                } else {
+                    body.push_str(&format!("\n📎 {}", attachment.effective_file_name()));
+                }
+            }
+        }
+
         let mut incident = json!({
             "incident": {
                 "name": incident_name,
                 "status": status,
                 "impact_override": impact,
-                "body": message.text,
+                "body": body,
             }
         });
 

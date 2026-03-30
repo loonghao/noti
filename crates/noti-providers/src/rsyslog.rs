@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -7,6 +8,8 @@ use serde_json::json;
 ///
 /// Sends syslog-style notifications via a syslog HTTP relay service
 /// such as Papertrail, Loggly, or any syslog-to-HTTP gateway.
+/// Supports attachments by embedding base64-encoded data in the JSON
+/// payload under the `attachments` field.
 pub struct RsyslogProvider {
     client: Client,
 }
@@ -33,6 +36,10 @@ impl NotifyProvider for RsyslogProvider {
 
     fn example_url(&self) -> &str {
         "rsyslog://<host>/<token>"
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     fn params(&self) -> Vec<ParamDef> {
@@ -62,13 +69,31 @@ impl NotifyProvider for RsyslogProvider {
 
         let title = message.title.as_deref().unwrap_or("noti");
 
-        let payload = json!({
+        let mut payload = json!({
             "message": format!("[{severity}] {title}: {}", message.text),
             "facility": facility,
             "severity": severity,
             "hostname": "noti-cli",
             "tag": "noti",
         });
+
+        // Add attachments as base64-encoded data in the JSON payload
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                if let Ok(data) = attachment.read_bytes().await {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    attachments_json.push(json!({
+                        "name": attachment.effective_file_name(),
+                        "mime": attachment.effective_mime(),
+                        "data": b64,
+                    }));
+                }
+            }
+            if !attachments_json.is_empty() {
+                payload["attachments"] = json!(attachments_json);
+            }
+        }
 
         let mut url = format!("{scheme}://{host}");
         if let Some(port) = config.get("port") {

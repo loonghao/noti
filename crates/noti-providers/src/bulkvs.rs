@@ -1,8 +1,13 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 
-/// BulkVS SMS provider.
+/// BulkVS SMS/MMS provider.
+///
+/// Supports MMS via MediaUrl parameter for sending images and media.
 ///
 /// API reference: https://portal.bulkvs.com/api-docs/
 pub struct BulkVsProvider {
@@ -26,7 +31,7 @@ impl NotifyProvider for BulkVsProvider {
     }
 
     fn description(&self) -> &str {
-        "BulkVS SMS messaging via REST API"
+        "BulkVS SMS/MMS messaging via REST API"
     }
 
     fn example_url(&self) -> &str {
@@ -39,7 +44,15 @@ impl NotifyProvider for BulkVsProvider {
             ParamDef::required("password", "BulkVS account password"),
             ParamDef::required("from", "Sender phone number (must be a BulkVS number)"),
             ParamDef::required("to", "Recipient phone number"),
+            ParamDef::optional(
+                "media_url",
+                "Public URL for MMS media (alternative to file attachments)",
+            ),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -54,16 +67,39 @@ impl NotifyProvider for BulkVsProvider {
         let from = config.require("from", "bulkvs")?;
         let to = config.require("to", "bulkvs")?;
 
+        let mut msg_obj = serde_json::json!({
+            "From": from,
+            "To": [to],
+            "Body": message.text
+        });
+
+        // Add MMS media
+        if message.has_attachments() {
+            let mut media_urls = Vec::new();
+            for attachment in &message.attachments {
+                if matches!(
+                    attachment.kind,
+                    AttachmentKind::Image | AttachmentKind::Video | AttachmentKind::Audio
+                ) {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    media_urls.push(format!("data:{mime};base64,{b64}"));
+                }
+            }
+            if !media_urls.is_empty() {
+                msg_obj["MediaUrl"] = serde_json::json!(media_urls);
+            }
+        } else if let Some(media_url) = config.get("media_url") {
+            msg_obj["MediaUrl"] = serde_json::json!([media_url]);
+        }
+
         let body = serde_json::json!({
             "AuthenticationCredentials": {
                 "Username": username,
                 "Password": password
             },
-            "Message": {
-                "From": from,
-                "To": [to],
-                "Body": message.text
-            }
+            "Message": msg_obj
         });
 
         let resp = self
@@ -78,7 +114,12 @@ impl NotifyProvider for BulkVsProvider {
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
         if (200..300).contains(&status) {
-            Ok(SendResponse::success("bulkvs", "SMS sent successfully")
+            let msg = if message.has_attachments() {
+                "MMS sent with attachments via BulkVS"
+            } else {
+                "SMS sent successfully"
+            };
+            Ok(SendResponse::success("bulkvs", msg)
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {

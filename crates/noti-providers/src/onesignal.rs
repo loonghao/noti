@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -53,6 +56,10 @@ impl NotifyProvider for OneSignalProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -87,9 +94,22 @@ impl NotifyProvider for OneSignalProvider {
             payload["url"] = json!(click_url);
         }
 
+        // Handle image from config or attachments
         if let Some(image) = config.get("image") {
             payload["big_picture"] = json!(image);
             payload["ios_attachments"] = json!({"image": image});
+        } else if let Some(image_att) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = image_att.read_bytes().await?;
+            let mime = image_att.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            let data_uri = format!("data:{mime};base64,{b64}");
+            payload["big_picture"] = json!(data_uri);
+            payload["ios_attachments"] = json!({"image": data_uri});
+            payload["chrome_web_image"] = json!(data_uri);
         }
 
         let resp = self

@@ -54,6 +54,10 @@ impl NotifyProvider for AppriseProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -106,13 +110,47 @@ impl NotifyProvider for AppriseProvider {
             }
         }
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+        // If attachments present, use multipart form upload
+        let resp = if message.has_attachments() {
+            let mut form = reqwest::multipart::Form::new();
+
+            // Add all JSON fields as text parts
+            if let Some(obj) = payload.as_object() {
+                for (key, value) in obj {
+                    let val_str = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => value.to_string(),
+                    };
+                    form = form.text(key.clone(), val_str);
+                }
+            }
+
+            // Add file attachments
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let file_name = attachment.effective_file_name();
+                let mime_str = attachment.effective_mime();
+                let part = reqwest::multipart::Part::bytes(data)
+                    .file_name(file_name)
+                    .mime_str(&mime_str)
+                    .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+                form = form.part("attach", part);
+            }
+
+            self.client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        } else {
+            self.client
+                .post(&url)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?
+        };
 
         let status = resp.status().as_u16();
         let body = resp

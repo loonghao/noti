@@ -51,6 +51,10 @@ impl NotifyProvider for SparkPostProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -82,8 +86,7 @@ impl NotifyProvider for SparkPostProvider {
             }
         }
 
-        // Determine content type
-        let content = if matches!(message.format, MessageFormat::Html) {
+        let mut content = if matches!(message.format, MessageFormat::Html) {
             json!({
                 "from": {"name": from_name, "email": from_email},
                 "subject": subject,
@@ -96,6 +99,24 @@ impl NotifyProvider for SparkPostProvider {
                 "text": message.text,
             })
         };
+
+        // Add file attachments as base64-encoded content
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                attachments_json.push(json!({
+                    "name": attachment.effective_file_name(),
+                    "type": attachment.effective_mime(),
+                    "data": b64,
+                }));
+            }
+            content["attachments"] = json!(attachments_json);
+        }
 
         let payload = json!({
             "recipients": recipients,

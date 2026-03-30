@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -42,6 +45,10 @@ impl NotifyProvider for TwistProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -50,11 +57,26 @@ impl NotifyProvider for TwistProvider {
         self.validate_config(config)?;
         let webhook_url = config.require("webhook_url", "twist")?;
 
-        let content = if let Some(ref title) = message.title {
+        let mut content = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)
         } else {
             message.text.clone()
         };
+
+        // Embed images in markdown and list file attachments
+        if message.has_attachments() {
+            for attachment in &message.attachments {
+                let file_name = attachment.effective_file_name();
+                if attachment.kind == AttachmentKind::Image {
+                    let data = attachment.read_bytes().await?;
+                    let mime = attachment.effective_mime();
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    content.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
+                } else {
+                    content.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
+                }
+            }
+        }
 
         let payload = json!({
             "content": content

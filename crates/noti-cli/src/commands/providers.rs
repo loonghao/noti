@@ -84,6 +84,7 @@ pub fn execute(
                         "scheme": provider.url_scheme(),
                         "description": provider.description(),
                         "example_url": provider.example_url(),
+                        "supports_attachments": provider.supports_attachments(),
                         "params": params,
                     }));
                 }
@@ -92,6 +93,14 @@ pub fn execute(
                     println!("  Scheme:      {}://", provider.url_scheme());
                     println!("  Description: {}", provider.description());
                     println!("  Example URL: {}", provider.example_url());
+                    println!(
+                        "  Attachments: {}",
+                        if provider.supports_attachments() {
+                            "supported"
+                        } else {
+                            "not supported"
+                        }
+                    );
                     println!();
                     println!("  Parameters:");
                     for p in provider.params() {

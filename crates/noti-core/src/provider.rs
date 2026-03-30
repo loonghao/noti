@@ -153,6 +153,13 @@ pub trait NotifyProvider: Send + Sync {
     /// Example URL scheme usage.
     fn example_url(&self) -> &str;
 
+    /// Whether this provider supports file/image attachments.
+    ///
+    /// Defaults to `false`. Providers that can upload files should override.
+    fn supports_attachments(&self) -> bool {
+        false
+    }
+
     /// Validate that the given config has all required parameters.
     fn validate_config(&self, config: &ProviderConfig) -> Result<(), NotiError> {
         for param in self.params() {

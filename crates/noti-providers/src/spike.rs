@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,7 +7,7 @@ use serde_json::json;
 /// Spike.sh incident management provider.
 ///
 /// Creates incidents via the Spike.sh integration API.
-/// Spike.sh is a modern incident management and alerting platform.
+/// Supports image attachments via `image_url` in the alert payload.
 ///
 /// API reference: <https://docs.spike.sh/integration-guides/integrate-any-tool-via-webhook>
 pub struct SpikeProvider {
@@ -44,6 +45,10 @@ impl NotifyProvider for SpikeProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -54,11 +59,20 @@ impl NotifyProvider for SpikeProvider {
 
         let title = message.title.as_deref().unwrap_or("Alert");
 
-        let payload = json!({
+        let mut payload = json!({
             "title": title,
             "message": message.text,
             "status": "open",
         });
+
+        // Embed first image attachment as base64 data URI
+        if let Some(img) = message.first_image() {
+            if let Ok(data) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                payload["image_url"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+        }
 
         let resp = self
             .client

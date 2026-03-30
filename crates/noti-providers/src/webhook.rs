@@ -12,6 +12,82 @@ impl WebhookProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
+
+    /// Send a multipart request with file attachments.
+    async fn send_multipart(
+        &self,
+        message: &Message,
+        url: &str,
+        method: &str,
+        config: &ProviderConfig,
+    ) -> Result<SendResponse, NotiError> {
+        let mut form = reqwest::multipart::Form::new()
+            .text("message", message.text.clone());
+
+        if let Some(ref title) = message.title {
+            form = form.text("title", title.clone());
+        }
+
+        for attachment in &message.attachments {
+            let data = attachment.read_bytes().await?;
+            let file_name = attachment.effective_file_name();
+            let mime_str = attachment.effective_mime();
+            let part = reqwest::multipart::Part::bytes(data)
+                .file_name(file_name)
+                .mime_str(&mime_str)
+                .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
+            form = form.part("file", part);
+        }
+
+        let mut request = match method {
+            "POST" => self.client.post(url),
+            "PUT" => self.client.put(url),
+            "PATCH" => self.client.patch(url),
+            _ => {
+                return Err(NotiError::Validation(format!(
+                    "unsupported HTTP method: {method}"
+                )));
+            }
+        };
+
+        if let Some(headers) = config.get("headers") {
+            for pair in headers.split(',') {
+                if let Some((k, v)) = pair.split_once(':') {
+                    request = request.header(k.trim(), v.trim());
+                }
+            }
+        }
+
+        let resp = request
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        let status = resp.status().as_u16();
+        let raw_text = resp
+            .text()
+            .await
+            .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
+
+        let raw_json: Option<serde_json::Value> = serde_json::from_str(&raw_text).ok();
+
+        if (200..300).contains(&(status as usize)) {
+            let mut resp = SendResponse::success("webhook", "request sent successfully")
+                .with_status_code(status);
+            if let Some(raw) = raw_json {
+                resp = resp.with_raw_response(raw);
+            }
+            Ok(resp)
+        } else {
+            let mut resp = SendResponse::failure("webhook", format!("HTTP {status}: {raw_text}"))
+                .with_status_code(status);
+            if let Some(raw) = raw_json {
+                resp = resp.with_raw_response(raw);
+            }
+            Ok(resp)
+        }
+    }
 }
 
 #[async_trait]
@@ -54,6 +130,10 @@ impl NotifyProvider for WebhookProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -62,6 +142,12 @@ impl NotifyProvider for WebhookProvider {
         self.validate_config(config)?;
         let url = config.require("url", "webhook")?;
         let method = config.get("method").unwrap_or("POST").to_uppercase();
+
+        // If attachments present, use multipart form
+        if message.has_attachments() {
+            return self.send_multipart(message, url, &method, config).await;
+        }
+
         let content_type = config.get("content_type").unwrap_or("application/json");
 
         // Build request body

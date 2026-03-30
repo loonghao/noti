@@ -6,6 +6,7 @@ use serde_json::json;
 /// Resend email provider.
 ///
 /// Sends transactional emails via Resend, a modern email API for developers.
+/// Supports file attachments encoded as base64 in the JSON payload.
 ///
 /// API reference: <https://resend.com/docs/api-reference/emails/send-email>
 pub struct ResendProvider {
@@ -46,6 +47,10 @@ impl NotifyProvider for ResendProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -69,6 +74,23 @@ impl NotifyProvider for ResendProvider {
 
         if let Some(reply_to) = config.get("reply_to") {
             payload["reply_to"] = json!([reply_to]);
+        }
+
+        // Add attachments as base64-encoded content
+        if message.has_attachments() {
+            let mut attachments_json = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &data,
+                );
+                attachments_json.push(json!({
+                    "content": b64,
+                    "filename": attachment.effective_file_name(),
+                }));
+            }
+            payload["attachments"] = json!(attachments_json);
         }
 
         let resp = self

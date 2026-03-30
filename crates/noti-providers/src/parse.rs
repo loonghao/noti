@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
@@ -6,6 +7,7 @@ use serde_json::json;
 /// Parse Platform push notification provider.
 ///
 /// Uses the Parse REST API to send push notifications.
+/// Supports image attachments via `image` field in push data.
 /// API docs: https://docs.parseplatform.org/rest/guide/#push-notifications
 pub struct ParseProvider {
     client: Client,
@@ -45,6 +47,10 @@ impl NotifyProvider for ParseProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -64,12 +70,23 @@ impl NotifyProvider for ParseProvider {
             json!({})
         };
 
+        let mut data = json!({
+            "alert": message.text,
+            "title": title,
+        });
+
+        // Embed first image attachment as base64 data URI in push data
+        if let Some(img) = message.first_image() {
+            if let Ok(bytes) = img.read_bytes().await {
+                let mime = img.effective_mime();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                data["image"] = json!(format!("data:{mime};base64,{b64}"));
+            }
+        }
+
         let payload = json!({
             "where": where_clause,
-            "data": {
-                "alert": message.text,
-                "title": title,
-            }
+            "data": data
         });
 
         let url = format!("https://{host}/1/push");

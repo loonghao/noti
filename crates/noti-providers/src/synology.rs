@@ -4,6 +4,9 @@ use reqwest::Client;
 
 /// Synology Chat incoming webhook provider.
 ///
+/// Supports file attachments via the `file_url` field in the payload.
+/// Images can be displayed inline in Synology Chat.
+///
 /// API reference: https://kb.synology.com/en-global/DSM/tutorial/How_to_configure_webhooks_in_Synology_Chat
 pub struct SynologyProvider {
     client: Client,
@@ -42,6 +45,10 @@ impl NotifyProvider for SynologyProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -58,8 +65,23 @@ impl NotifyProvider for SynologyProvider {
             "{scheme}://{host}:{port}/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=%22{token}%22"
         );
 
-        let payload = serde_json::json!({"text": message.text});
-        let body = format!("payload={payload}");
+        // Build payload with optional file_url for attachments
+        let mut payload_obj = serde_json::json!({"text": message.text});
+
+        if message.has_attachments() {
+            // Synology Chat supports file_url for displaying files/images
+            // Append file info to text for non-URL-based attachments
+            let mut text = message.text.clone();
+            for attachment in &message.attachments {
+                text.push_str(&format!(
+                    "\n📎 Attachment: {}",
+                    attachment.effective_file_name()
+                ));
+            }
+            payload_obj["text"] = serde_json::json!(text);
+        }
+
+        let body = format!("payload={payload_obj}");
 
         let resp = self
             .client

@@ -53,6 +53,10 @@ impl NotifyProvider for OpsgenieProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -130,12 +134,57 @@ impl NotifyProvider for OpsgenieProvider {
                 .get("requestId")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            Ok(SendResponse::success(
-                "opsgenie",
-                format!("alert created (requestId: {request_id})"),
-            )
-            .with_status_code(status)
-            .with_raw_response(raw))
+
+            // Upload attachments if present (using alert alias or dedup key)
+            if message.has_attachments() {
+                // OpsGenie needs an alert identifier to attach files
+                let alert_id = config
+                    .get("alias")
+                    .map(|s| format!("alias={s}"))
+                    .unwrap_or_else(|| request_id.to_string());
+
+                let attach_url = format!(
+                    "{base_url}/v2/alerts/{alert_id}/attachments"
+                );
+
+                for attachment in &message.attachments {
+                    let data = attachment.read_bytes().await?;
+                    let file_name = attachment.effective_file_name();
+                    let mime_str = attachment.effective_mime();
+
+                    let part = reqwest::multipart::Part::bytes(data)
+                        .file_name(file_name)
+                        .mime_str(&mime_str)
+                        .map_err(|e| {
+                            NotiError::Network(format!("MIME error: {e}"))
+                        })?;
+
+                    let form = reqwest::multipart::Form::new().part("file", part);
+
+                    let _attach_resp = self
+                        .client
+                        .post(&attach_url)
+                        .header(
+                            "Authorization",
+                            format!("GenieKey {api_key}"),
+                        )
+                        .multipart(form)
+                        .send()
+                        .await
+                        .map_err(|e| NotiError::Network(e.to_string()))?;
+                }
+            }
+
+            let msg = if message.has_attachments() {
+                format!(
+                    "alert created with attachments (requestId: {request_id})"
+                )
+            } else {
+                format!("alert created (requestId: {request_id})")
+            };
+            Ok(SendResponse::success("opsgenie", msg)
+                .with_status_code(status)
+                .with_raw_response(raw))
         } else {
             let error_msg = raw
                 .get("message")

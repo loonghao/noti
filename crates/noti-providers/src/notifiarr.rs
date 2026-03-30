@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
+use base64::Engine;
+use noti_core::{
+    AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
+};
 use reqwest::Client;
 use serde_json::json;
 
@@ -54,6 +57,10 @@ impl NotifyProvider for NotifiarrProvider {
         ]
     }
 
+    fn supports_attachments(&self) -> bool {
+        true
+    }
+
     async fn send(
         &self,
         message: &Message,
@@ -102,6 +109,30 @@ impl NotifyProvider for NotifiarrProvider {
 
         if let Some(image) = config.get("image") {
             notification["discord"]["embeds"][0]["image"] = json!({"url": image});
+        } else if let Some(image_att) = message
+            .attachments
+            .iter()
+            .find(|a| a.kind == AttachmentKind::Image)
+        {
+            let data = image_att.read_bytes().await?;
+            let mime = image_att.effective_mime();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            let data_uri = format!("data:{mime};base64,{b64}");
+            notification["discord"]["embeds"][0]["image"] = json!({"url": data_uri});
+        }
+
+        // Add non-image attachment info to the embed description
+        let non_image_attachments: Vec<_> = message
+            .attachments
+            .iter()
+            .filter(|a| a.kind != AttachmentKind::Image)
+            .collect();
+        if !non_image_attachments.is_empty() {
+            let mut desc = message.text.clone();
+            for att in &non_image_attachments {
+                desc.push_str(&format!("\n📎 **Attachment:** {}", att.effective_file_name()));
+            }
+            notification["discord"]["embeds"][0]["text"] = json!(desc);
         }
 
         let resp = self
