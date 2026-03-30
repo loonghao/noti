@@ -478,7 +478,7 @@ mod ntfy_tests {
         let provider = NtfyProvider::new(client());
         let config = ProviderConfig::new()
             .set("topic", "test-topic")
-            .set("server", &mock_server.uri());
+            .set("server", mock_server.uri());
         let message = Message::text("Test ntfy");
 
         let result = provider.send(&message, &config).await;
@@ -503,7 +503,7 @@ mod ntfy_tests {
         let provider = NtfyProvider::new(client());
         let config = ProviderConfig::new()
             .set("topic", "test-topic")
-            .set("server", &mock_server.uri());
+            .set("server", mock_server.uri());
         let message = Message::text("**bold**")
             .with_title("Alert")
             .with_format(MessageFormat::Markdown);
@@ -528,7 +528,7 @@ mod ntfy_tests {
         let provider = NtfyProvider::new(client());
         let config = ProviderConfig::new()
             .set("topic", "test-topic")
-            .set("server", &mock_server.uri())
+            .set("server", mock_server.uri())
             .set("priority", "5")
             .set("tags", "warning,skull");
         let message = Message::text("Urgent alert");
@@ -553,7 +553,7 @@ mod ntfy_tests {
         let provider = NtfyProvider::new(client());
         let config = ProviderConfig::new()
             .set("topic", "test-topic")
-            .set("server", &mock_server.uri());
+            .set("server", mock_server.uri());
         let message = Message::text("Test");
 
         let result = provider.send(&message, &config).await;
@@ -608,7 +608,7 @@ mod gotify_tests {
 
         let provider = GotifyProvider::new(client());
         let config = ProviderConfig::new()
-            .set("host", &mock_server.uri())
+            .set("host", mock_server.uri())
             .set("app_token", "test-token");
         let message = Message::text("Test gotify");
 
@@ -633,7 +633,7 @@ mod gotify_tests {
 
         let provider = GotifyProvider::new(client());
         let config = ProviderConfig::new()
-            .set("host", &mock_server.uri())
+            .set("host", mock_server.uri())
             .set("app_token", "test-token")
             .set("priority", "8");
         let message = Message::text("High priority")
@@ -659,7 +659,7 @@ mod gotify_tests {
 
         let provider = GotifyProvider::new(client());
         let config = ProviderConfig::new()
-            .set("host", &mock_server.uri())
+            .set("host", mock_server.uri())
             .set("app_token", "bad-token");
         let message = Message::text("Test");
 
@@ -706,7 +706,7 @@ mod feishu_tests {
         let provider = FeishuProvider::new(client());
         assert_eq!(provider.name(), "feishu");
         assert_eq!(provider.url_scheme(), "feishu");
-        assert!(provider.description().len() > 0);
+        assert!(!provider.description().is_empty());
         assert!(
             provider
                 .params()
@@ -1262,7 +1262,7 @@ mod bark_send_tests {
         let provider = BarkProvider::new(client());
         let config = ProviderConfig::new()
             .set("device_key", "test-key")
-            .set("server", &mock_server.uri());
+            .set("server", mock_server.uri());
         let message = Message::text("Hello from Bark test");
         let result = provider.send(&message, &config).await;
         assert!(result.is_ok());
@@ -1284,7 +1284,7 @@ mod bark_send_tests {
         let provider = BarkProvider::new(client());
         let config = ProviderConfig::new()
             .set("device_key", "test-key")
-            .set("server", &mock_server.uri())
+            .set("server", mock_server.uri())
             .set("group", "test-group")
             .set("sound", "alarm")
             .set("icon", "https://example.com/icon.png");
@@ -1308,7 +1308,7 @@ mod bark_send_tests {
         let provider = BarkProvider::new(client());
         let config = ProviderConfig::new()
             .set("device_key", "bad-key")
-            .set("server", &mock_server.uri());
+            .set("server", mock_server.uri());
         let message = Message::text("Test");
         let result = provider.send(&message, &config).await;
         assert!(result.is_ok());
