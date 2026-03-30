@@ -13,7 +13,6 @@ base64 = { workspace = true }
 hmac = { workspace = true }
 lettre = { workspace = true }
 md-5 = { workspace = true }
-mime_guess = { workspace = true }
 noti-core = { path = "../noti-core" }
 reqwest = { workspace = true }
 serde = { workspace = true }
