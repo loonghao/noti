@@ -1,11 +1,14 @@
 use async_trait::async_trait;
+use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 use serde_json::json;
 
 /// httpSMS provider.
 ///
-/// Sends SMS through your Android phone via the httpSMS service.
+/// Sends SMS/MMS through your Android phone via the httpSMS service.
+/// When attachments are present, the message is sent as MMS using the
+/// `attachments` field with base64-encoded data URIs.
 ///
 /// API reference: <https://docs.httpsms.com/>
 pub struct HttpSmsProvider {
@@ -29,7 +32,7 @@ impl NotifyProvider for HttpSmsProvider {
     }
 
     fn description(&self) -> &str {
-        "httpSMS — send SMS via Android phone"
+        "httpSMS — send SMS/MMS via Android phone"
     }
 
     fn example_url(&self) -> &str {
@@ -45,6 +48,10 @@ impl NotifyProvider for HttpSmsProvider {
                 .with_example("+15559876543"),
             ParamDef::optional("encrypt", "Enable end-to-end encryption: true or false"),
         ]
+    }
+
+    fn supports_attachments(&self) -> bool {
+        true
     }
 
     async fn send(
@@ -77,6 +84,18 @@ impl NotifyProvider for HttpSmsProvider {
             }
         }
 
+        // Add attachments as base64 data URIs to trigger MMS delivery
+        if message.has_attachments() {
+            let mut attachment_uris = Vec::new();
+            for attachment in &message.attachments {
+                let data = attachment.read_bytes().await?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                let mime = attachment.effective_mime();
+                attachment_uris.push(format!("data:{mime};base64,{b64}"));
+            }
+            payload["attachments"] = json!(attachment_uris);
+        }
+
         let resp = self
             .client
             .post(url)
@@ -98,7 +117,7 @@ impl NotifyProvider for HttpSmsProvider {
             || api_status == "sent"
             || (200..300).contains(&(status as usize))
         {
-            Ok(SendResponse::success("httpsms", "SMS queued via httpSMS")
+            Ok(SendResponse::success("httpsms", "message queued via httpSMS")
                 .with_status_code(status)
                 .with_raw_response(raw))
         } else {
