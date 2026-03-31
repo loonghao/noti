@@ -66,14 +66,28 @@ rounds or require coordination with the iteration agent.
 
 ## Documentation — Remaining
 
-- [ ] `docs/guide/what-is-noti.md:38` — same `Provider trait, Registry` naming issue (should be `NotifyProvider`, `ProviderRegistry`)
+- [x] ~~`docs/guide/what-is-noti.md:38` — same `Provider trait, Registry` naming issue~~ — fixed to `NotifyProvider`, `ProviderRegistry` (f53599a)
 
 ## Tests — Deferred Deduplication
 
-- [ ] `url_parse_test.rs` is a strict subset of `url_parse_comprehensive_test.rs` — consider removing
-- [ ] `provider_test.rs:test_message_builder` duplicates `core_types_test.rs:test_message_builder_chain`
-- [ ] `provider_test.rs:test_provider_config_builder` duplicates `core_types_test.rs:test_provider_config_set_and_get` + `require` tests
+- [x] ~~`url_parse_test.rs` is a strict subset of `url_parse_comprehensive_test.rs`~~ — removed (0730ac3)
+- [x] ~~`provider_test.rs:test_message_builder` duplicates `core_types_test.rs:test_message_builder_chain`~~ — N/A: `provider_test.rs` does not exist (likely already merged)
+- [x] ~~`provider_test.rs:test_provider_config_builder` duplicates `core_types_test.rs:test_provider_config_set_and_get`~~ — N/A: `provider_test.rs` does not exist
 
 ## Build
 
 - [x] ~~`justfile` `build-release` only builds `noti-cli` — no recipe for building `noti-server`~~ — added `build-server` recipe (9c73d13)
+
+## Code — Behavioral Issues (noti-queue)
+
+- [ ] `InMemoryQueue::dequeue()` does not skip cancelled tasks in heap — a task that is cancelled after enqueue but before dequeue will be dequeued and marked as Processing; suggest adding a skip-cancelled loop in `dequeue()`
+- [ ] `InMemoryQueue::stats()` vs `SqliteQueue::stats()` semantic mismatch after `purge_completed()` — InMemoryQueue returns cumulative counters (purge doesn't decrement completed/failed/cancelled), SQLiteQueue returns actual row counts (purge removes rows so counts drop)
+
+## Code — Minor (noti-server)
+
+- [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
+- [ ] `e2e_test.rs`: `spawn_server()` + `reqwest::Client::new()` boilerplate repeated 16 times — consider extracting helper returning `(String, Client)` tuple
+
+## Tests — Cross-Module Deduplication (noti-queue)
+
+- [ ] `make_task()` helper defined identically in both `sqlite.rs:489` and `memory.rs:268` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module
