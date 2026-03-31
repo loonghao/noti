@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use noti_core::{ProviderRegistry, StatusTracker, TemplateRegistry};
-use noti_queue::{InMemoryQueue, QueueBackend, WorkerConfig, WorkerHandle, WorkerPool};
+use noti_queue::{InMemoryQueue, QueueBackend, SqliteQueue, WorkerConfig, WorkerHandle, WorkerPool};
 use tokio::sync::{Notify, RwLock};
+
+use crate::config::QueueBackendType;
 
 /// Shared application state for all request handlers.
 #[derive(Clone)]
@@ -20,6 +22,36 @@ impl AppState {
     pub fn new(registry: ProviderRegistry) -> Self {
         let queue = Arc::new(InMemoryQueue::new());
         let task_notify = queue.notifier();
+
+        Self {
+            registry: Arc::new(registry),
+            status_tracker: StatusTracker::new(),
+            template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
+            queue,
+            task_notify,
+            started_at: SystemTime::now(),
+        }
+    }
+
+    /// Create state with a specific queue backend.
+    pub fn with_queue_backend(
+        registry: ProviderRegistry,
+        backend: &QueueBackendType,
+        db_path: &str,
+    ) -> Self {
+        let (queue, task_notify): (Arc<dyn QueueBackend>, Arc<Notify>) = match backend {
+            QueueBackendType::Sqlite => {
+                let q = SqliteQueue::open(db_path)
+                    .expect("failed to open SQLite queue database");
+                let notify = q.notifier();
+                (Arc::new(q), notify)
+            }
+            QueueBackendType::Memory => {
+                let q = InMemoryQueue::new();
+                let notify = q.notifier();
+                (Arc::new(q), notify)
+            }
+        };
 
         Self {
             registry: Arc::new(registry),

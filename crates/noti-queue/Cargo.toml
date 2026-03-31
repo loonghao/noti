@@ -9,11 +9,13 @@ repository.workspace = true
 
 [features]
 openapi = ["utoipa", "noti-core/openapi"]
+sqlite = ["rusqlite"]
 
 [dependencies]
 async-trait = { workspace = true }
 noti-core = { path = "../noti-core" }
 reqwest = { workspace = true }
+rusqlite = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -43,7 +43,8 @@ async fn main() {
     let mut registry = ProviderRegistry::new();
     noti_providers::register_all_providers(&mut registry);
 
-    let state = AppState::new(registry);
+    let state = AppState::with_queue_backend(registry, &config.queue_backend, &config.queue_db_path);
+    tracing::info!(backend = ?config.queue_backend, "queue backend initialized");
 
     // Start background worker pool
     let worker_config = WorkerConfig {

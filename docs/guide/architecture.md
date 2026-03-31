@@ -58,6 +58,7 @@ Async message queue for background notification processing:
 
 - **Priority-based queue** — tasks ordered by priority level
 - **In-memory backend** — `InMemoryQueue` with configurable capacity
+- **SQLite backend** — `SqliteQueue` for persistent task storage across restarts
 - **Worker pool** — concurrent workers dequeue and deliver notifications
 - **Webhook callbacks** — HTTP POST on task completion or failure
 - **Task lifecycle** — queued → processing → completed/failed/cancelled
@@ -68,6 +69,7 @@ REST API server for the noti notification service:
 
 - **Axum-based HTTP server** — sync and async send endpoints
 - **Queue management API** — enqueue, list, cancel, purge tasks
+- **Configurable queue backend** — `NOTI_QUEUE_BACKEND=memory|sqlite`
 - **Template CRUD** — create, read, update, delete message templates
 - **Rate limiting** — token-bucket per-IP or global rate limiting
 - **API key authentication** — Bearer token and X-API-Key header support

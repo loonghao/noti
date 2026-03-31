@@ -16,6 +16,8 @@
 //! | `NOTI_LOG_LEVEL` | `info` | Tracing log level filter |
 //! | `NOTI_LOG_FORMAT` | `text` | Log output format: `text` or `json` |
 //! | `NOTI_MAX_BODY_SIZE` | `2097152` | Max request body size in bytes (default 2 MiB) |
+//! | `NOTI_QUEUE_BACKEND` | `memory` | Queue backend: `memory` or `sqlite` |
+//! | `NOTI_QUEUE_DB_PATH` | `noti-queue.db` | SQLite database path (when backend=sqlite) |
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -23,6 +25,25 @@ use std::time::Duration;
 
 use crate::middleware::auth::AuthConfig;
 use crate::middleware::rate_limit::RateLimitConfig;
+
+/// Queue backend type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueueBackendType {
+    /// In-memory queue (default). Tasks are lost on restart.
+    Memory,
+    /// SQLite-backed persistent queue. Tasks survive restarts.
+    Sqlite,
+}
+
+impl QueueBackendType {
+    /// Parse from string, defaulting to [`QueueBackendType::Memory`].
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "sqlite" | "sql" | "db" => Self::Sqlite,
+            _ => Self::Memory,
+        }
+    }
+}
 
 /// Log output format.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +83,10 @@ pub struct ServerConfig {
     pub log_format: LogFormat,
     /// Maximum request body size in bytes.
     pub max_body_size: usize,
+    /// Queue backend type.
+    pub queue_backend: QueueBackendType,
+    /// SQLite database path (used when `queue_backend` is `Sqlite`).
+    pub queue_db_path: String,
 }
 
 /// Default max body size: 2 MiB.
@@ -78,6 +103,8 @@ impl Default for ServerConfig {
             log_level: "info".to_string(),
             log_format: LogFormat::Text,
             max_body_size: DEFAULT_MAX_BODY_SIZE,
+            queue_backend: QueueBackendType::Memory,
+            queue_db_path: "noti-queue.db".to_string(),
         }
     }
 }
@@ -132,6 +159,13 @@ impl ServerConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(DEFAULT_MAX_BODY_SIZE);
 
+        let queue_backend = env::var("NOTI_QUEUE_BACKEND")
+            .map(|v| QueueBackendType::from_str_lossy(&v))
+            .unwrap_or(QueueBackendType::Memory);
+
+        let queue_db_path = env::var("NOTI_QUEUE_DB_PATH")
+            .unwrap_or_else(|_| "noti-queue.db".to_string());
+
         Self {
             host,
             port,
@@ -141,6 +175,8 @@ impl ServerConfig {
             log_level,
             log_format,
             max_body_size,
+            queue_backend,
+            queue_db_path,
         }
     }
 
