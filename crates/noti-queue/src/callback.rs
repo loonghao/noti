@@ -5,8 +5,17 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use crate::task::{NotificationTask, TaskStatus};
+
+/// Shared HTTP client for webhook callbacks (reused across all calls).
+static CALLBACK_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("failed to build callback HTTP client")
+});
 
 /// Payload sent to the callback URL when a task reaches a terminal state.
 #[derive(Debug, Clone, Serialize)]
@@ -69,21 +78,8 @@ pub async fn fire_callback(task: &NotificationTask) {
         "firing webhook callback"
     );
 
-    // Use a short timeout to avoid blocking the worker
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(
-                task_id = %task.id,
-                error = %e,
-                "failed to build HTTP client for callback"
-            );
-            return;
-        }
-    };
+    // Use shared client with a short timeout
+    let client = &*CALLBACK_CLIENT;
 
     match client.post(&url).json(&payload).send().await {
         Ok(resp) => {
