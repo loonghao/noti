@@ -16,6 +16,30 @@ use crate::error::QueueError;
 use crate::queue::{QueueBackend, QueueStats};
 use crate::task::{NotificationTask, TaskId, TaskStatus};
 
+// ───────────────────── error conversion helpers ─────────────────────
+
+/// Extension trait to convert `rusqlite::Error` → `QueueError::Backend` via `?`.
+trait SqliteResultExt<T> {
+    fn backend_err(self) -> Result<T, QueueError>;
+}
+
+impl<T> SqliteResultExt<T> for Result<T, rusqlite::Error> {
+    fn backend_err(self) -> Result<T, QueueError> {
+        self.map_err(|e| QueueError::Backend(e.to_string()))
+    }
+}
+
+/// Extension trait to convert `serde_json::Error` → `QueueError::Serialization` via `?`.
+trait SerdeResultExt<T> {
+    fn serde_err(self) -> Result<T, QueueError>;
+}
+
+impl<T> SerdeResultExt<T> for Result<T, serde_json::Error> {
+    fn serde_err(self) -> Result<T, QueueError> {
+        self.map_err(|e| QueueError::Serialization(e.to_string()))
+    }
+}
+
 // ───────────────────── helpers ─────────────────────
 
 fn system_time_to_epoch_ms(t: SystemTime) -> i64 {
@@ -40,11 +64,15 @@ fn status_to_str(s: &TaskStatus) -> &'static str {
 
 fn str_to_status(s: &str) -> TaskStatus {
     match s {
+        "queued" => TaskStatus::Queued,
         "processing" => TaskStatus::Processing,
         "completed" => TaskStatus::Completed,
         "failed" => TaskStatus::Failed,
         "cancelled" => TaskStatus::Cancelled,
-        _ => TaskStatus::Queued,
+        other => {
+            tracing::warn!(status = other, "unknown task status in database, defaulting to Queued");
+            TaskStatus::Queued
+        }
     }
 }
 
@@ -60,22 +88,19 @@ pub struct SqliteQueue {
 impl SqliteQueue {
     /// Open (or create) a SQLite queue backed by a file on disk.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, QueueError> {
-        let conn = Connection::open(path)
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+        let conn = Connection::open(path).backend_err()?;
         Self::from_connection(conn, 0)
     }
 
     /// Create an in-memory SQLite queue (useful for testing).
     pub fn in_memory() -> Result<Self, QueueError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+        let conn = Connection::open_in_memory().backend_err()?;
         Self::from_connection(conn, 0)
     }
 
     /// Open with a capacity limit.
     pub fn open_with_capacity(path: impl AsRef<Path>, capacity: usize) -> Result<Self, QueueError> {
-        let conn = Connection::open(path)
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+        let conn = Connection::open(path).backend_err()?;
         Self::from_connection(conn, capacity)
     }
 
@@ -85,7 +110,7 @@ impl SqliteQueue {
              PRAGMA synchronous=NORMAL;
              PRAGMA busy_timeout=5000;",
         )
-        .map_err(|e| QueueError::Backend(e.to_string()))?;
+        .backend_err()?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS tasks (
@@ -106,7 +131,7 @@ impl SqliteQueue {
             CREATE INDEX IF NOT EXISTS idx_tasks_status_priority
                 ON tasks(status, priority DESC, created_at ASC);",
         )
-        .map_err(|e| QueueError::Backend(e.to_string()))?;
+        .backend_err()?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -121,14 +146,10 @@ impl SqliteQueue {
     }
 
     fn serialize_task(task: &NotificationTask) -> Result<TaskRow, QueueError> {
-        let config_json = serde_json::to_string(&task.config)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
-        let message_json = serde_json::to_string(&task.message)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
-        let retry_json = serde_json::to_string(&task.retry_policy)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
-        let metadata_json = serde_json::to_string(&task.metadata)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
+        let config_json = serde_json::to_string(&task.config).serde_err()?;
+        let message_json = serde_json::to_string(&task.message).serde_err()?;
+        let retry_json = serde_json::to_string(&task.retry_policy).serde_err()?;
+        let metadata_json = serde_json::to_string(&task.metadata).serde_err()?;
 
         Ok(TaskRow {
             id: task.id.clone(),
@@ -148,14 +169,10 @@ impl SqliteQueue {
     }
 
     fn deserialize_task(row: &TaskRow) -> Result<NotificationTask, QueueError> {
-        let config = serde_json::from_str(&row.config_json)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
-        let message = serde_json::from_str(&row.message_json)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
-        let retry_policy = serde_json::from_str(&row.retry_policy_json)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
-        let metadata = serde_json::from_str(&row.metadata_json)
-            .map_err(|e| QueueError::Serialization(e.to_string()))?;
+        let config = serde_json::from_str(&row.config_json).serde_err()?;
+        let message = serde_json::from_str(&row.message_json).serde_err()?;
+        let retry_policy = serde_json::from_str(&row.retry_policy_json).serde_err()?;
+        let metadata = serde_json::from_str(&row.metadata_json).serde_err()?;
 
         Ok(NotificationTask {
             id: row.id.clone(),
@@ -220,7 +237,7 @@ impl QueueBackend for SqliteQueue {
         if self.capacity > 0 {
             let count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM tasks WHERE status = 'queued'", [], |r| r.get(0))
-                .map_err(|e| QueueError::Backend(e.to_string()))?;
+                .backend_err()?;
             if count as usize >= self.capacity {
                 return Err(QueueError::QueueFull {
                     capacity: self.capacity,
@@ -239,7 +256,7 @@ impl QueueBackend for SqliteQueue {
                 row.created_at, row.updated_at, row.metadata_json, row.callback_url, row.priority
             ],
         )
-        .map_err(|e| QueueError::Backend(e.to_string()))?;
+        .backend_err()?;
 
         drop(conn);
         self.notify.notify_one();
@@ -264,7 +281,7 @@ impl QueueBackend for SqliteQueue {
                      WHERE id = ?2",
                     params![now, row.id],
                 )
-                .map_err(|e| QueueError::Backend(e.to_string()))?;
+                .backend_err()?;
 
                 let mut task = Self::deserialize_task(&row)?;
                 task.mark_processing();
@@ -284,7 +301,7 @@ impl QueueBackend for SqliteQueue {
                 "UPDATE tasks SET status = 'completed', updated_at = ?1 WHERE id = ?2",
                 params![now, task_id],
             )
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
         if updated == 0 {
             return Err(QueueError::NotFound(task_id.to_string()));
@@ -315,7 +332,7 @@ impl QueueBackend for SqliteQueue {
                 "UPDATE tasks SET status = 'queued', last_error = ?1, updated_at = ?2 WHERE id = ?3",
                 params![error, now, task_id],
             )
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
             drop(conn);
             self.notify.notify_one();
@@ -324,7 +341,7 @@ impl QueueBackend for SqliteQueue {
                 "UPDATE tasks SET status = 'failed', last_error = ?1, updated_at = ?2 WHERE id = ?3",
                 params![error, now, task_id],
             )
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
         }
 
         Ok(())
@@ -356,7 +373,7 @@ impl QueueBackend for SqliteQueue {
                  WHERE id = ?2 AND status = 'queued'",
                 params![now, task_id],
             )
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
         Ok(updated > 0)
     }
@@ -366,7 +383,7 @@ impl QueueBackend for SqliteQueue {
 
         let mut stmt = conn
             .prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
         let mut stats = QueueStats::default();
         let rows = stmt
@@ -375,10 +392,10 @@ impl QueueBackend for SqliteQueue {
                 let count: i64 = row.get(1)?;
                 Ok((status, count as usize))
             })
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
         for row in rows {
-            let (status, count) = row.map_err(|e| QueueError::Backend(e.to_string()))?;
+            let (status, count) = row.backend_err()?;
             match status.as_str() {
                 "queued" => stats.queued = count,
                 "processing" => stats.processing = count,
@@ -407,19 +424,19 @@ impl QueueBackend for SqliteQueue {
                 .prepare(
                     "SELECT * FROM tasks WHERE status = ?1 ORDER BY created_at ASC LIMIT ?2",
                 )
-                .map_err(|e| QueueError::Backend(e.to_string()))?;
+                .backend_err()?;
             stmt.query_map(params![status_str, limit_i64], TaskRow::from_rusqlite_row)
-                .map_err(|e| QueueError::Backend(e.to_string()))?
+                .backend_err()?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| QueueError::Backend(e.to_string()))?
+                .backend_err()?
         } else {
             stmt = conn
                 .prepare("SELECT * FROM tasks ORDER BY created_at ASC LIMIT ?1")
-                .map_err(|e| QueueError::Backend(e.to_string()))?;
+                .backend_err()?;
             stmt.query_map(params![limit_i64], TaskRow::from_rusqlite_row)
-                .map_err(|e| QueueError::Backend(e.to_string()))?
+                .backend_err()?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| QueueError::Backend(e.to_string()))?
+                .backend_err()?
         };
 
         rows.iter()
@@ -435,7 +452,7 @@ impl QueueBackend for SqliteQueue {
                 "DELETE FROM tasks WHERE status IN ('completed', 'failed', 'cancelled')",
                 [],
             )
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
         Ok(deleted)
     }
@@ -449,7 +466,7 @@ impl QueueBackend for SqliteQueue {
                 "UPDATE tasks SET status = 'queued', updated_at = ?1 WHERE status = 'processing'",
                 params![now],
             )
-            .map_err(|e| QueueError::Backend(e.to_string()))?;
+            .backend_err()?;
 
         if recovered > 0 {
             drop(conn);
