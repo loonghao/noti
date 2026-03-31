@@ -5,6 +5,10 @@ use crate::error::QueueError;
 use crate::task::{NotificationTask, TaskId, TaskStatus};
 
 /// Statistics about the current queue state.
+///
+/// Counts reflect the number of tasks **currently tracked** in each state.
+/// After [`QueueBackend::purge_completed`] is called, terminal-state counters
+/// (completed, failed, cancelled) are reset to zero in all backends.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct QueueStats {
@@ -12,11 +16,11 @@ pub struct QueueStats {
     pub queued: usize,
     /// Number of tasks currently being processed.
     pub processing: usize,
-    /// Total tasks completed since the queue was created.
+    /// Number of completed tasks currently tracked.
     pub completed: usize,
-    /// Total tasks failed since the queue was created.
+    /// Number of failed tasks currently tracked.
     pub failed: usize,
-    /// Total tasks cancelled since the queue was created.
+    /// Number of cancelled tasks currently tracked.
     pub cancelled: usize,
 }
 

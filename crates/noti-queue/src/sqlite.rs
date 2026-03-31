@@ -669,6 +669,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sqlite_purge_completed_resets_stats_counters() {
+        let queue = SqliteQueue::in_memory().unwrap();
+
+        // Create three tasks: one completed, one failed, one cancelled
+        let id_a = queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
+        let id_b = queue
+            .enqueue(make_task("b", Priority::Normal).with_retry_policy(RetryPolicy::none()))
+            .await
+            .unwrap();
+        let id_c = queue
+            .enqueue(make_task("c", Priority::Normal))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_task("d", Priority::Normal))
+            .await
+            .unwrap();
+
+        // a → completed
+        queue.dequeue().await.unwrap();
+        queue.ack(&id_a).await.unwrap();
+
+        // b → failed (no retry)
+        queue.dequeue().await.unwrap();
+        queue.nack(&id_b, "error").await.unwrap();
+
+        // c → cancelled
+        queue.cancel(&id_c).await.unwrap();
+
+        // Before purge: terminal counters should be non-zero
+        let stats_before = queue.stats().await.unwrap();
+        assert_eq!(stats_before.completed, 1);
+        assert_eq!(stats_before.failed, 1);
+        assert_eq!(stats_before.cancelled, 1);
+        assert_eq!(stats_before.queued, 1); // d still queued
+
+        // Purge terminal tasks
+        let purged = queue.purge_completed().await.unwrap();
+        assert_eq!(purged, 3);
+
+        // After purge: terminal counters reset to 0, non-terminal unchanged
+        let stats_after = queue.stats().await.unwrap();
+        assert_eq!(stats_after.completed, 0);
+        assert_eq!(stats_after.failed, 0);
+        assert_eq!(stats_after.cancelled, 0);
+        assert_eq!(stats_after.queued, 1); // d still queued
+        assert_eq!(stats_after.processing, 0);
+    }
+
+    #[tokio::test]
     async fn test_sqlite_stats() {
         let queue = SqliteQueue::in_memory().unwrap();
 

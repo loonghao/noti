@@ -81,7 +81,7 @@ rounds or require coordination with the iteration agent.
 ## Code — Behavioral Issues (noti-queue)
 
 - [x] ~~`InMemoryQueue::dequeue()` does not skip cancelled tasks in heap — a task that is cancelled after enqueue but before dequeue will be dequeued and marked as Processing~~ — fixed: `dequeue()` now loops and checks current task status from the HashMap, skipping non-Queued entries; 3 new tests added
-- [ ] `InMemoryQueue::stats()` vs `SqliteQueue::stats()` semantic mismatch after `purge_completed()` — InMemoryQueue returns cumulative counters (purge doesn't decrement completed/failed/cancelled), SQLiteQueue returns actual row counts (purge removes rows so counts drop)
+- [x] ~~`InMemoryQueue::stats()` vs `SqliteQueue::stats()` semantic mismatch after `purge_completed()` — InMemoryQueue returns cumulative counters (purge doesn't decrement completed/failed/cancelled), SQLiteQueue returns actual row counts (purge removes rows so counts drop)~~ — fixed: `purge_completed()` now resets terminal counters to 0; QueueStats doc comments updated
 
 ## Code — Minor (noti-server)
 
