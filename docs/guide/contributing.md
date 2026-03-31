@@ -23,7 +23,7 @@ vx just run -- send --help   # Run CLI in dev mode
 ## Adding a New Provider
 
 1. Create a new file in `crates/noti-providers/src/` (e.g., `my_provider.rs`)
-2. Implement the `Provider` trait from `noti-core`
+2. Implement the `NotifyProvider` trait from `noti-core`
 3. Register the provider in `crates/noti-providers/src/lib.rs`
 4. Add URL parsing support in `crates/noti-core/src/url.rs`
 5. Add tests in `crates/noti-providers/tests/`
@@ -32,13 +32,15 @@ vx just run -- send --help   # Run CLI in dev mode
 
 ```rust
 #[async_trait]
-pub trait Provider: Send + Sync {
+pub trait NotifyProvider: Send + Sync {
     fn name(&self) -> &str;
+    fn url_scheme(&self) -> &str;
+    fn params(&self) -> Vec<ParamDef>;
     fn description(&self) -> &str;
-    fn scheme(&self) -> &str;
-    fn required_params(&self) -> Vec<&str>;
-    fn optional_params(&self) -> Vec<&str>;
-    async fn send(&self, message: &Message) -> Result<ProviderResponse, ProviderError>;
+    fn example_url(&self) -> &str;
+    fn supports_attachments(&self) -> bool { false }
+    fn validate_config(&self, config: &ProviderConfig) -> Result<(), NotiError>;
+    async fn send(&self, message: &Message, config: &ProviderConfig) -> Result<SendResponse, NotiError>;
 }
 ```
 

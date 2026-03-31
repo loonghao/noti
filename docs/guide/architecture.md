@@ -76,6 +76,8 @@ REST API server for the noti notification service:
 - **Request ID middleware** — UUID tracking for every request
 - **Structured logging** — text or JSON log format with automatic request ID correlation
 - **Metrics endpoint** — operational metrics for monitoring
+- **Health check** — dependency-aware `/health` endpoint (queue + providers status, uptime)
+- **Configurable CORS** — `NOTI_CORS_ALLOWED_ORIGINS` for cross-origin control
 - **OpenAPI / Swagger UI** — auto-generated API docs at `/swagger-ui`
 
 ## Technology Stack
@@ -91,5 +93,8 @@ REST API server for the noti notification service:
 | API docs | utoipa + utoipa-swagger-ui |
 | Observability | tracing + tracing-subscriber |
 | Serialization | serde / serde_json |
+| Persistent storage | rusqlite 0.34 (bundled SQLite) |
+| HTTP middleware | tower-http 0.6 (CORS, tracing) |
+| Validation | validator 0.19 |
 | Testing | rstest, assert_cmd, wiremock |
 | Task runner | just (via vx) |
