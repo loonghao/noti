@@ -45,7 +45,7 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`sqlite.rs` `list_tasks` — duplicated iteration logic across if/else branches~~ — simplified with collect (112ce6f)
 - [x] ~~`sqlite.rs` — 14× repeated `.map_err(|e| QueueError::Backend(e.to_string()))` pattern — consider helper trait/function~~ — introduced `SqliteResultExt` and `SerdeResultExt` traits with `.backend_err()` / `.serde_err()` methods
 - [x] ~~`sqlite.rs` `str_to_status` — silently falls back to `Queued` for unknown status values, should log warning~~ — added explicit `"queued"` match arm and `tracing::warn!` on unknown values
-- [ ] `state.rs` `new()` vs `with_queue_backend()` — API inconsistency (one always succeeds, other can panic)
+- [x] ~~`state.rs` `new()` vs `with_queue_backend()` — API inconsistency (one always succeeds, other can panic)~~ — `with_queue_backend()` now returns `Result<Self, QueueError>` (f6d21dd)
 
 ## Code — QueueStats → StatsResponse Duplication (noti-server)
 
@@ -55,8 +55,24 @@ rounds or require coordination with the iteration agent.
 
 ## Documentation — Missing Features
 
-- [ ] `docs/guide/architecture.md` — noti-queue section missing "stale task recovery" feature (code: `QueueBackend::recover_stale_tasks()` + `AppState::with_queue_backend()`)
-- [ ] `docs/guide/contributing.md` — missing `vx just build-server`, `vx just docs-dev`, `vx just docs-build`, `vx just docs-preview` commands
+- [x] ~~`docs/guide/architecture.md` — noti-queue section missing "stale task recovery" feature~~ — added (f6d21dd)
+- [x] ~~`docs/guide/contributing.md` — missing `vx just build-server`, `vx just docs-dev`, `vx just docs-build`, `vx just docs-preview` commands~~ — added (f6d21dd)
+
+## Documentation — Fixed This Cleanup Round
+
+- [x] ~~`docs/guide/architecture.md` — `Provider` trait / `Registry` should be `NotifyProvider` / `ProviderRegistry`~~ — fixed (a2d4b08)
+- [x] ~~`docs/guide/contributing.md` — CI command comment says "fmt" but actual recipe uses "fmt-check"~~ — fixed (a2d4b08)
+- [x] ~~`docs/.vitepress/config.mts` — nav version shows v0.1.2 but Cargo.toml is v0.1.3~~ — fixed (a2d4b08)
+
+## Documentation — Remaining
+
+- [ ] `docs/guide/what-is-noti.md:38` — same `Provider trait, Registry` naming issue (should be `NotifyProvider`, `ProviderRegistry`)
+
+## Tests — Deferred Deduplication
+
+- [ ] `url_parse_test.rs` is a strict subset of `url_parse_comprehensive_test.rs` — consider removing
+- [ ] `provider_test.rs:test_message_builder` duplicates `core_types_test.rs:test_message_builder_chain`
+- [ ] `provider_test.rs:test_provider_config_builder` duplicates `core_types_test.rs:test_provider_config_set_and_get` + `require` tests
 
 ## Build
 
