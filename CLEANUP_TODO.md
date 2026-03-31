@@ -86,7 +86,9 @@ rounds or require coordination with the iteration agent.
 ## Code — Minor (noti-server)
 
 - [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
-- [ ] `e2e_test.rs`: `spawn_server()` + `reqwest::Client::new()` boilerplate repeated 16 times — consider extracting helper returning `(String, Client)` tuple
+- [ ] `e2e_test.rs`: 6 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper
+- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 39 times — each spawn_server variant should return `(String, Client)` tuple
+- [ ] `e2e_test.rs`: `spawn_server_with_body_limit` and `spawn_server_with_request_id` defined mid-file (lines 905, 1020) — consolidate all spawn helpers at file top
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
