@@ -14,6 +14,7 @@
 //! | `NOTI_RATE_LIMIT_PER_IP` | `true` | Per-IP rate limiting |
 //! | `NOTI_WORKER_COUNT` | `4` | Number of background queue workers |
 //! | `NOTI_LOG_LEVEL` | `info` | Tracing log level filter |
+//! | `NOTI_MAX_BODY_SIZE` | `2097152` | Max request body size in bytes (default 2 MiB) |
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -37,7 +38,12 @@ pub struct ServerConfig {
     pub worker_count: usize,
     /// Log-level filter string.
     pub log_level: String,
+    /// Maximum request body size in bytes.
+    pub max_body_size: usize,
 }
+
+/// Default max body size: 2 MiB.
+const DEFAULT_MAX_BODY_SIZE: usize = 2 * 1024 * 1024;
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -48,6 +54,7 @@ impl Default for ServerConfig {
             rate_limit: RateLimitConfig::new(100, Duration::from_secs(60)).with_per_ip(true),
             worker_count: 4,
             log_level: "info".to_string(),
+            max_body_size: DEFAULT_MAX_BODY_SIZE,
         }
     }
 }
@@ -93,6 +100,11 @@ impl ServerConfig {
 
         let log_level = env::var("NOTI_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
+        let max_body_size = env::var("NOTI_MAX_BODY_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MAX_BODY_SIZE);
+
         Self {
             host,
             port,
@@ -100,6 +112,7 @@ impl ServerConfig {
             rate_limit,
             worker_count,
             log_level,
+            max_body_size,
         }
     }
 

@@ -1,8 +1,11 @@
+use axum::extract::DefaultBodyLimit;
+
 use noti_core::ProviderRegistry;
 use noti_queue::WorkerConfig;
 use noti_server::config::ServerConfig;
 use noti_server::middleware::auth::{AuthState, auth_middleware};
 use noti_server::middleware::rate_limit::{RateLimiterState, rate_limit_middleware};
+use noti_server::middleware::request_id::request_id_middleware;
 use noti_server::state::AppState;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -53,8 +56,9 @@ async fn main() {
     tracing::info!("rate limiter enabled");
 
     // Build application with middleware stack (outermost first)
-    // Order: CORS → Trace → Auth → Rate-limit → Router
+    // Order: CORS → Trace → RequestId → Auth → Rate-limit → BodyLimit → Router
     let app = noti_server::routes::build_router(state)
+        .layer(DefaultBodyLimit::max(config.max_body_size))
         .layer(axum::middleware::from_fn_with_state(
             rate_limiter,
             rate_limit_middleware,
@@ -63,6 +67,7 @@ async fn main() {
             auth_state,
             auth_middleware,
         ))
+        .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
