@@ -31,6 +31,7 @@ noti send [OPTIONS] --message <MESSAGE>
 | `--message <TEXT>` | **Required.** Message body |
 | `--title <TEXT>` | Message title/subject |
 | `--format <FORMAT>` | Message format: `text`, `markdown`, `html` |
+| `--priority <PRIORITY>` | Message priority: `low`, `normal`, `high`, `urgent` (default: `normal`) |
 | `--file <PATH>`, `-f` | File attachment (repeatable). Auto-detects MIME type. |
 | `--timeout <SECONDS>` | Request timeout in seconds (default: 30) |
 

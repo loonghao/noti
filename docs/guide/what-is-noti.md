@@ -29,14 +29,16 @@ noti send --to "tg://<bot>/<chat>" --message "Alert: CPU > 90%"
 
 ## Architecture
 
-noti is organized as a Rust workspace with three crates:
+noti is organized as a Rust workspace with five crates:
 
 ```
 noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary — argument parsing, output formatting
 │   ├── noti-core/       # Core abstractions — Provider trait, Registry, URL parsing
-│   └── noti-providers/  # 125 provider implementations (one file each)
+│   ├── noti-providers/  # 125 provider implementations (one file each)
+│   ├── noti-queue/      # Async message queue — background task processing
+│   └── noti-server/     # REST API server — HTTP endpoints, middleware
 ├── scripts/             # Install scripts (bash, PowerShell) & utilities
 ├── skills/              # OpenClaw skill definitions
 └── justfile             # Task runner recipes (via vx)

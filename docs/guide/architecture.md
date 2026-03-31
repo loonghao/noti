@@ -1,6 +1,6 @@
 # Architecture
 
-noti is organized as a Rust workspace with three crates, each with a focused responsibility.
+noti is organized as a Rust workspace with five crates, each with a focused responsibility.
 
 ## Project Structure
 
@@ -9,7 +9,9 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary
 │   ├── noti-core/       # Core abstractions
-│   └── noti-providers/  # 125 provider implementations
+│   ├── noti-providers/  # 125 provider implementations
+│   ├── noti-queue/      # Async message queue for background processing
+│   └── noti-server/     # REST API server
 ├── docs/                # VitePress documentation (this site)
 ├── scripts/             # Install scripts & utilities
 ├── skills/              # OpenClaw skill definitions
@@ -34,6 +36,11 @@ Core abstractions shared across the workspace:
 - **`Registry`** — provider discovery and instantiation
 - **`URL parsing`** — universal `provider://credentials` scheme parser
 - **`Config`** — profile management and TOML persistence
+- **`Message templates`** — variable substitution with `{{placeholder}}` syntax
+- **`Retry policies`** — configurable retry with fixed/exponential backoff
+- **`Batch & failover sending`** — multi-target parallel or sequential delivery
+- **`Delivery status tracking`** — per-notification delivery state machine
+- **`Priority system`** — low, normal, high, urgent message priorities
 - **`Error types`** — structured error handling
 
 ### `noti-providers`
@@ -44,6 +51,28 @@ All 125 provider implementations, one file per provider. Each provider:
 2. Registers itself with the `Registry`
 3. Parses its URL scheme format
 4. Sends the notification via the provider's API
+
+### `noti-queue`
+
+Async message queue for background notification processing:
+
+- **Priority-based queue** — tasks ordered by priority level
+- **In-memory backend** — `InMemoryQueue` with configurable capacity
+- **Worker pool** — concurrent workers dequeue and deliver notifications
+- **Webhook callbacks** — HTTP POST on task completion or failure
+- **Task lifecycle** — queued → processing → completed/failed/cancelled
+
+### `noti-server`
+
+REST API server for the noti notification service:
+
+- **Axum-based HTTP server** — sync and async send endpoints
+- **Queue management API** — enqueue, list, cancel, purge tasks
+- **Template CRUD** — create, read, update, delete message templates
+- **Rate limiting** — token-bucket per-IP or global rate limiting
+- **API key authentication** — Bearer token and X-API-Key header support
+- **Request ID middleware** — UUID tracking for every request
+- **Metrics endpoint** — operational metrics for monitoring
 
 ## Technology Stack
 

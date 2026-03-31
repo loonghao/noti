@@ -18,7 +18,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Crates](https://img.shields.io/badge/crates-3_workspace-blue?style=flat-square&logo=rust)](https://github.com/loonghao/noti)
+[![Crates](https://img.shields.io/badge/crates-5_workspace-blue?style=flat-square&logo=rust)](https://github.com/loonghao/noti)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/loonghao/noti/pulls)
 [![GitHub Stars](https://img.shields.io/github/stars/loonghao/noti?style=flat-square&logo=github)](https://github.com/loonghao/noti/stargazers)
 
@@ -474,7 +474,9 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary — argument parsing, output formatting
 │   ├── noti-core/       # Core abstractions — Provider trait, Registry, URL parsing
-│   └── noti-providers/  # 125 provider implementations
+│   ├── noti-providers/  # 125 provider implementations
+│   ├── noti-queue/      # Async message queue — background task processing
+│   └── noti-server/     # REST API server — HTTP endpoints, middleware
 ├── docs/                # VitePress documentation site
 ├── scripts/             # Install scripts (bash, PowerShell) & utilities
 ├── skills/              # OpenClaw skill definitions

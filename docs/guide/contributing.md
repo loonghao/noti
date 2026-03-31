@@ -52,6 +52,8 @@ vx just test
 vx cargo test -p noti-core
 vx cargo test -p noti-providers
 vx cargo test -p noti-cli
+vx cargo test -p noti-queue
+vx cargo test -p noti-server
 ```
 
 ## Code Style
