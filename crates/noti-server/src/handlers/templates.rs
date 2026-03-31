@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use noti_core::MessageTemplate;
 
+use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Request body for creating a template.
@@ -78,7 +79,7 @@ pub struct DeleteTemplateResponse {
 pub async fn create_template(
     State(state): State<AppState>,
     Json(req): Json<CreateTemplateRequest>,
-) -> Result<(StatusCode, Json<TemplateResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<TemplateResponse>), ApiError> {
     let mut template = MessageTemplate::new(&req.name, &req.body);
 
     if let Some(title) = &req.title {
@@ -126,16 +127,11 @@ pub async fn list_templates(State(state): State<AppState>) -> Json<TemplateListR
 pub async fn get_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<TemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<TemplateResponse>, ApiError> {
     let registry = state.template_registry.read().await;
-    let template = registry.get(&name).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("template '{}' not found", name)
-            })),
-        )
-    })?;
+    let template = registry
+        .get(&name)
+        .ok_or_else(|| ApiError::not_found(format!("template '{}' not found", name)))?;
 
     Ok(Json(TemplateResponse {
         name: template.name.clone(),
@@ -151,22 +147,14 @@ pub async fn render_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(req): Json<RenderTemplateRequest>,
-) -> Result<Json<RenderedTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<RenderedTemplateResponse>, ApiError> {
     let registry = state.template_registry.read().await;
-    let template = registry.get(&name).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("template '{}' not found", name)
-            })),
-        )
-    })?;
+    let template = registry
+        .get(&name)
+        .ok_or_else(|| ApiError::not_found(format!("template '{}' not found", name)))?;
 
     if let Err(e) = template.validate_vars(&req.variables) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ));
+        return Err(ApiError::bad_request(e.to_string()));
     }
 
     let text = template.render_body(&req.variables);
@@ -180,17 +168,12 @@ pub async fn update_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Json(req): Json<UpdateTemplateRequest>,
-) -> Result<Json<TemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<TemplateResponse>, ApiError> {
     let mut registry = state.template_registry.write().await;
 
-    let existing = registry.get(&name).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("template '{}' not found", name)
-            })),
-        )
-    })?;
+    let existing = registry
+        .get(&name)
+        .ok_or_else(|| ApiError::not_found(format!("template '{}' not found", name)))?;
 
     // Build updated template
     let new_body = req.body.as_deref().unwrap_or(&existing.body);
@@ -228,7 +211,7 @@ pub async fn update_template(
 pub async fn delete_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<DeleteTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<DeleteTemplateResponse>, ApiError> {
     let mut registry = state.template_registry.write().await;
 
     match registry.remove(&name) {
@@ -237,12 +220,9 @@ pub async fn delete_template(
             deleted: true,
             message: "Template deleted successfully".to_string(),
         })),
-        None => Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("template '{}' not found", name)
-            })),
-        )),
+        None => Err(ApiError::not_found(format!(
+            "template '{}' not found",
+            name
+        ))),
     }
 }
-

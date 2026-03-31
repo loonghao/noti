@@ -9,6 +9,7 @@ use noti_core::{ProviderConfig, RetryPolicy};
 use noti_queue::{NotificationTask, QueueStats, TaskStatus};
 
 use crate::handlers::common::{self, RetryConfig};
+use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 // ───────────────────── Request types ─────────────────────
@@ -194,15 +195,16 @@ fn parse_task_status(s: &str) -> Option<TaskStatus> {
     }
 }
 
-fn queue_error_response(e: noti_queue::QueueError) -> (StatusCode, Json<serde_json::Value>) {
-    let (status, msg) = match &e {
-        noti_queue::QueueError::QueueFull { .. } => {
-            (StatusCode::SERVICE_UNAVAILABLE, e.to_string())
-        }
-        noti_queue::QueueError::NotFound(_) => (StatusCode::NOT_FOUND, e.to_string()),
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    (status, Json(serde_json::json!({ "error": msg })))
+fn queue_error(e: noti_queue::QueueError) -> ApiError {
+    match &e {
+        noti_queue::QueueError::QueueFull { .. } => ApiError {
+            error: "queue_full".to_string(),
+            message: e.to_string(),
+            status: StatusCode::SERVICE_UNAVAILABLE,
+        },
+        noti_queue::QueueError::NotFound(_) => ApiError::not_found(e.to_string()),
+        _ => ApiError::internal(e.to_string()),
+    }
 }
 
 // ───────────────────── Handlers ─────────────────────
@@ -211,16 +213,12 @@ fn queue_error_response(e: noti_queue::QueueError) -> (StatusCode, Json<serde_js
 pub async fn send_async(
     State(state): State<AppState>,
     Json(req): Json<AsyncSendRequest>,
-) -> Result<(StatusCode, Json<EnqueueResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<EnqueueResponse>), ApiError> {
     // Validate provider exists
-    let _provider = state.registry.get_by_name(&req.provider).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("provider '{}' not found", req.provider)
-            })),
-        )
-    })?;
+    let _provider = state
+        .registry
+        .get_by_name(&req.provider)
+        .ok_or_else(|| ApiError::not_found(format!("provider '{}' not found", req.provider)))?;
 
     let config = ProviderConfig {
         values: req.config,
@@ -251,7 +249,7 @@ pub async fn send_async(
         .queue
         .enqueue(task)
         .await
-        .map_err(queue_error_response)?;
+        .map_err(queue_error)?;
 
     Ok((
         StatusCode::ACCEPTED,
@@ -267,14 +265,9 @@ pub async fn send_async(
 pub async fn send_async_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchAsyncRequest>,
-) -> Result<(StatusCode, Json<BatchEnqueueResponse>), (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<BatchEnqueueResponse>), ApiError> {
     if req.items.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": "items array must not be empty"
-            })),
-        ));
+        return Err(ApiError::bad_request("items array must not be empty"));
     }
 
     let total = req.items.len();
@@ -360,20 +353,13 @@ pub async fn send_async_batch(
 pub async fn get_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
-) -> Result<Json<TaskInfo>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<TaskInfo>, ApiError> {
     let task = state
         .queue
         .get_task(&task_id)
         .await
-        .map_err(queue_error_response)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "error": format!("task '{}' not found", task_id)
-                })),
-            )
-        })?;
+        .map_err(queue_error)?
+        .ok_or_else(|| ApiError::not_found(format!("task '{}' not found", task_id)))?;
 
     Ok(Json(task_to_info(&task)))
 }
@@ -382,7 +368,7 @@ pub async fn get_task(
 pub async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<ListTasksQuery>,
-) -> Result<Json<Vec<TaskInfo>>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Vec<TaskInfo>>, ApiError> {
     let status_filter = query
         .status
         .as_deref()
@@ -394,7 +380,7 @@ pub async fn list_tasks(
         .queue
         .list_tasks(status_filter, limit)
         .await
-        .map_err(queue_error_response)?;
+        .map_err(queue_error)?;
 
     let infos: Vec<TaskInfo> = tasks.iter().map(task_to_info).collect();
     Ok(Json(infos))
@@ -403,8 +389,8 @@ pub async fn list_tasks(
 /// GET /api/v1/queue/stats — Get queue statistics.
 pub async fn get_stats(
     State(state): State<AppState>,
-) -> Result<Json<StatsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let stats: QueueStats = state.queue.stats().await.map_err(queue_error_response)?;
+) -> Result<Json<StatsResponse>, ApiError> {
+    let stats: QueueStats = state.queue.stats().await.map_err(queue_error)?;
 
     Ok(Json(StatsResponse {
         queued: stats.queued,
@@ -420,12 +406,12 @@ pub async fn get_stats(
 pub async fn cancel_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
-) -> Result<Json<CancelResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<CancelResponse>, ApiError> {
     let cancelled = state
         .queue
         .cancel(&task_id)
         .await
-        .map_err(queue_error_response)?;
+        .map_err(queue_error)?;
 
     let message = if cancelled {
         "Task cancelled successfully".to_string()
@@ -443,12 +429,12 @@ pub async fn cancel_task(
 /// POST /api/v1/queue/purge — Purge completed/failed/cancelled tasks.
 pub async fn purge_tasks(
     State(state): State<AppState>,
-) -> Result<Json<PurgeResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<PurgeResponse>, ApiError> {
     let purged = state
         .queue
         .purge_completed()
         .await
-        .map_err(queue_error_response)?;
+        .map_err(queue_error)?;
 
     Ok(Json(PurgeResponse {
         purged,
@@ -575,7 +561,8 @@ mod tests {
         resp.assert_status(StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["error"], "items array must not be empty");
+        assert_eq!(body["error"], "bad_request");
+        assert_eq!(body["message"], "items array must not be empty");
     }
 
     #[tokio::test]

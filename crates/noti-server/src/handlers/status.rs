@@ -1,10 +1,10 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use serde::Serialize;
 
 use noti_core::{DeliveryRecord, StatusSummary};
 
+use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Response for a single notification's delivery records.
@@ -26,16 +26,14 @@ pub struct AllStatusesResponse {
 pub async fn get_status(
     State(state): State<AppState>,
     Path(notification_id): Path<String>,
-) -> Result<Json<StatusResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<StatusResponse>, ApiError> {
     let records = state.status_tracker.get_records(&notification_id).await;
 
     if records.is_empty() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("notification '{}' not found", notification_id)
-            })),
-        ));
+        return Err(ApiError::not_found(format!(
+            "notification '{}' not found",
+            notification_id
+        )));
     }
 
     Ok(Json(StatusResponse {

@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use noti_core::{DeliveryStatus, ProviderConfig, RetryPolicy, SendResponse};
 
 use crate::handlers::common::{self, RetryConfig};
+use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Request body for sending a single notification.
@@ -119,25 +119,18 @@ pub struct TargetApiResult {
 pub async fn send_notification(
     State(state): State<AppState>,
     Json(req): Json<SendRequest>,
-) -> Result<Json<SendApiResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let provider = state.registry.get_by_name(&req.provider).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("provider '{}' not found", req.provider)
-            })),
-        )
-    })?;
+) -> Result<Json<SendApiResponse>, ApiError> {
+    let provider = state
+        .registry
+        .get_by_name(&req.provider)
+        .ok_or_else(|| ApiError::not_found(format!("provider '{}' not found", req.provider)))?;
 
     let config = ProviderConfig {
         values: req.config,
     };
 
     if let Err(e) = provider.validate_config(&config) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ));
+        return Err(ApiError::bad_request(e.to_string()));
     }
 
     let msg = common::build_message(
@@ -222,24 +215,18 @@ pub async fn send_notification(
 pub async fn send_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchSendRequest>,
-) -> Result<Json<BatchSendApiResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<BatchSendApiResponse>, ApiError> {
     // Validate all providers exist
     let mut providers = Vec::new();
     let mut configs = Vec::new();
 
     for target in &req.targets {
-        let provider =
-            state
-                .registry
-                .get_by_name(&target.provider)
-                .ok_or_else(|| {
-                    (
-                        StatusCode::NOT_FOUND,
-                        Json(serde_json::json!({
-                            "error": format!("provider '{}' not found", target.provider)
-                        })),
-                    )
-                })?;
+        let provider = state
+            .registry
+            .get_by_name(&target.provider)
+            .ok_or_else(|| {
+                ApiError::not_found(format!("provider '{}' not found", target.provider))
+            })?;
         providers.push(provider.clone());
         configs.push(ProviderConfig {
             values: target.config.clone(),

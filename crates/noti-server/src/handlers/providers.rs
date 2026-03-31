@@ -1,8 +1,8 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use serde::Serialize;
 
+use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Provider summary info.
@@ -65,15 +65,11 @@ pub async fn list_providers(State(state): State<AppState>) -> Json<ProviderListR
 pub async fn get_provider(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<ProviderInfo>, (StatusCode, Json<serde_json::Value>)> {
-    let provider = state.registry.get_by_name(&name).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": format!("provider '{}' not found", name)
-            })),
-        )
-    })?;
+) -> Result<Json<ProviderInfo>, ApiError> {
+    let provider = state
+        .registry
+        .get_by_name(&name)
+        .ok_or_else(|| ApiError::not_found(format!("provider '{}' not found", name)))?;
 
     let params = provider
         .params()
