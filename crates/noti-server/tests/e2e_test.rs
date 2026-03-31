@@ -3,135 +3,25 @@
 //! Unlike the `server_test.rs` tests which use `axum_test::TestServer` (in-process),
 //! these tests bind to a random port and exercise the full HTTP stack, including
 //! TCP transport and header serialization.
+//!
+//! Shared helpers (spawn_server*, mock providers, callback infrastructure) live in
+//! `tests/common/mod.rs` to avoid duplication across test files.
 
-use std::net::SocketAddr;
+mod common;
+
+use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::DefaultBodyLimit;
-use noti_core::ProviderRegistry;
-use noti_server::middleware::auth::{AuthConfig, AuthState, auth_middleware};
-use noti_server::middleware::rate_limit::{
-    RateLimitConfig, RateLimiterState, rate_limit_middleware,
+use common::{
+    MockFlakyProvider, MockOkProvider, spawn_callback_server, spawn_server, spawn_server_with_auth,
+    spawn_server_with_body_limit, spawn_server_with_cors_permissive,
+    spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
+    spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
+    spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_serial,
+    wait_for_terminal_status,
 };
-use noti_server::middleware::request_id::request_id_middleware;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
-
-/// Start a real HTTP server on a random port and return the base URL.
-async fn spawn_server() -> String {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    format!("http://{addr}")
-}
-
-/// Start a server with auth middleware enabled.
-/// Returns (base_url, valid_api_keys).
-async fn spawn_server_with_auth(api_keys: Vec<String>) -> (String, Vec<String>) {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let auth_config = AuthConfig::new(api_keys.clone());
-    let auth_state = AuthState::new(auth_config);
-
-    let app = noti_server::routes::build_router(state).layer(axum::middleware::from_fn_with_state(
-        auth_state,
-        auth_middleware,
-    ));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), api_keys)
-}
-
-/// Start a server with rate limit middleware enabled (global mode).
-/// Returns (base_url, max_requests).
-async fn spawn_server_with_rate_limit(max_requests: u64, window_secs: u64) -> (String, u64) {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let rate_config =
-        RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
-    let rate_state = RateLimiterState::new(rate_config);
-
-    let app = noti_server::routes::build_router(state).layer(axum::middleware::from_fn_with_state(
-        rate_state,
-        rate_limit_middleware,
-    ));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), max_requests)
-}
-
-/// Start a server with both auth and rate limit middleware (production-like stack).
-/// Middleware order: Auth → Rate-limit → BodyLimit → Router
-async fn spawn_server_with_full_middleware(
-    api_keys: Vec<String>,
-    max_requests: u64,
-    window_secs: u64,
-) -> (String, Vec<String>) {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let auth_config = AuthConfig::new(api_keys.clone());
-    let auth_state = AuthState::new(auth_config);
-    let rate_config =
-        RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
-    let rate_state = RateLimiterState::new(rate_config);
-
-    let app = noti_server::routes::build_router(state)
-        .layer(DefaultBodyLimit::max(1024 * 1024))
-        .layer(axum::middleware::from_fn_with_state(
-            rate_state,
-            rate_limit_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_state,
-            auth_middleware,
-        ));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), api_keys)
-}
 
 // ───────────────────── Health & Meta ─────────────────────
 
@@ -901,27 +791,6 @@ async fn e2e_full_middleware_exhausts_rate_limit() {
 
 // ───────────────────── Body size limit middleware (e2e) ─────────────────────
 
-/// Start a server with a custom body size limit.
-/// Returns (base_url, max_bytes).
-async fn spawn_server_with_body_limit(max_bytes: usize) -> (String, usize) {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state).layer(DefaultBodyLimit::max(max_bytes));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), max_bytes)
-}
-
 #[tokio::test]
 async fn e2e_body_limit_small_body_accepted() {
     // Set a 1 KiB limit — small JSON payloads should be accepted
@@ -1016,27 +885,6 @@ async fn e2e_body_limit_exact_boundary() {
 }
 
 // ───────────────────── Request ID middleware (e2e) ─────────────────────
-
-/// Start a server with request ID middleware enabled.
-async fn spawn_server_with_request_id() -> String {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state)
-        .layer(axum::middleware::from_fn(request_id_middleware));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    format!("http://{addr}")
-}
 
 #[tokio::test]
 async fn e2e_request_id_generated_when_absent() {
@@ -1155,60 +1003,6 @@ async fn e2e_request_id_present_on_error_responses() {
 }
 
 // ───────────────────── CORS middleware (e2e) ─────────────────────
-
-/// Start a server with permissive CORS (allow all origins).
-async fn spawn_server_with_cors_permissive() -> String {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let cors_layer = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = noti_server::routes::build_router(state).layer(cors_layer);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    format!("http://{addr}")
-}
-
-/// Start a server with restricted CORS (only specified origins allowed).
-async fn spawn_server_with_cors_restricted(allowed_origins: Vec<String>) -> String {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let origins: Vec<axum::http::HeaderValue> = allowed_origins
-        .iter()
-        .filter_map(|o| o.parse().ok())
-        .collect();
-    let cors_layer = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(origins))
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    let app = noti_server::routes::build_router(state).layer(cors_layer);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    format!("http://{addr}")
-}
 
 #[tokio::test]
 async fn e2e_cors_permissive_allows_any_origin() {
@@ -1570,166 +1364,6 @@ async fn e2e_validated_json_valid_request_passes_validation() {
 }
 
 // ───────────────────── Worker processing & Webhook callback (e2e) ─────────────────────
-
-use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
-
-use async_trait::async_trait;
-use axum::Router;
-use axum::routing::post as axum_post;
-
-/// A mock provider that always succeeds.
-struct MockOkProvider;
-
-#[async_trait]
-impl noti_core::NotifyProvider for MockOkProvider {
-    fn name(&self) -> &str {
-        "mock-ok"
-    }
-    fn url_scheme(&self) -> &str {
-        "mock-ok"
-    }
-    fn params(&self) -> Vec<noti_core::ParamDef> {
-        vec![]
-    }
-    fn description(&self) -> &str {
-        "always succeeds"
-    }
-    fn example_url(&self) -> &str {
-        "mock-ok://test"
-    }
-    async fn send(
-        &self,
-        _message: &noti_core::Message,
-        _config: &noti_core::ProviderConfig,
-    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
-        Ok(noti_core::SendResponse::success("mock-ok", "ok"))
-    }
-}
-
-/// A mock provider that always fails (returns an error).
-struct MockFailProvider;
-
-#[async_trait]
-impl noti_core::NotifyProvider for MockFailProvider {
-    fn name(&self) -> &str {
-        "mock-fail"
-    }
-    fn url_scheme(&self) -> &str {
-        "mock-fail"
-    }
-    fn params(&self) -> Vec<noti_core::ParamDef> {
-        vec![]
-    }
-    fn description(&self) -> &str {
-        "always fails"
-    }
-    fn example_url(&self) -> &str {
-        "mock-fail://test"
-    }
-    async fn send(
-        &self,
-        _message: &noti_core::Message,
-        _config: &noti_core::ProviderConfig,
-    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
-        Err(noti_core::NotiError::Network("simulated failure".into()))
-    }
-}
-
-/// Shared state for the mock callback receiver.
-#[derive(Clone)]
-struct CallbackReceiverState {
-    payloads: Arc<Mutex<Vec<Value>>>,
-}
-
-/// Handler that records incoming callback payloads.
-async fn callback_handler(
-    axum::extract::State(state): axum::extract::State<CallbackReceiverState>,
-    axum::Json(payload): axum::Json<Value>,
-) -> StatusCode {
-    state.payloads.lock().unwrap().push(payload);
-    StatusCode::OK
-}
-
-/// Start a mock HTTP server that records POST payloads at `/callback`.
-/// Returns (base_url, shared payloads).
-async fn spawn_callback_server() -> (String, Arc<Mutex<Vec<Value>>>) {
-    let payloads: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-    let state = CallbackReceiverState {
-        payloads: payloads.clone(),
-    };
-
-    let app = Router::new()
-        .route("/callback", axum_post(callback_handler))
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind callback server");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), payloads)
-}
-
-/// Start a noti server with mock providers and background workers enabled.
-/// Workers will actually process queued tasks.
-/// Returns (base_url, worker_handle).
-async fn spawn_server_with_workers() -> (String, noti_queue::WorkerHandle) {
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-    registry.register(Arc::new(MockFailProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(2)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    let app = noti_server::routes::build_router(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), worker_handle)
-}
-
-/// Helper: poll a task until it reaches a terminal state or timeout.
-async fn wait_for_terminal_status(client: &reqwest::Client, base: &str, task_id: &str) -> Value {
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(5);
-
-    loop {
-        let resp = client
-            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-            .send()
-            .await
-            .unwrap();
-        let body: Value = resp.json().await.unwrap();
-        let status = body["status"].as_str().unwrap_or("");
-
-        if matches!(status, "completed" | "failed" | "cancelled") {
-            return body;
-        }
-
-        if start.elapsed() > timeout {
-            panic!(
-                "task {task_id} did not reach terminal state within {timeout:?}, last status: {status}"
-            );
-        }
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
 
 #[tokio::test]
 async fn e2e_worker_processes_task_to_completion() {
@@ -2104,92 +1738,6 @@ async fn e2e_worker_task_with_metadata_preserved() {
 
 // ───────────────────── Priority ordering & Retry behavior (e2e) ─────────────────────
 
-/// A mock provider that fails the first N calls then succeeds.
-struct MockFlakyProvider {
-    fail_count: u32,
-    call_counter: AtomicU32,
-}
-
-impl MockFlakyProvider {
-    fn new(fail_count: u32) -> Self {
-        Self {
-            fail_count,
-            call_counter: AtomicU32::new(0),
-        }
-    }
-}
-
-#[async_trait]
-impl noti_core::NotifyProvider for MockFlakyProvider {
-    fn name(&self) -> &str {
-        "mock-flaky"
-    }
-    fn url_scheme(&self) -> &str {
-        "mock-flaky"
-    }
-    fn params(&self) -> Vec<noti_core::ParamDef> {
-        vec![]
-    }
-    fn description(&self) -> &str {
-        "fails first N calls then succeeds"
-    }
-    fn example_url(&self) -> &str {
-        "mock-flaky://test"
-    }
-    async fn send(
-        &self,
-        _message: &noti_core::Message,
-        _config: &noti_core::ProviderConfig,
-    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
-        let call = self.call_counter.fetch_add(1, AtomicOrdering::SeqCst);
-        if call < self.fail_count {
-            Err(noti_core::NotiError::Network(format!(
-                "flaky failure #{}",
-                call + 1
-            )))
-        } else {
-            Ok(noti_core::SendResponse::success(
-                "mock-flaky",
-                "ok after retries",
-            ))
-        }
-    }
-}
-
-/// Start a noti server with a single worker (serial processing) and all mock providers.
-/// The single worker ensures tasks are dequeued in strict priority order.
-/// Returns (base_url, worker_handle).
-async fn spawn_server_with_workers_serial(
-    extra_providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
-) -> (String, noti_queue::WorkerHandle) {
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-    registry.register(Arc::new(MockFailProvider));
-    for p in extra_providers {
-        registry.register(p);
-    }
-
-    let state = noti_server::state::AppState::new(registry);
-    // Single worker ensures sequential processing in priority order.
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    let app = noti_server::routes::build_router(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    (format!("http://{addr}"), worker_handle)
-}
-
 #[tokio::test]
 async fn e2e_priority_ordering_urgent_before_low() {
     // Enqueue tasks with different priorities on a server with NO workers,
@@ -2203,7 +1751,7 @@ async fn e2e_priority_ordering_urgent_before_low() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
 
     tokio::spawn(async move {
@@ -2275,7 +1823,7 @@ async fn e2e_priority_ordering_verified_by_completion_order() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
     let base = format!("http://{addr}");
 
     tokio::spawn(async move {
@@ -2572,40 +2120,6 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
 }
 
 // ───────────────────── Per-IP rate limiting (e2e) ─────────────────────
-
-/// Start a server with per-IP rate limiting enabled.
-/// Uses `into_make_service_with_connect_info` so `ConnectInfo` is populated.
-/// Returns (base_url, max_requests_per_ip).
-async fn spawn_server_with_rate_limit_per_ip(max_requests: u64, window_secs: u64) -> (String, u64) {
-    let mut registry = ProviderRegistry::new();
-    noti_providers::register_all_providers(&mut registry);
-
-    let state = noti_server::state::AppState::new(registry);
-    let rate_config =
-        RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(true);
-    let rate_state = RateLimiterState::new(rate_config);
-
-    let app = noti_server::routes::build_router(state).layer(axum::middleware::from_fn_with_state(
-        rate_state,
-        rate_limit_middleware,
-    ));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: SocketAddr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
-
-    (format!("http://{addr}"), max_requests)
-}
 
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_isolates_x_forwarded_for() {
