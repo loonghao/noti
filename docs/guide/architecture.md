@@ -73,6 +73,7 @@ REST API server for the noti notification service:
 - **API key authentication** — Bearer token and X-API-Key header support
 - **Request ID middleware** — UUID tracking for every request
 - **Metrics endpoint** — operational metrics for monitoring
+- **OpenAPI / Swagger UI** — auto-generated API docs at `/swagger-ui`
 
 ## Technology Stack
 
@@ -80,9 +81,11 @@ REST API server for the noti notification service:
 |:----------|:-----------|
 | Language | Rust 2024 edition (MSRV 1.85) |
 | CLI framework | clap 4.5 |
+| HTTP server | axum 0.8 |
 | HTTP client | reqwest 0.12 |
 | Async runtime | tokio 1.44 |
 | Email | lettre 0.11 |
+| API docs | utoipa + utoipa-swagger-ui |
 | Serialization | serde / serde_json |
 | Testing | rstest, assert_cmd, wiremock |
 | Task runner | just (via vx) |
