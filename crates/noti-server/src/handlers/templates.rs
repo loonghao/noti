@@ -47,11 +47,31 @@ pub struct RenderedTemplateResponse {
     pub title: Option<String>,
 }
 
+/// Request body for updating a template.
+#[derive(Debug, Deserialize)]
+pub struct UpdateTemplateRequest {
+    /// New template body with {{variable}} placeholders.
+    pub body: Option<String>,
+    /// New title template (set to null to remove).
+    pub title: Option<String>,
+    /// Default values to merge (existing defaults not mentioned are preserved).
+    #[serde(default)]
+    pub defaults: HashMap<String, String>,
+}
+
 /// Template list response.
 #[derive(Debug, Serialize)]
 pub struct TemplateListResponse {
     pub templates: Vec<String>,
     pub total: usize,
+}
+
+/// Response for deleting a template.
+#[derive(Debug, Serialize)]
+pub struct DeleteTemplateResponse {
+    pub name: String,
+    pub deleted: bool,
+    pub message: String,
 }
 
 /// POST /api/v1/templates — Create a new message template.
@@ -154,3 +174,75 @@ pub async fn render_template(
 
     Ok(Json(RenderedTemplateResponse { text, title }))
 }
+
+/// PUT /api/v1/templates/:name — Update an existing template.
+pub async fn update_template(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateTemplateRequest>,
+) -> Result<Json<TemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let mut registry = state.template_registry.write().await;
+
+    let existing = registry.get(&name).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("template '{}' not found", name)
+            })),
+        )
+    })?;
+
+    // Build updated template
+    let new_body = req.body.as_deref().unwrap_or(&existing.body);
+    let mut updated = MessageTemplate::new(&name, new_body);
+
+    // Handle title: use new if provided, otherwise keep existing
+    let new_title = req.title.as_deref().or(existing.title.as_deref());
+    if let Some(t) = new_title {
+        updated = updated.with_title(t);
+    }
+
+    // Merge defaults: start with existing, overwrite with new
+    let mut merged_defaults = existing.defaults.clone();
+    for (k, v) in &req.defaults {
+        merged_defaults.insert(k.clone(), v.clone());
+    }
+    for (k, v) in &merged_defaults {
+        updated = updated.with_default(k, v);
+    }
+
+    let response = TemplateResponse {
+        name: updated.name.clone(),
+        body: updated.body.clone(),
+        title: updated.title.clone(),
+        variables: updated.variables(),
+        defaults: updated.defaults.clone(),
+    };
+
+    registry.register(updated);
+
+    Ok(Json(response))
+}
+
+/// DELETE /api/v1/templates/:name — Delete a template.
+pub async fn delete_template(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<DeleteTemplateResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let mut registry = state.template_registry.write().await;
+
+    match registry.remove(&name) {
+        Some(_) => Ok(Json(DeleteTemplateResponse {
+            name,
+            deleted: true,
+            message: "Template deleted successfully".to_string(),
+        })),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("template '{}' not found", name)
+            })),
+        )),
+    }
+}
+

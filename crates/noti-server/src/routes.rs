@@ -31,7 +31,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/templates", get(handlers::templates::list_templates))
         .route(
             "/api/v1/templates/{name}",
-            get(handlers::templates::get_template),
+            get(handlers::templates::get_template)
+                .put(handlers::templates::update_template)
+                .delete(handlers::templates::delete_template),
         )
         .route(
             "/api/v1/templates/{name}/render",
