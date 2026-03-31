@@ -5,12 +5,12 @@ rounds or require coordination with the iteration agent.
 
 ## Documentation — Out of Date
 
-- [ ] README.md and README_zh.md architecture section says "3 crates" — actual is **5** (missing `noti-queue`, `noti-server`)
-- [ ] Badge in both READMEs: `3_workspace_crates` → should be `5_workspace_crates`
-- [ ] `docs/guide/architecture.md` — same "three crates" issue; project tree incomplete
-- [ ] `docs/guide/what-is-noti.md` — same "three crates" issue
-- [ ] `docs/guide/contributing.md` — test commands only list 3 crates; missing `noti-queue`, `noti-server`
-- [ ] `docs/reference/cli.md` — `send` command table missing `--priority` parameter (already implemented in CLI)
+- [x] ~~README.md and README_zh.md architecture section says "3 crates"~~ — updated to 5 crates with noti-queue and noti-server (dcef4e9)
+- [x] ~~Badge in both READMEs: `3_workspace_crates`~~ — updated to `5_workspace` (dcef4e9)
+- [x] ~~`docs/guide/architecture.md` — same "three crates" issue; project tree incomplete~~ — rewritten with all 5 crates and full descriptions (dcef4e9)
+- [x] ~~`docs/guide/what-is-noti.md` — same "three crates" issue~~ — updated to 5 crates (dcef4e9)
+- [x] ~~`docs/guide/contributing.md` — test commands only list 3 crates~~ — added noti-queue and noti-server (dcef4e9)
+- [x] ~~`docs/reference/cli.md` — `send` command table missing `--priority` parameter~~ — added (dcef4e9)
 - [ ] Core features not documented anywhere: message templates, retry policies, batch/failover sending, delivery status tracking, priority system
 
 ## Code — Structural Refactoring (noti-server)
@@ -19,7 +19,7 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`handlers/send.rs` and `handlers/queue.rs` share identical `RetryConfig` struct~~ — extracted to `handlers/common.rs` (293b523)
 - [x] ~~`build_retry_policy()` default behavior difference~~ — resolved: `common::build_retry_policy` now takes explicit `default_policy` param; `send.rs` passes `RetryPolicy::none()`, `queue.rs` passes `RetryPolicy::default()` (293b523)
 - [ ] "provider not found" error pattern repeated 4× across handlers — extract helper function
-- [ ] Consider defining a unified `ApiError` type implementing `IntoResponse` to replace `(StatusCode, Json<Value>)` pattern
+- [x] ~~Consider defining a unified `ApiError` type implementing `IntoResponse`~~ — implemented in `handlers/error.rs`, all handlers migrated (fd630be)
 - [x] ~~`health.rs` response type lacks `Debug` derive~~ — added (4efb813)
 - [ ] `BatchAsyncItem` and `AsyncSendRequest` share near-identical fields — consider shared base type
 - [ ] `StatsResponse` (queue.rs) and `QueueMetrics` (metrics.rs) have identical fields — unify
