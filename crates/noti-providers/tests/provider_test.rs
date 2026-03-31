@@ -1,4 +1,7 @@
-use noti_core::{Attachment, AttachmentKind, Message, MessageFormat, NotifyProvider, ProviderConfig};
+use noti_core::{
+    Attachment, AttachmentKind, Message, MessageFormat, NotifyProvider, ProviderConfig,
+};
+use noti_providers::apprise::AppriseProvider;
 use noti_providers::bluesky::BlueskyProvider;
 use noti_providers::dingtalk::DingTalkProvider;
 use noti_providers::discord::DiscordProvider;
@@ -19,7 +22,6 @@ use noti_providers::slack::SlackProvider;
 use noti_providers::telegram::TelegramProvider;
 use noti_providers::wecom::WeComProvider;
 use noti_providers::zulip::ZulipProvider;
-use noti_providers::apprise::AppriseProvider;
 use reqwest::Client;
 use rstest::rstest;
 
@@ -136,8 +138,7 @@ fn test_attachment_overrides() {
 
 #[rstest]
 fn test_message_with_attachment() {
-    let msg = Message::text("check this out")
-        .with_file("image.jpg");
+    let msg = Message::text("check this out").with_file("image.jpg");
 
     assert!(msg.has_attachments());
     assert_eq!(msg.attachments.len(), 1);

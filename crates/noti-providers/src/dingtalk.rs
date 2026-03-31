@@ -23,8 +23,7 @@ impl DingTalkProvider {
     }
 
     fn build_url(access_token: &str, secret: Option<&str>) -> String {
-        let mut url =
-            format!("https://oapi.dingtalk.com/robot/send?access_token={access_token}");
+        let mut url = format!("https://oapi.dingtalk.com/robot/send?access_token={access_token}");
 
         if let Some(secret) = secret {
             let timestamp = std::time::SystemTime::now()
@@ -72,9 +71,7 @@ impl DingTalkProvider {
         raw.get("access_token")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| {
-                NotiError::provider("dingtalk", "no access_token in response")
-            })
+            .ok_or_else(|| NotiError::provider("dingtalk", "no access_token in response"))
     }
 
     /// Upload media to DingTalk and return the media_id.
@@ -132,9 +129,7 @@ impl DingTalkProvider {
         raw.get("media_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| {
-                NotiError::provider("dingtalk", "no media_id in upload response")
-            })
+            .ok_or_else(|| NotiError::provider("dingtalk", "no media_id in upload response"))
     }
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
@@ -217,10 +212,8 @@ impl NotifyProvider for DingTalkProvider {
             if let (Some(app_key), Some(app_secret)) =
                 (config.get("app_key"), config.get("app_secret"))
             {
-                let token =
-                    Self::get_access_token(&self.client, app_key, app_secret).await?;
-                let media_id =
-                    Self::upload_media(&self.client, &token, img).await?;
+                let token = Self::get_access_token(&self.client, app_key, app_secret).await?;
+                let media_id = Self::upload_media(&self.client, &token, img).await?;
 
                 // Send as markdown with uploaded image reference
                 let title = message.title.as_deref().unwrap_or("Image");

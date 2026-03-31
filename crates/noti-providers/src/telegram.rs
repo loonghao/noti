@@ -127,9 +127,8 @@ impl TelegramProvider {
             last_response = Some(result);
         }
 
-        Ok(last_response.unwrap_or_else(|| {
-            SendResponse::success("telegram", "message sent successfully")
-        }))
+        Ok(last_response
+            .unwrap_or_else(|| SendResponse::success("telegram", "message sent successfully")))
     }
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {

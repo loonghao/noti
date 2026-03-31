@@ -320,7 +320,10 @@ mod tests {
         record.mark_failed("connection timeout");
         assert_eq!(record.current_status, DeliveryStatus::Failed);
         assert!(record.is_terminal());
-        assert_eq!(record.events.last().unwrap().detail.as_deref(), Some("connection timeout"));
+        assert_eq!(
+            record.events.last().unwrap().detail.as_deref(),
+            Some("connection timeout")
+        );
     }
 
     #[test]
@@ -445,7 +448,12 @@ mod tests {
             .update_status("n1", "slack", DeliveryStatus::Delivered, None)
             .await;
         tracker
-            .update_status("n1", "email", DeliveryStatus::Failed, Some("timeout".into()))
+            .update_status(
+                "n1",
+                "email",
+                DeliveryStatus::Failed,
+                Some("timeout".into()),
+            )
             .await;
 
         let summary = tracker.summary().await;
