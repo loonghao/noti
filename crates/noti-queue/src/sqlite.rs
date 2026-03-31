@@ -25,7 +25,7 @@ fn system_time_to_epoch_ms(t: SystemTime) -> i64 {
 }
 
 fn epoch_ms_to_system_time(ms: i64) -> SystemTime {
-    UNIX_EPOCH + Duration::from_millis(ms as u64)
+    UNIX_EPOCH + Duration::from_millis(ms.max(0) as u64)
 }
 
 fn status_to_str(s: &TaskStatus) -> &'static str {
@@ -398,43 +398,33 @@ impl QueueBackend for SqliteQueue {
         limit: usize,
     ) -> Result<Vec<NotificationTask>, QueueError> {
         let conn = self.conn.lock().await;
+        let limit_i64 = limit as i64;
 
-        let (sql, status_param) = match &status {
-            Some(s) => (
-                "SELECT * FROM tasks WHERE status = ?1 ORDER BY created_at ASC LIMIT ?2",
-                Some(status_to_str(s).to_string()),
-            ),
-            None => (
-                "SELECT * FROM tasks ORDER BY created_at ASC LIMIT ?2",
-                None,
-            ),
-        };
-
-        let mut tasks = Vec::new();
-
-        if let Some(ref s) = status_param {
-            let mut stmt = conn.prepare(sql).map_err(|e| QueueError::Backend(e.to_string()))?;
-            let rows = stmt
-                .query_map(params![s, limit as i64], TaskRow::from_rusqlite_row)
+        let mut stmt;
+        let rows: Vec<TaskRow> = if let Some(ref s) = status {
+            let status_str = status_to_str(s);
+            stmt = conn
+                .prepare(
+                    "SELECT * FROM tasks WHERE status = ?1 ORDER BY created_at ASC LIMIT ?2",
+                )
                 .map_err(|e| QueueError::Backend(e.to_string()))?;
-            for row in rows {
-                let r = row.map_err(|e| QueueError::Backend(e.to_string()))?;
-                tasks.push(Self::deserialize_task(&r)?);
-            }
+            stmt.query_map(params![status_str, limit_i64], TaskRow::from_rusqlite_row)
+                .map_err(|e| QueueError::Backend(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| QueueError::Backend(e.to_string()))?
         } else {
-            let mut stmt = conn
+            stmt = conn
                 .prepare("SELECT * FROM tasks ORDER BY created_at ASC LIMIT ?1")
                 .map_err(|e| QueueError::Backend(e.to_string()))?;
-            let rows = stmt
-                .query_map(params![limit as i64], TaskRow::from_rusqlite_row)
-                .map_err(|e| QueueError::Backend(e.to_string()))?;
-            for row in rows {
-                let r = row.map_err(|e| QueueError::Backend(e.to_string()))?;
-                tasks.push(Self::deserialize_task(&r)?);
-            }
-        }
+            stmt.query_map(params![limit_i64], TaskRow::from_rusqlite_row)
+                .map_err(|e| QueueError::Backend(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| QueueError::Backend(e.to_string()))?
+        };
 
-        Ok(tasks)
+        rows.iter()
+            .map(Self::deserialize_task)
+            .collect()
     }
 
     async fn purge_completed(&self) -> Result<usize, QueueError> {
