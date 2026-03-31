@@ -72,6 +72,7 @@ REST API server for the noti notification service:
 - **Rate limiting** — token-bucket per-IP or global rate limiting
 - **API key authentication** — Bearer token and X-API-Key header support
 - **Request ID middleware** — UUID tracking for every request
+- **Structured logging** — text or JSON log format with automatic request ID correlation
 - **Metrics endpoint** — operational metrics for monitoring
 - **OpenAPI / Swagger UI** — auto-generated API docs at `/swagger-ui`
 
@@ -86,6 +87,7 @@ REST API server for the noti notification service:
 | Async runtime | tokio 1.44 |
 | Email | lettre 0.11 |
 | API docs | utoipa + utoipa-swagger-ui |
+| Observability | tracing + tracing-subscriber |
 | Serialization | serde / serde_json |
 | Testing | rstest, assert_cmd, wiremock |
 | Task runner | just (via vx) |
