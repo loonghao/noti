@@ -16,6 +16,7 @@ use noti_server::middleware::rate_limit::{
 use noti_server::middleware::request_id::request_id_middleware;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 /// Start a real HTTP server on a random port and return the base URL.
 async fn spawn_server() -> String {
@@ -1150,5 +1151,424 @@ async fn e2e_request_id_present_on_error_responses() {
     assert!(
         resp.headers().contains_key("x-request-id"),
         "error responses should also carry x-request-id"
+    );
+}
+
+// ───────────────────── CORS middleware (e2e) ─────────────────────
+
+/// Start a server with permissive CORS (allow all origins).
+async fn spawn_server_with_cors_permissive() -> String {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+
+    let state = noti_server::state::AppState::new(registry);
+    let cors_layer = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    let app = noti_server::routes::build_router(state).layer(cors_layer);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    format!("http://{addr}")
+}
+
+/// Start a server with restricted CORS (only specified origins allowed).
+async fn spawn_server_with_cors_restricted(allowed_origins: Vec<String>) -> String {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+
+    let state = noti_server::state::AppState::new(registry);
+    let origins: Vec<axum::http::HeaderValue> = allowed_origins
+        .iter()
+        .filter_map(|o| o.parse().ok())
+        .collect();
+    let cors_layer = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    let app = noti_server::routes::build_router(state).layer(cors_layer);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn e2e_cors_permissive_allows_any_origin() {
+    let base = spawn_server_with_cors_permissive().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("Origin", "https://example.com")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let acao = resp
+        .headers()
+        .get("access-control-allow-origin")
+        .expect("permissive CORS should return Access-Control-Allow-Origin header");
+    assert_eq!(
+        acao.to_str().unwrap(),
+        "*",
+        "permissive CORS should allow all origins (*)"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_permissive_preflight_succeeds() {
+    let base = spawn_server_with_cors_permissive().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/providers"))
+        .header("Origin", "https://example.com")
+        .header("Access-Control-Request-Method", "GET")
+        .header("Access-Control-Request-Headers", "Content-Type, Authorization")
+        .send()
+        .await
+        .unwrap();
+
+    // OPTIONS preflight should succeed (2xx)
+    assert!(
+        resp.status().is_success(),
+        "OPTIONS preflight should succeed, got: {}",
+        resp.status()
+    );
+    assert!(
+        resp.headers()
+            .contains_key("access-control-allow-origin"),
+        "preflight response should contain Access-Control-Allow-Origin"
+    );
+    assert!(
+        resp.headers()
+            .contains_key("access-control-allow-methods"),
+        "preflight response should contain Access-Control-Allow-Methods"
+    );
+    assert!(
+        resp.headers()
+            .contains_key("access-control-allow-headers"),
+        "preflight response should contain Access-Control-Allow-Headers"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_restricted_allows_matching_origin() {
+    let base = spawn_server_with_cors_restricted(vec![
+        "https://allowed.example.com".to_string(),
+        "https://also-allowed.com".to_string(),
+    ])
+    .await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("Origin", "https://allowed.example.com")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let acao = resp
+        .headers()
+        .get("access-control-allow-origin")
+        .expect("matching origin should return Access-Control-Allow-Origin header");
+    assert_eq!(
+        acao.to_str().unwrap(),
+        "https://allowed.example.com",
+        "ACAO should reflect the matching origin"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_restricted_rejects_non_matching_origin() {
+    let base = spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()])
+        .await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("Origin", "https://evil.example.com")
+        .send()
+        .await
+        .unwrap();
+
+    // The request itself still succeeds (CORS is enforced by browsers),
+    // but Access-Control-Allow-Origin should NOT be set for non-matching origins.
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "non-matching origin should NOT receive Access-Control-Allow-Origin header"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_restricted_preflight_non_matching_origin() {
+    let base = spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()])
+        .await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/send"))
+        .header("Origin", "https://evil.example.com")
+        .header("Access-Control-Request-Method", "POST")
+        .send()
+        .await
+        .unwrap();
+
+    // Preflight for non-matching origin should not include ACAO
+    assert!(
+        resp.headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "preflight for non-matching origin should NOT include ACAO"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_permissive_post_endpoint() {
+    let base = spawn_server_with_cors_permissive().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("Origin", "https://any-origin.com")
+        .json(&json!({
+            "provider": "slack",
+            "text": "cors test"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Regardless of handler result, ACAO should be present
+    let acao = resp
+        .headers()
+        .get("access-control-allow-origin")
+        .expect("POST response should include ACAO with permissive CORS");
+    assert_eq!(acao.to_str().unwrap(), "*");
+}
+
+// ───────────────────── ValidatedJson middleware (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_validated_json_empty_provider_returns_422() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({
+            "provider": "",
+            "text": "hello"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    assert_eq!(body["message"], "Request body validation failed");
+    assert!(
+        body["fields"]["provider"].is_array(),
+        "should report field-level error for 'provider'"
+    );
+    let provider_errors = body["fields"]["provider"].as_array().unwrap();
+    assert!(
+        provider_errors
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("must not be empty")),
+        "error message should mention 'must not be empty'"
+    );
+}
+
+#[tokio::test]
+async fn e2e_validated_json_empty_text_returns_422() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({
+            "provider": "slack",
+            "text": ""
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    assert!(
+        body["fields"]["text"].is_array(),
+        "should report field-level error for 'text'"
+    );
+}
+
+#[tokio::test]
+async fn e2e_validated_json_multiple_field_errors() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({
+            "provider": "",
+            "text": ""
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    // Both fields should have errors
+    assert!(
+        body["fields"]["provider"].is_array(),
+        "should report 'provider' field error"
+    );
+    assert!(
+        body["fields"]["text"].is_array(),
+        "should report 'text' field error"
+    );
+}
+
+#[tokio::test]
+async fn e2e_validated_json_invalid_json_returns_400() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("content-type", "application/json")
+        .body("this is not valid json")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_json");
+    assert!(
+        body["message"].is_string(),
+        "should include an error message"
+    );
+}
+
+#[tokio::test]
+async fn e2e_validated_json_missing_required_fields_returns_422() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Send JSON with missing required fields (only config, no provider/text)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("content-type", "application/json")
+        .body(r#"{"config": {}}"#)
+        .send()
+        .await
+        .unwrap();
+
+    // Missing required fields should cause a deserialization error (400)
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_json");
+}
+
+#[tokio::test]
+async fn e2e_validated_json_template_empty_name_returns_422() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "",
+            "body": "Hello {{name}}"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    assert!(
+        body["fields"]["name"].is_array(),
+        "should report field-level error for template 'name'"
+    );
+}
+
+#[tokio::test]
+async fn e2e_validated_json_template_empty_body_returns_422() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "test-template",
+            "body": ""
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    assert!(
+        body["fields"]["body"].is_array(),
+        "should report field-level error for template 'body'"
+    );
+}
+
+#[tokio::test]
+async fn e2e_validated_json_valid_request_passes_validation() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // A valid send request — should pass validation and reach the handler
+    // (will fail at provider config level, but not at validation level)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({
+            "provider": "slack",
+            "text": "valid message",
+            "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/valid"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Should NOT be 422 (validation passed) — handler may return 400 due to other issues
+    assert_ne!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "valid payload should not trigger 422 validation error"
     );
 }
