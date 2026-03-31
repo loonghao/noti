@@ -1,7 +1,7 @@
 use axum::Json;
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,

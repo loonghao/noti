@@ -181,3 +181,153 @@ async fn test_batch_send_provider_not_found() {
 
     response.assert_status(StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn test_template_update() {
+    let server = build_test_server();
+
+    // Create a template first
+    server
+        .post("/api/v1/templates")
+        .json(&json!({
+            "name": "greeting",
+            "body": "Hello, {{name}}!",
+            "title": "Greeting",
+            "defaults": {"name": "World"}
+        }))
+        .await;
+
+    // Update the template body
+    let response = server
+        .put("/api/v1/templates/greeting")
+        .json(&json!({
+            "body": "Hi there, {{name}}! Welcome to {{place}}.",
+            "defaults": {"place": "Earth"}
+        }))
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["name"], "greeting");
+    assert!(body["body"].as_str().unwrap().contains("Hi there"));
+    // Original default "name" should be preserved, plus new "place"
+    assert_eq!(body["defaults"]["name"], "World");
+    assert_eq!(body["defaults"]["place"], "Earth");
+}
+
+#[tokio::test]
+async fn test_template_update_not_found() {
+    let server = build_test_server();
+
+    let response = server
+        .put("/api/v1/templates/nonexistent")
+        .json(&json!({
+            "body": "new body"
+        }))
+        .await;
+
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_template_delete() {
+    let server = build_test_server();
+
+    // Create a template
+    server
+        .post("/api/v1/templates")
+        .json(&json!({
+            "name": "temp",
+            "body": "temporary {{msg}}"
+        }))
+        .await;
+
+    // Delete it
+    let response = server.delete("/api/v1/templates/temp").await;
+    response.assert_status_ok();
+
+    let body: serde_json::Value = response.json();
+    assert!(body["deleted"].as_bool().unwrap());
+
+    // Verify it's gone
+    let response = server.get("/api/v1/templates/temp").await;
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_template_delete_not_found() {
+    let server = build_test_server();
+
+    let response = server.delete("/api/v1/templates/nonexistent").await;
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_template_full_crud_lifecycle() {
+    let server = build_test_server();
+
+    // Create
+    let response = server
+        .post("/api/v1/templates")
+        .json(&json!({
+            "name": "deploy-alert",
+            "body": "Deployed {{service}} v{{version}} to {{env}}",
+            "title": "Deploy: {{service}}",
+            "defaults": {"env": "staging"}
+        }))
+        .await;
+    response.assert_status(StatusCode::CREATED);
+
+    // Read
+    let response = server.get("/api/v1/templates/deploy-alert").await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["defaults"]["env"], "staging");
+
+    // Update
+    let response = server
+        .put("/api/v1/templates/deploy-alert")
+        .json(&json!({
+            "defaults": {"env": "production"}
+        }))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["defaults"]["env"], "production");
+
+    // Render with updated defaults
+    let response = server
+        .post("/api/v1/templates/deploy-alert/render")
+        .json(&json!({
+            "variables": {
+                "service": "noti",
+                "version": "1.0.0"
+            }
+        }))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["text"], "Deployed noti v1.0.0 to production");
+
+    // Delete
+    let response = server.delete("/api/v1/templates/deploy-alert").await;
+    response.assert_status_ok();
+
+    // Verify deletion
+    let response = server.get("/api/v1/templates").await;
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn test_metrics_endpoint() {
+    let server = build_test_server();
+    let response = server.get("/api/v1/metrics").await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body["providers"]["total_registered"].as_u64().unwrap() > 100);
+    assert!(body["queue"]["total"].as_u64().is_some());
+    assert!(body["version"].is_string());
+    assert!(body["uptime_seconds"].as_u64().is_some());
+}

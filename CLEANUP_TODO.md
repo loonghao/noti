@@ -20,12 +20,12 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`build_retry_policy()` default behavior difference~~ — resolved: `common::build_retry_policy` now takes explicit `default_policy` param; `send.rs` passes `RetryPolicy::none()`, `queue.rs` passes `RetryPolicy::default()` (293b523)
 - [ ] "provider not found" error pattern repeated 4× across handlers — extract helper function
 - [ ] Consider defining a unified `ApiError` type implementing `IntoResponse` to replace `(StatusCode, Json<Value>)` pattern
-- [ ] `health.rs` response type lacks `Debug` derive (all other handlers have it)
+- [x] ~~`health.rs` response type lacks `Debug` derive~~ — added (4efb813)
 - [ ] `BatchAsyncItem` and `AsyncSendRequest` share near-identical fields — consider shared base type
 - [ ] `StatsResponse` (queue.rs) and `QueueMetrics` (metrics.rs) have identical fields — unify
 - [ ] `send_batch` function exceeds 100 lines — extract result-mapping helper
-- [ ] `main.rs` uses `.unwrap()` for TCP bind and serve — use `.expect()` or proper error handling
-- [ ] `main.rs` graceful shutdown (`worker_handle.shutdown_and_join()`) is unreachable — implement signal handling with `axum::serve().with_graceful_shutdown()`
+- [x] ~~`main.rs` uses `.unwrap()` for TCP bind and serve~~ — replaced with `.expect()` (4efb813)
+- [x] ~~`main.rs` graceful shutdown (`worker_handle.shutdown_and_join()`) is unreachable~~ — implemented signal handling with `axum::serve().with_graceful_shutdown()`, supports Ctrl+C and SIGTERM (4efb813)
 - [ ] `fire_callback` creates a new `reqwest::Client` per call — pass shared client or use `LazyLock`
 
 ## Code — Silent Error Discards (noti-queue)
