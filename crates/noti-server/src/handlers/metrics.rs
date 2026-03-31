@@ -3,6 +3,7 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::handlers::queue::StatsResponse;
 use crate::state::AppState;
 
 /// Prometheus-compatible metrics response (in JSON format).
@@ -10,25 +11,14 @@ use crate::state::AppState;
 /// Provides key operational metrics for monitoring dashboards.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct MetricsResponse {
-    /// Queue statistics.
-    pub queue: QueueMetrics,
+    /// Queue statistics (same shape as GET /api/v1/queue/stats).
+    pub queue: StatsResponse,
     /// Provider statistics.
     pub providers: ProviderMetrics,
     /// Server uptime in seconds.
     pub uptime_seconds: u64,
     /// Server version.
     pub version: String,
-}
-
-/// Queue-related metrics.
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct QueueMetrics {
-    pub queued: usize,
-    pub processing: usize,
-    pub completed: usize,
-    pub failed: usize,
-    pub cancelled: usize,
-    pub total: usize,
 }
 
 /// Provider-related metrics.
@@ -64,7 +54,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<MetricsResponse>
         .as_secs();
 
     Json(MetricsResponse {
-        queue: QueueMetrics {
+        queue: StatsResponse {
             queued: queue_stats.queued,
             processing: queue_stats.processing,
             completed: queue_stats.completed,

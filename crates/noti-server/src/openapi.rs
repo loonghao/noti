@@ -9,7 +9,7 @@ use crate::handlers::{
     common::RetryConfig,
     error::ApiError,
     health::{self, ComponentHealth, DependencyHealth, HealthResponse},
-    metrics::{self, MetricsResponse, ProviderMetrics, QueueMetrics},
+    metrics::{self, MetricsResponse, ProviderMetrics},
     providers::{self, ParamInfo, ProviderInfo, ProviderListResponse, ProviderSummary},
     queue::{
         self, AsyncSendRequest, BatchAsyncItem, BatchAsyncRequest, BatchEnqueueItemResult,
@@ -100,7 +100,7 @@ use crate::handlers::{
         // Providers
         ProviderListResponse, ProviderSummary, ProviderInfo, ParamInfo,
         // Metrics
-        MetricsResponse, QueueMetrics, ProviderMetrics,
+        MetricsResponse, ProviderMetrics,
         // Core types (from noti-core with openapi feature)
         noti_core::DeliveryRecord, noti_core::DeliveryStatus,
         noti_core::StatusEvent, noti_core::StatusSummary,
