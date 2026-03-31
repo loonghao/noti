@@ -5,25 +5,29 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
+use validator::Validate;
 
 use noti_core::{ProviderConfig, RetryPolicy};
 use noti_queue::{NotificationTask, QueueStats, TaskStatus};
 
 use crate::handlers::common::{self, RetryConfig};
 use crate::handlers::error::ApiError;
+use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
 // ───────────────────── Request types ─────────────────────
 
 /// Request body for async notification via the queue.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct AsyncSendRequest {
     /// Provider name (e.g. "slack", "email", "webhook").
+    #[validate(length(min = 1, message = "provider must not be empty"))]
     pub provider: String,
     /// Provider-specific configuration values.
     #[serde(default)]
     pub config: HashMap<String, String>,
     /// Message body text.
+    #[validate(length(min = 1, message = "text must not be empty"))]
     pub text: String,
     /// Optional message title/subject.
     pub title: Option<String>,
@@ -106,14 +110,16 @@ pub struct CancelResponse {
 // ───────────────────── Batch async types ─────────────────────
 
 /// A single notification item within a batch async request.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct BatchAsyncItem {
     /// Provider name (e.g. "slack", "email", "webhook").
+    #[validate(length(min = 1, message = "provider must not be empty"))]
     pub provider: String,
     /// Provider-specific configuration values.
     #[serde(default)]
     pub config: HashMap<String, String>,
     /// Message body text.
+    #[validate(length(min = 1, message = "text must not be empty"))]
     pub text: String,
     /// Optional message title/subject.
     pub title: Option<String>,
@@ -135,9 +141,10 @@ pub struct BatchAsyncItem {
 }
 
 /// Request body for batch async notification enqueue.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchAsyncRequest {
     /// List of notifications to enqueue.
+    #[validate(length(min = 1, message = "items must not be empty"))]
     pub items: Vec<BatchAsyncItem>,
 }
 
@@ -224,7 +231,7 @@ fn queue_error(e: noti_queue::QueueError) -> ApiError {
 )]
 pub async fn send_async(
     State(state): State<AppState>,
-    Json(req): Json<AsyncSendRequest>,
+    ValidatedJson(req): ValidatedJson<AsyncSendRequest>,
 ) -> Result<(StatusCode, Json<EnqueueResponse>), ApiError> {
     // Validate provider exists
     let _provider = state
@@ -286,12 +293,8 @@ pub async fn send_async(
 )]
 pub async fn send_async_batch(
     State(state): State<AppState>,
-    Json(req): Json<BatchAsyncRequest>,
+    ValidatedJson(req): ValidatedJson<BatchAsyncRequest>,
 ) -> Result<(StatusCode, Json<BatchEnqueueResponse>), ApiError> {
-    if req.items.is_empty() {
-        return Err(ApiError::bad_request("items array must not be empty"));
-    }
-
     let total = req.items.len();
     let mut results = Vec::with_capacity(total);
     let mut enqueued = 0usize;
@@ -624,11 +627,11 @@ mod tests {
         });
 
         let resp = server.post("/api/v1/send/async/batch").json(&body).await;
-        resp.assert_status(StatusCode::BAD_REQUEST);
+        resp.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
 
         let body: serde_json::Value = resp.json();
-        assert_eq!(body["error"], "bad_request");
-        assert_eq!(body["message"], "items array must not be empty");
+        assert_eq!(body["error"], "validation_failed");
+        assert!(body["fields"]["items"].is_array());
     }
 
     #[tokio::test]

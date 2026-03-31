@@ -5,18 +5,22 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use validator::Validate;
 
 use noti_core::MessageTemplate;
 
 use crate::handlers::error::ApiError;
+use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
 /// Request body for creating a template.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateTemplateRequest {
     /// Template name (unique identifier).
+    #[validate(length(min = 1, message = "name must not be empty"))]
     pub name: String,
     /// Template body with {{variable}} placeholders.
+    #[validate(length(min = 1, message = "body must not be empty"))]
     pub body: String,
     /// Optional title template.
     pub title: Option<String>,
@@ -26,7 +30,7 @@ pub struct CreateTemplateRequest {
 }
 
 /// Request body for rendering a template.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RenderTemplateRequest {
     /// Variable values for rendering.
     pub variables: HashMap<String, String>,
@@ -50,7 +54,7 @@ pub struct RenderedTemplateResponse {
 }
 
 /// Request body for updating a template.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateTemplateRequest {
     /// New template body with {{variable}} placeholders.
     pub body: Option<String>,
@@ -88,7 +92,7 @@ pub struct DeleteTemplateResponse {
 )]
 pub async fn create_template(
     State(state): State<AppState>,
-    Json(req): Json<CreateTemplateRequest>,
+    ValidatedJson(req): ValidatedJson<CreateTemplateRequest>,
 ) -> Result<(StatusCode, Json<TemplateResponse>), ApiError> {
     let mut template = MessageTemplate::new(&req.name, &req.body);
 
@@ -186,7 +190,7 @@ pub async fn get_template(
 pub async fn render_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    Json(req): Json<RenderTemplateRequest>,
+    ValidatedJson(req): ValidatedJson<RenderTemplateRequest>,
 ) -> Result<Json<RenderedTemplateResponse>, ApiError> {
     let registry = state.template_registry.read().await;
     let template = registry
@@ -218,7 +222,7 @@ pub async fn render_template(
 pub async fn update_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    Json(req): Json<UpdateTemplateRequest>,
+    ValidatedJson(req): ValidatedJson<UpdateTemplateRequest>,
 ) -> Result<Json<TemplateResponse>, ApiError> {
     let mut registry = state.template_registry.write().await;
 

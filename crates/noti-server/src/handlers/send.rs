@@ -5,22 +5,26 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
+use validator::Validate;
 
 use noti_core::{DeliveryStatus, ProviderConfig, RetryPolicy, SendResponse};
 
 use crate::handlers::common::{self, RetryConfig};
 use crate::handlers::error::ApiError;
+use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
 /// Request body for sending a single notification.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SendRequest {
     /// Provider name (e.g. "slack", "email", "webhook").
+    #[validate(length(min = 1, message = "provider must not be empty"))]
     pub provider: String,
     /// Provider-specific configuration values.
     #[serde(default)]
     pub config: HashMap<String, String>,
     /// Message body text.
+    #[validate(length(min = 1, message = "text must not be empty"))]
     pub text: String,
     /// Optional message title/subject.
     pub title: Option<String>,
@@ -37,11 +41,13 @@ pub struct SendRequest {
 }
 
 /// Request body for batch sending.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchSendRequest {
     /// List of targets to send to.
+    #[validate(length(min = 1, message = "targets must not be empty"))]
     pub targets: Vec<BatchTarget>,
     /// Shared message body text.
+    #[validate(length(min = 1, message = "text must not be empty"))]
     pub text: String,
     /// Optional message title.
     pub title: Option<String>,
@@ -65,7 +71,7 @@ fn default_mode() -> String {
 }
 
 /// A single target within a batch send request.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct BatchTarget {
     /// Provider name.
     pub provider: String,
@@ -130,7 +136,7 @@ pub struct TargetApiResult {
 )]
 pub async fn send_notification(
     State(state): State<AppState>,
-    Json(req): Json<SendRequest>,
+    ValidatedJson(req): ValidatedJson<SendRequest>,
 ) -> Result<Json<SendApiResponse>, ApiError> {
     let provider = state
         .registry
@@ -237,7 +243,7 @@ pub async fn send_notification(
 )]
 pub async fn send_batch(
     State(state): State<AppState>,
-    Json(req): Json<BatchSendRequest>,
+    ValidatedJson(req): ValidatedJson<BatchSendRequest>,
 ) -> Result<Json<BatchSendApiResponse>, ApiError> {
     // Validate all providers exist
     let mut providers = Vec::new();
