@@ -201,8 +201,8 @@ mod tests {
     use super::*;
     use crate::provider::{ParamDef, SendResponse};
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn test_default_policy() {
@@ -231,11 +231,7 @@ mod tests {
 
     #[test]
     fn test_exponential_delays() {
-        let policy = RetryPolicy::exponential(
-            5,
-            Duration::from_secs(1),
-            Duration::from_secs(16),
-        );
+        let policy = RetryPolicy::exponential(5, Duration::from_secs(1), Duration::from_secs(16));
 
         assert_eq!(policy.delay_for_attempt(0), Duration::ZERO);
         assert_eq!(policy.delay_for_attempt(1), Duration::from_secs(1));
@@ -314,11 +310,21 @@ mod tests {
 
     #[async_trait]
     impl NotifyProvider for MockProvider {
-        fn name(&self) -> &str { "mock" }
-        fn url_scheme(&self) -> &str { "mock" }
-        fn params(&self) -> Vec<ParamDef> { vec![] }
-        fn description(&self) -> &str { "mock provider" }
-        fn example_url(&self) -> &str { "mock://test" }
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn url_scheme(&self) -> &str {
+            "mock"
+        }
+        fn params(&self) -> Vec<ParamDef> {
+            vec![]
+        }
+        fn description(&self) -> &str {
+            "mock provider"
+        }
+        fn example_url(&self) -> &str {
+            "mock://test"
+        }
 
         async fn send(
             &self,
@@ -341,11 +347,21 @@ mod tests {
 
     #[async_trait]
     impl NotifyProvider for ValidationErrorProvider {
-        fn name(&self) -> &str { "validation-mock" }
-        fn url_scheme(&self) -> &str { "validation-mock" }
-        fn params(&self) -> Vec<ParamDef> { vec![] }
-        fn description(&self) -> &str { "always fails with validation" }
-        fn example_url(&self) -> &str { "validation-mock://test" }
+        fn name(&self) -> &str {
+            "validation-mock"
+        }
+        fn url_scheme(&self) -> &str {
+            "validation-mock"
+        }
+        fn params(&self) -> Vec<ParamDef> {
+            vec![]
+        }
+        fn description(&self) -> &str {
+            "always fails with validation"
+        }
+        fn example_url(&self) -> &str {
+            "validation-mock://test"
+        }
 
         async fn send(
             &self,

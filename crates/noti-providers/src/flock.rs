@@ -144,11 +144,9 @@ impl NotifyProvider for FlockProvider {
                     .with_status_code(status),
             )
         } else {
-            Ok(
-                SendResponse::failure("flock", format!("API error: {body}"))
-                    .with_status_code(status)
-                    .with_raw_response(json!({ "body": body })),
-            )
+            Ok(SendResponse::failure("flock", format!("API error: {body}"))
+                .with_status_code(status)
+                .with_raw_response(json!({ "body": body })))
         }
     }
 }

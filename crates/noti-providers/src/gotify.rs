@@ -76,9 +76,7 @@ impl NotifyProvider for GotifyProvider {
                     let data = attachment.read_bytes().await?;
                     let mime = attachment.effective_mime();
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    md.push_str(&format!(
-                        "\n\n![{file_name}](data:{mime};base64,{b64})"
-                    ));
+                    md.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
                 } else {
                     md.push_str(&format!("\n\n📎 **Attachment:** {file_name}"));
                 }
