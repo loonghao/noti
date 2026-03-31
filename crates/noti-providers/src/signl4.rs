@@ -80,16 +80,12 @@ impl NotifyProvider for Signl4Provider {
                     let data = attachment.read_bytes().await?;
                     let mime = attachment.effective_mime();
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    text.push_str(&format!(
-                        "\n\n![{file_name}](data:{mime};base64,{b64})"
-                    ));
+                    text.push_str(&format!("\n\n![{file_name}](data:{mime};base64,{b64})"));
                 } else {
                     let data = attachment.read_bytes().await?;
                     let mime = attachment.effective_mime();
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                    text.push_str(&format!(
-                        "\n📎 {file_name} (data:{mime};base64,{b64})"
-                    ));
+                    text.push_str(&format!("\n📎 {file_name} (data:{mime};base64,{b64})"));
                 }
             }
             text

@@ -117,11 +117,7 @@ pub async fn send_failover(
     for target in targets {
         let name = target.provider.name().to_string();
         let outcome = send_with_retry(target.provider, message, target.config, policy).await;
-        let success = outcome
-            .result
-            .as_ref()
-            .map(|r| r.success)
-            .unwrap_or(false);
+        let success = outcome.result.as_ref().map(|r| r.success).unwrap_or(false);
         results.push(TargetResult {
             provider_name: name,
             outcome,
@@ -238,10 +234,7 @@ mod tests {
         let msg = Message::text("hello");
         let policy = RetryPolicy::none();
 
-        let targets = vec![
-            SendTarget::new(&p1, &config),
-            SendTarget::new(&p2, &config),
-        ];
+        let targets = vec![SendTarget::new(&p1, &config), SendTarget::new(&p2, &config)];
 
         let result = send_batch(&targets, &msg, &policy).await;
         assert!(result.all_succeeded());

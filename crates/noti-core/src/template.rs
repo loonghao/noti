@@ -246,8 +246,7 @@ mod tests {
 
     #[test]
     fn test_render_vars_override_defaults() {
-        let tpl = MessageTemplate::new("test", "Go to {{place}}")
-            .with_default("place", "Earth");
+        let tpl = MessageTemplate::new("test", "Go to {{place}}").with_default("place", "Earth");
 
         let mut vars = HashMap::new();
         vars.insert("place".to_string(), "Mars".to_string());
@@ -264,18 +263,14 @@ mod tests {
 
     #[test]
     fn test_extract_variables() {
-        let tpl = MessageTemplate::new(
-            "test",
-            "{{greeting}}, {{ name }}! Your code is {{code}}.",
-        );
+        let tpl = MessageTemplate::new("test", "{{greeting}}, {{ name }}! Your code is {{code}}.");
         let vars = tpl.variables();
         assert_eq!(vars, vec!["greeting", "name", "code"]);
     }
 
     #[test]
     fn test_extract_variables_with_title() {
-        let tpl = MessageTemplate::new("test", "Body: {{a}}")
-            .with_title("Title: {{b}}");
+        let tpl = MessageTemplate::new("test", "Body: {{a}}").with_title("Title: {{b}}");
         let vars = tpl.variables();
         assert!(vars.contains(&"a".to_string()));
         assert!(vars.contains(&"b".to_string()));
@@ -283,8 +278,7 @@ mod tests {
 
     #[test]
     fn test_validate_vars_ok() {
-        let tpl = MessageTemplate::new("test", "{{a}} and {{b}}")
-            .with_default("b", "default_b");
+        let tpl = MessageTemplate::new("test", "{{a}} and {{b}}").with_default("b", "default_b");
 
         let mut vars = HashMap::new();
         vars.insert("a".to_string(), "val_a".to_string());
@@ -304,8 +298,7 @@ mod tests {
 
     #[test]
     fn test_render_message() {
-        let tpl = MessageTemplate::new("alert", "Alert: {{message}}")
-            .with_title("{{level}} Alert");
+        let tpl = MessageTemplate::new("alert", "Alert: {{message}}").with_title("{{level}} Alert");
 
         let mut vars = HashMap::new();
         vars.insert("message".to_string(), "disk full".to_string());

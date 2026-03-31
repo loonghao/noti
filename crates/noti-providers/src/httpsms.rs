@@ -117,9 +117,11 @@ impl NotifyProvider for HttpSmsProvider {
             || api_status == "sent"
             || (200..300).contains(&(status as usize))
         {
-            Ok(SendResponse::success("httpsms", "message queued via httpSMS")
-                .with_status_code(status)
-                .with_raw_response(raw))
+            Ok(
+                SendResponse::success("httpsms", "message queued via httpSMS")
+                    .with_status_code(status)
+                    .with_raw_response(raw),
+            )
         } else {
             let msg = raw
                 .get("message")

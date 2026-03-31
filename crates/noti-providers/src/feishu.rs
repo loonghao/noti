@@ -83,8 +83,7 @@ impl NotifyProvider for FeishuProvider {
                 // Upload image via Feishu Open API
                 let tenant_token =
                     Self::get_tenant_access_token(&self.client, app_id, app_secret).await?;
-                let image_key =
-                    Self::upload_image(&self.client, &tenant_token, img).await?;
+                let image_key = Self::upload_image(&self.client, &tenant_token, img).await?;
 
                 let body = json!({
                     "msg_type": "image",
@@ -280,9 +279,7 @@ impl FeishuProvider {
         raw.get("tenant_access_token")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| {
-                NotiError::provider("feishu", "no tenant_access_token in response")
-            })
+            .ok_or_else(|| NotiError::provider("feishu", "no tenant_access_token in response"))
     }
 
     /// Upload an image to Feishu Open API and return the image_key.
@@ -334,9 +331,7 @@ impl FeishuProvider {
             .and_then(|d| d.get("image_key"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| {
-                NotiError::provider("feishu", "no image_key in upload response")
-            })
+            .ok_or_else(|| NotiError::provider("feishu", "no image_key in upload response"))
     }
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
