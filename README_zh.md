@@ -1,63 +1,95 @@
 <div align="center">
 
-# 📢 noti
+<img src="docs/public/logo.svg" width="120" alt="noti logo" />
 
-**统一的多渠道通知 CLI 工具，专为 AI Agent 设计**
+# noti
 
-*通过一条命令向 125+ 服务发送通知 — 为脚本、Agent 和自动化而生。*
+### 面向 AI Agent 与自动化的统一通知 CLI 工具
+
+*一条命令，125+ 服务，覆盖你需要的所有通道。*
+
+<br/>
 
 [![CI](https://github.com/loonghao/noti/actions/workflows/ci.yml/badge.svg)](https://github.com/loonghao/noti/actions/workflows/ci.yml)
 [![Release](https://github.com/loonghao/noti/actions/workflows/release.yml/badge.svg)](https://github.com/loonghao/noti/actions/workflows/release.yml)
 [![Codecov](https://codecov.io/gh/loonghao/noti/graph/badge.svg)](https://codecov.io/gh/loonghao/noti)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/Rust-1.85+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Crates](https://img.shields.io/badge/crates-3_workspace_crates-blue?logo=rust)](https://github.com/loonghao/noti)
-[![GitHub release](https://img.shields.io/github/v/release/loonghao/noti?include_prereleases&logo=github)](https://github.com/loonghao/noti/releases)
-[![GitHub Downloads](https://img.shields.io/github/downloads/loonghao/noti/total?logo=github&color=green)](https://github.com/loonghao/noti/releases)
+[![GitHub release](https://img.shields.io/github/v/release/loonghao/noti?include_prereleases&logo=github&label=release)](https://github.com/loonghao/noti/releases)
+[![GitHub Downloads](https://img.shields.io/github/downloads/loonghao/noti/total?logo=github&color=green&label=downloads)](https://github.com/loonghao/noti/releases)
 
-[![Windows](https://img.shields.io/badge/Windows-x86__64-0078D6?logo=windows&logoColor=white)](#安装)
-[![macOS](https://img.shields.io/badge/macOS-x86__64%20|%20ARM64-000000?logo=apple&logoColor=white)](#安装)
-[![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black)](#安装)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.85+-orange?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Crates](https://img.shields.io/badge/crates-3_workspace-blue?style=flat-square&logo=rust)](https://github.com/loonghao/noti)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/loonghao/noti/pulls)
+[![GitHub Stars](https://img.shields.io/github/stars/loonghao/noti?style=flat-square&logo=github)](https://github.com/loonghao/noti/stargazers)
+
+[![Windows](https://img.shields.io/badge/Windows-x86__64-0078D6?style=flat-square&logo=windows&logoColor=white)](#-安装)
+[![macOS](https://img.shields.io/badge/macOS-x86__64%20|%20ARM64-000000?style=flat-square&logo=apple&logoColor=white)](#-安装)
+[![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624?style=flat-square&logo=linux&logoColor=black)](#-安装)
+
+<br/>
+
+[📖 文档](https://loonghao.github.io/noti/) · [🐛 报告 Bug](https://github.com/loonghao/noti/issues) · [💡 功能建议](https://github.com/loonghao/noti/issues)
 
 [English](README.md) · [简体中文](README_zh.md)
 
 </div>
 
+<br/>
+
 ---
+
+<br/>
+
+## 🤔 为什么选择 noti？
+
+> **"我只是想发个通知，为什么要接入 15 个不同的 SDK？"**
+
+如果你曾分别对接过 Slack Webhook、Telegram Bot、邮件 SMTP 和各种推送服务——你一定深有体会。**noti** 将它们全部统一在一个简洁、可预测的 CLI 接口背后：
+
+```bash
+# 就这么简单。一行命令，任何服务。
+noti send --to "wecom://KEY" --message "部署完成 ✅"
+noti send --to "slack://xoxb/TOKEN" --message "构建失败 ❌" --file log.txt
+noti send --to "tg://BOT_TOKEN/CHAT_ID" --message "日报" --file report.pdf
+```
+
+<br/>
 
 ## ✨ 亮点
 
 <table>
 <tr>
-<td width="50%">
+<td width="50%" valign="top">
 
-### 🚀 CLI 优先设计
-为 Agent/脚本集成而生 — 一行命令，无需配置文件。
+**🚀 CLI 优先设计**
+为 Agent 和脚本集成而生。一行命令，零配置文件。天然适配 AI Agent 的通知原语。
 
-### 📡 125 个内置渠道
-聊天、短信、邮件、推送、Webhook、事件管理、IoT — 全部集成在一个二进制文件中。
+**📡 125 个内置渠道**
+聊天、短信、邮件、推送、Webhook、事件管理、IoT — 全部集成在单一静态链接二进制文件中。无插件，无扩展。
 
-### 🔗 URL Scheme 寻址
-直观的 `provider://credentials` 格式 — `wecom://key`、`slack://tokens`、`tg://bot/chat`。
+**🔗 URL Scheme 寻址**
+直观的 `provider://credentials` 格式 — `wecom://key`、`slack://tokens`、`tg://bot/chat`。一目了然，过目不忘。
 
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 
-### 📎 文件附件
-发送图片、文档和媒体文件 — 自动检测 MIME 类型，100+ 渠道支持。
+**📎 文件附件**
+发送图片、文档和媒体文件，自动检测 MIME 类型。100+ 渠道开箱即用。
 
-### 📋 Profile 管理
-保存、复用、测试通知配置 — 一次设定，按名使用。
+**📋 Profile 管理**
+保存、复用、测试通知配置。一次设定，按名使用 — 完美适配团队工作流。
 
-### 🤖 JSON 输出
-`--json` 标志输出结构化机器可读数据 — 完美适配 AI Agent。
+**🤖 JSON 输出**
+`--json` 标志输出结构化机器可读数据。确定性退出码。专为可靠的 Agent 解析而设计。
 
-### ⚡ 极速响应
-原生 Rust 二进制，瞬间启动 — 无运行时，无解释器开销。
+**⚡ 极速响应**
+原生 Rust 二进制，< 10ms 启动。无运行时，无解释器，无 GC 开销。
 
 </td>
 </tr>
 </table>
+
+<br/>
 
 ## 📦 安装
 
@@ -83,14 +115,16 @@ cargo install --git https://github.com/loonghao/noti noti-cli
 
 ### 下载二进制
 
-所有平台的预编译二进制文件可在 [GitHub Releases](https://github.com/loonghao/noti/releases) 页面下载。
+所有平台的预编译二进制文件可在 [Releases](https://github.com/loonghao/noti/releases) 页面下载。
 
 | 平台 | 架构 | 下载 |
-|------|------|------|
-| Windows | x86_64 | [`noti-x86_64-pc-windows-msvc.zip`](https://github.com/loonghao/noti/releases/latest) |
-| macOS | x86_64 (Intel) | [`noti-x86_64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
-| macOS | ARM64 (Apple Silicon) | [`noti-aarch64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
-| Linux | x86_64 | [`noti-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+|:-----|:-----|:-----|
+| **Windows** | x86_64 | [`noti-x86_64-pc-windows-msvc.zip`](https://github.com/loonghao/noti/releases/latest) |
+| **macOS** | x86_64 (Intel) | [`noti-x86_64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+| **macOS** | ARM64 (Apple Silicon) | [`noti-aarch64-apple-darwin.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+| **Linux** | x86_64 | [`noti-x86_64-unknown-linux-gnu.tar.gz`](https://github.com/loonghao/noti/releases/latest) |
+
+<br/>
 
 ## 🚀 快速开始
 
@@ -147,12 +181,6 @@ noti send --profile my-team --message "来自 noti 的问候！"
 noti config test my-team
 ```
 
-### 直接指定 Provider 参数发送
-
-```bash
-noti send --provider wecom --param key=<webhook_key> --message "Hello!"
-```
-
 ### JSON 输出（适合 Agent）
 
 ```bash
@@ -169,13 +197,19 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 }
 ```
 
+<br/>
+
 ## 📡 支持的渠道 (125)
 
+noti 内置 **125 个通知渠道**，覆盖 7 大类别。无需插件 — 全部编译进单一二进制文件。
+
 <details>
-<summary><strong>💬 聊天 & 即时通讯 (22)</strong></summary>
+<summary><strong>💬 聊天 & 即时通讯 — 22 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | 企业微信 | `wecom://` | 企业微信群机器人 Webhook |
 | 飞书 | `feishu://` | 飞书/Lark 群机器人 Webhook |
 | 钉钉 | `dingtalk://` | 钉钉群机器人 Webhook |
@@ -202,10 +236,12 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 </details>
 
 <details>
-<summary><strong>🔔 推送通知 (20)</strong></summary>
+<summary><strong>🔔 推送通知 — 20 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | Pushover | `pushover://` | Pushover 推送通知 |
 | ntfy | `ntfy://` | ntfy.sh 推送通知 |
 | Gotify | `gotify://` | Gotify 自托管推送 |
@@ -230,10 +266,12 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 </details>
 
 <details>
-<summary><strong>📱 短信 & 消息 (17)</strong></summary>
+<summary><strong>📱 短信 & 消息 — 17 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | Twilio | `twilio://` | Twilio 短信 REST API |
 | Vonage | `vonage://` | Vonage (Nexmo) 短信 API |
 | D7 Networks | `d7sms://` | D7 Networks 短信网关 |
@@ -255,10 +293,12 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 </details>
 
 <details>
-<summary><strong>📧 邮件 (8)</strong></summary>
+<summary><strong>📧 邮件 — 8 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | 邮件 | `smtp://` | 通过 SMTP 发送邮件 |
 | Mailgun | `mailgun://` | Mailgun 事务邮件 API |
 | SendGrid | `sendgrid://` | SendGrid 事务邮件 API v3 |
@@ -271,10 +311,12 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 </details>
 
 <details>
-<summary><strong>🌐 Webhook (4)</strong></summary>
+<summary><strong>🌐 Webhook — 4 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | Webhook | `webhook://` | 通用 HTTP Webhook |
 | JSON Webhook | `json://` | 通用 JSON Webhook |
 | Form Webhook | `form://` | 通用表单 Webhook |
@@ -283,10 +325,12 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 </details>
 
 <details>
-<summary><strong>🚨 事件管理 & 自动化 (7)</strong></summary>
+<summary><strong>🚨 事件管理 & 自动化 — 7 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | IFTTT | `ifttt://` | IFTTT Maker Webhooks |
 | PagerDuty | `pagerduty://` | PagerDuty 事件 API v2 |
 | Opsgenie | `opsgenie://` | Atlassian Opsgenie 告警 API v2 |
@@ -298,10 +342,12 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 </details>
 
 <details>
-<summary><strong>🏠 IoT、媒体及其他 (47)</strong></summary>
+<summary><strong>🏠 IoT、媒体及其他 — 47 个渠道</strong></summary>
+
+<br/>
 
 | 渠道 | Scheme | 说明 |
-|------|--------|------|
+|:-----|:-------|:-----|
 | Bluesky | `bluesky://` | Bluesky 社交网络 (AT Protocol) |
 | Home Assistant | `hassio://` | Home Assistant 通知 |
 | LaMetric | `lametric://` | LaMetric Time 智能时钟 |
@@ -352,12 +398,14 @@ noti --json send --to "wecom://<key>" --message "部署完成"
 
 </details>
 
-### 列出所有渠道
+### 查看所有渠道
 
 ```bash
 noti providers list          # 列出所有可用渠道
 noti providers info wecom    # 查看渠道详情和参数
 ```
+
+<br/>
 
 ## ⚙️ 配置
 
@@ -376,37 +424,48 @@ noti config test <name>
 noti config path
 ```
 
+<br/>
+
 ## 📊 退出码
 
-| 退出码 | 含义 |
-|--------|------|
-| `0` | ✅ 成功 |
-| `1` | ❌ 发送失败（网络/API 错误） |
-| `2` | ⚠️ 参数/配置错误 |
+| 退出码 | 含义 | 使用场景 |
+|:-------|:-----|:---------|
+| `0` | ✅ 成功 | 消息已送达 — 继续流水线 |
+| `1` | ❌ 发送失败 | 网络/API 错误 — 重试或上报 |
+| `2` | ⚠️ 配置错误 | 参数有误 — 修正后重试 |
+
+<br/>
 
 ## 🤖 Agent 集成
 
-noti 专为 [OpenClaw](https://github.com/nicepkg/openclaw) 等 AI Agent 设计。核心设计理念：
+noti 专为 [OpenClaw](https://github.com/nicepkg/openclaw) 等 AI Agent 设计，遵循 **CLI 优先** 设计哲学：
 
 | 特性 | 优势 |
-|------|------|
+|:-----|:-----|
 | **URL Scheme** | 一行寻址 — 无需配置文件 |
 | **`--json` 标志** | 结构化输出，便于可靠解析 |
 | **退出码** | 确定性的成功/失败信号 |
+| **`providers list`** | Agent 可编程发现可用渠道 |
 | **Profile 系统** | 预配置一次，按名称使用 |
 
-### 示例：OpenClaw 集成
+### 示例：Agent 工作流
 
 ```bash
-# Agent 发现可用渠道
+# 1. Agent 发现可用渠道
 noti --json providers list
 
-# Agent 查看渠道参数
+# 2. Agent 查看渠道参数
 noti --json providers info wecom
 
-# Agent 发送通知
+# 3. Agent 发送通知
 noti --json send --to "wecom://key123" --message "任务完成"
 ```
+
+### OpenClaw Skill
+
+noti 在 `skills/` 目录中内置了 [OpenClaw](https://github.com/nicepkg/openclaw) 技能。安装后即可赋予 AI Agent 原生通知能力。
+
+<br/>
 
 ## 🏗️ 项目架构
 
@@ -416,10 +475,19 @@ noti/
 │   ├── noti-cli/        # CLI 二进制 — 参数解析、输出格式化
 │   ├── noti-core/       # 核心抽象 — Provider trait、Registry、URL 解析
 │   └── noti-providers/  # 125 个渠道实现
+├── docs/                # VitePress 文档站点
 ├── scripts/             # 安装脚本 (bash, PowerShell) & 工具
 ├── skills/              # OpenClaw 技能定义
-└── justfile             # 任务运行配方
+└── justfile             # 任务运行配方（通过 vx）
 ```
+
+**设计原则：**
+- **零运行时** — 纯 Rust，静态链接，无解释器
+- **单一二进制** — 125 个渠道全部编译进去，无插件系统
+- **URL 优先** — 每个渠道均可通过 URI 方案寻址
+- **Agent 友好** — JSON 输出、退出码、确定性行为
+
+<br/>
 
 ## 🛠️ 开发
 
@@ -435,9 +503,12 @@ vx just fmt          # 格式化代码
 vx just check        # 类型检查
 vx just lint         # Clippy 检查
 vx just test         # 运行测试
+vx just coverage     # 生成覆盖率报告 (lcov)
 vx just ci           # 完整 CI 流程 (fmt + check + lint + test)
 vx just run -- send --help   # 开发模式运行 CLI
 ```
+
+<br/>
 
 ## 🙏 致谢
 
@@ -447,6 +518,20 @@ noti 的灵感来自以下优秀项目：
 - [Apprise](https://github.com/caronc/apprise) — 统一 API 的推送通知工具
 - [OpenClaw](https://github.com/nicepkg/openclaw) — noti 为之而生的 AI Agent 框架
 
+<br/>
+
 ## 📄 许可证
 
-MIT © [Hal Long](https://github.com/loonghao)
+[MIT](LICENSE) © [Hal Long](https://github.com/loonghao)
+
+<br/>
+
+---
+
+<div align="center">
+
+**[⬆ 回到顶部](#noti)**
+
+Made with ❤️ in Rust
+
+</div>
