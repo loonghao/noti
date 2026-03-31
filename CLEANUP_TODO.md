@@ -47,6 +47,17 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`sqlite.rs` `str_to_status` — silently falls back to `Queued` for unknown status values, should log warning~~ — added explicit `"queued"` match arm and `tracing::warn!` on unknown values
 - [ ] `state.rs` `new()` vs `with_queue_backend()` — API inconsistency (one always succeeds, other can panic)
 
+## Code — QueueStats → StatsResponse Duplication (noti-server)
+
+- [ ] `metrics.rs:57-64` and `queue.rs:435-442` — identical `QueueStats` → `StatsResponse` field-by-field conversion; implement `From<QueueStats> for StatsResponse`
+- [ ] `metrics.rs:43` — `unwrap_or_default()` silently swallows queue stats error; should at least `tracing::warn` on failure
+- [ ] `queue.rs:404-407` — invalid `?status=` query param silently ignored (returns all tasks); should return 400 for unrecognized values
+
+## Documentation — Missing Features
+
+- [ ] `docs/guide/architecture.md` — noti-queue section missing "stale task recovery" feature (code: `QueueBackend::recover_stale_tasks()` + `AppState::with_queue_backend()`)
+- [ ] `docs/guide/contributing.md` — missing `vx just build-server`, `vx just docs-dev`, `vx just docs-build`, `vx just docs-preview` commands
+
 ## Build
 
 - [x] ~~`justfile` `build-release` only builds `noti-cli` — no recipe for building `noti-server`~~ — added `build-server` recipe (9c73d13)
