@@ -14,6 +14,7 @@
 //! | `NOTI_RATE_LIMIT_PER_IP` | `true` | Per-IP rate limiting |
 //! | `NOTI_WORKER_COUNT` | `4` | Number of background queue workers |
 //! | `NOTI_LOG_LEVEL` | `info` | Tracing log level filter |
+//! | `NOTI_LOG_FORMAT` | `text` | Log output format: `text` or `json` |
 //! | `NOTI_MAX_BODY_SIZE` | `2097152` | Max request body size in bytes (default 2 MiB) |
 
 use std::env;
@@ -22,6 +23,25 @@ use std::time::Duration;
 
 use crate::middleware::auth::AuthConfig;
 use crate::middleware::rate_limit::RateLimitConfig;
+
+/// Log output format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogFormat {
+    /// Human-readable text output (default).
+    Text,
+    /// Structured JSON output suitable for log aggregation pipelines.
+    Json,
+}
+
+impl LogFormat {
+    /// Parse from string, defaulting to [`LogFormat::Text`] for unrecognised values.
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "json" => Self::Json,
+            _ => Self::Text,
+        }
+    }
+}
 
 /// Centralized server configuration, populated from environment variables.
 #[derive(Debug, Clone)]
@@ -38,6 +58,8 @@ pub struct ServerConfig {
     pub worker_count: usize,
     /// Log-level filter string.
     pub log_level: String,
+    /// Log output format (`text` or `json`).
+    pub log_format: LogFormat,
     /// Maximum request body size in bytes.
     pub max_body_size: usize,
 }
@@ -54,6 +76,7 @@ impl Default for ServerConfig {
             rate_limit: RateLimitConfig::new(100, Duration::from_secs(60)).with_per_ip(true),
             worker_count: 4,
             log_level: "info".to_string(),
+            log_format: LogFormat::Text,
             max_body_size: DEFAULT_MAX_BODY_SIZE,
         }
     }
@@ -100,6 +123,10 @@ impl ServerConfig {
 
         let log_level = env::var("NOTI_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
+        let log_format = env::var("NOTI_LOG_FORMAT")
+            .map(|v| LogFormat::from_str_lossy(&v))
+            .unwrap_or(LogFormat::Text);
+
         let max_body_size = env::var("NOTI_MAX_BODY_SIZE")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -112,6 +139,7 @@ impl ServerConfig {
             rate_limit,
             worker_count,
             log_level,
+            log_format,
             max_body_size,
         }
     }
@@ -156,7 +184,19 @@ mod tests {
         assert_eq!(cfg.port, 3000);
         assert_eq!(cfg.worker_count, 4);
         assert_eq!(cfg.log_level, "info");
+        assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(!cfg.auth.enabled);
+    }
+
+    #[test]
+    fn test_log_format_parsing() {
+        assert_eq!(LogFormat::from_str_lossy("json"), LogFormat::Json);
+        assert_eq!(LogFormat::from_str_lossy("JSON"), LogFormat::Json);
+        assert_eq!(LogFormat::from_str_lossy("Json"), LogFormat::Json);
+        assert_eq!(LogFormat::from_str_lossy("text"), LogFormat::Text);
+        assert_eq!(LogFormat::from_str_lossy("TEXT"), LogFormat::Text);
+        assert_eq!(LogFormat::from_str_lossy("unknown"), LogFormat::Text);
+        assert_eq!(LogFormat::from_str_lossy(""), LogFormat::Text);
     }
 
     #[test]

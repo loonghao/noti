@@ -1,10 +1,13 @@
 //! Request ID middleware for axum.
 //!
-//! Assigns a unique request ID to every incoming request and propagates it
-//! in the response via the `X-Request-Id` header.
+//! Assigns a unique request ID to every incoming request, propagates it
+//! in the response via the `X-Request-Id` header, and injects it into
+//! a [`tracing::Span`] so that all downstream log entries automatically
+//! include the `request_id` field.
 
 use axum::http::{Request, header::HeaderName, header::HeaderValue};
 use axum::response::Response;
+use tracing::Instrument;
 use uuid::Uuid;
 
 static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -13,7 +16,8 @@ static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 ///
 /// If the request already carries an `X-Request-Id` header, it is preserved.
 /// Otherwise a new UUID v4 is generated. The ID is always echoed back in the
-/// response.
+/// response and attached to a [`tracing::info_span`] that wraps the
+/// downstream handler, enabling automatic log correlation.
 pub async fn request_id_middleware(
     mut request: Request<axum::body::Body>,
     next: axum::middleware::Next,
@@ -31,7 +35,15 @@ pub async fn request_id_middleware(
         request.headers_mut().insert(X_REQUEST_ID.clone(), val);
     }
 
-    let mut response = next.run(request).await;
+    // Create a span that carries the request_id for all downstream logging
+    let span = tracing::info_span!(
+        "request",
+        request_id = %request_id,
+        method = %request.method(),
+        path = %request.uri().path(),
+    );
+
+    let mut response = next.run(request).instrument(span).await;
 
     // Echo the request ID in the response
     if let Ok(val) = HeaderValue::from_str(&request_id) {

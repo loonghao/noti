@@ -2,7 +2,7 @@ use axum::extract::DefaultBodyLimit;
 
 use noti_core::ProviderRegistry;
 use noti_queue::WorkerConfig;
-use noti_server::config::ServerConfig;
+use noti_server::config::{LogFormat, ServerConfig};
 use noti_server::middleware::auth::{AuthState, auth_middleware};
 use noti_server::middleware::rate_limit::{RateLimiterState, rate_limit_middleware};
 use noti_server::middleware::request_id::request_id_middleware;
@@ -16,13 +16,26 @@ async fn main() {
     // Load configuration from environment variables
     let config = ServerConfig::from_env();
 
-    // Initialize tracing with configured log level
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| config.log_level.clone().into()),
-        )
-        .init();
+    // Initialize tracing with configured log level and format
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| config.log_level.clone().into());
+
+    match config.log_format {
+        LogFormat::Json => {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+                .flatten_event(true)
+                .with_current_span(true)
+                .init();
+        }
+        LogFormat::Text => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .init();
+        }
+    }
 
     tracing::info!("loaded configuration from environment");
 
