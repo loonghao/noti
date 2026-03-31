@@ -226,6 +226,35 @@ pub async fn send_notification(
     }
 }
 
+/// Map a [`noti_core::TargetResult`] to an API result and its delivery status.
+fn map_target_result(result: &noti_core::TargetResult) -> (TargetApiResult, DeliveryStatus) {
+    let success = result.is_success();
+    let (message, status) = if success {
+        let msg = result
+            .outcome
+            .result
+            .as_ref()
+            .map(|r| r.message.clone())
+            .unwrap_or_default();
+        (msg, DeliveryStatus::Delivered)
+    } else {
+        let msg = match &result.outcome.result {
+            Ok(r) => r.message.clone(),
+            Err(e) => e.to_string(),
+        };
+        (msg, DeliveryStatus::Failed)
+    };
+
+    let api_result = TargetApiResult {
+        provider: result.provider_name.clone(),
+        success,
+        message,
+        attempts: result.outcome.attempts,
+    };
+
+    (api_result, status)
+}
+
 /// Send to multiple providers in parallel or failover mode.
 #[utoipa::path(
     post,
@@ -289,39 +318,17 @@ pub async fn send_batch(
     // Map results and update statuses
     let mut api_results = Vec::new();
     for target_result in &batch_result.results {
-        let success = target_result.is_success();
-        let (message, status) = if success {
-            let msg = target_result
-                .outcome
-                .result
-                .as_ref()
-                .map(|r| r.message.clone())
-                .unwrap_or_default();
-            (msg, DeliveryStatus::Delivered)
-        } else {
-            let msg = match &target_result.outcome.result {
-                Ok(r) => r.message.clone(),
-                Err(e) => e.to_string(),
-            };
-            (msg, DeliveryStatus::Failed)
-        };
-
+        let (api_result, status) = map_target_result(target_result);
         state
             .status_tracker
             .update_status(
                 &notification_id,
                 &target_result.provider_name,
                 status,
-                Some(message.clone()),
+                Some(api_result.message.clone()),
             )
             .await;
-
-        api_results.push(TargetApiResult {
-            provider: target_result.provider_name.clone(),
-            success,
-            message,
-            attempts: target_result.outcome.attempts,
-        });
+        api_results.push(api_result);
     }
 
     Ok(Json(BatchSendApiResponse {

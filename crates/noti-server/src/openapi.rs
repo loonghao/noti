@@ -12,7 +12,7 @@ use crate::handlers::{
     metrics::{self, MetricsResponse, ProviderMetrics},
     providers::{self, ParamInfo, ProviderInfo, ProviderListResponse, ProviderSummary},
     queue::{
-        self, AsyncSendRequest, BatchAsyncItem, BatchAsyncRequest, BatchEnqueueItemResult,
+        self, AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult,
         BatchEnqueueResponse, CancelResponse, EnqueueResponse, PurgeResponse, StatsResponse,
         TaskInfo,
     },
@@ -89,7 +89,7 @@ use crate::handlers::{
         BatchSendRequest, BatchTarget, BatchSendApiResponse, TargetApiResult,
         // Queue
         AsyncSendRequest, EnqueueResponse,
-        BatchAsyncRequest, BatchAsyncItem, BatchEnqueueResponse, BatchEnqueueItemResult,
+        BatchAsyncRequest, BatchEnqueueResponse, BatchEnqueueItemResult,
         TaskInfo, StatsResponse, CancelResponse, PurgeResponse,
         // Status
         StatusResponse, AllStatusesResponse,

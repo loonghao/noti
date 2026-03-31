@@ -18,7 +18,7 @@ use crate::state::AppState;
 // ───────────────────── Request types ─────────────────────
 
 /// Request body for async notification via the queue.
-#[derive(Debug, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
 pub struct AsyncSendRequest {
     /// Provider name (e.g. "slack", "email", "webhook").
     #[validate(length(min = 1, message = "provider must not be empty"))]
@@ -109,43 +109,14 @@ pub struct CancelResponse {
 
 // ───────────────────── Batch async types ─────────────────────
 
-/// A single notification item within a batch async request.
-#[derive(Debug, Deserialize, Serialize, Validate, ToSchema)]
-pub struct BatchAsyncItem {
-    /// Provider name (e.g. "slack", "email", "webhook").
-    #[validate(length(min = 1, message = "provider must not be empty"))]
-    pub provider: String,
-    /// Provider-specific configuration values.
-    #[serde(default)]
-    pub config: HashMap<String, String>,
-    /// Message body text.
-    #[validate(length(min = 1, message = "text must not be empty"))]
-    pub text: String,
-    /// Optional message title/subject.
-    pub title: Option<String>,
-    /// Message format: "text", "markdown", or "html".
-    #[serde(default)]
-    pub format: Option<String>,
-    /// Priority: "low", "normal", "high", "urgent".
-    pub priority: Option<String>,
-    /// Extra provider-specific parameters.
-    #[serde(default)]
-    pub extra: HashMap<String, serde_json::Value>,
-    /// Retry policy configuration.
-    pub retry: Option<RetryConfig>,
-    /// Optional metadata for tracking/correlation.
-    #[serde(default)]
-    pub metadata: HashMap<String, String>,
-    /// Optional webhook URL to call when the task completes or fails.
-    pub callback_url: Option<String>,
-}
-
 /// Request body for batch async notification enqueue.
+///
+/// Each item reuses [`AsyncSendRequest`] since the fields are identical.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct BatchAsyncRequest {
     /// List of notifications to enqueue.
     #[validate(length(min = 1, message = "items must not be empty"))]
-    pub items: Vec<BatchAsyncItem>,
+    pub items: Vec<AsyncSendRequest>,
 }
 
 /// Per-item result in a batch enqueue response.
