@@ -18,6 +18,11 @@ vx just coverage     # Generate coverage report (LCOV)
 vx just coverage-html # Generate HTML coverage report
 vx just ci           # Full CI pipeline (fmt + check + lint + test)
 vx just run -- send --help   # Run CLI in dev mode
+vx just build-release        # Build CLI release binary
+vx just build-server         # Build server release binary
+vx just docs-dev             # Start docs dev server
+vx just docs-build           # Build docs for production
+vx just docs-preview         # Preview built docs
 ```
 
 ## Adding a New Provider

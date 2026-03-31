@@ -40,6 +40,7 @@ export default defineConfig({
           text: 'Usage',
           items: [
             { text: 'Sending Notifications', link: '/guide/sending-notifications' },
+            { text: 'Core Features', link: '/guide/core-features' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
           ],

@@ -59,6 +59,7 @@ Async message queue for background notification processing:
 - **Priority-based queue** — tasks ordered by priority level
 - **In-memory backend** — `InMemoryQueue` with configurable capacity
 - **SQLite backend** — `SqliteQueue` for persistent task storage across restarts
+- **Stale task recovery** — automatically recovers tasks left in `Processing` state after an unclean shutdown via `QueueBackend::recover_stale_tasks()`
 - **Worker pool** — concurrent workers dequeue and deliver notifications
 - **Webhook callbacks** — HTTP POST on task completion or failure
 - **Task lifecycle** — queued → processing → completed/failed/cancelled

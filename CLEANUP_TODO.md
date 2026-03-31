@@ -11,7 +11,7 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`docs/guide/what-is-noti.md` — same "three crates" issue~~ — updated to 5 crates (dcef4e9)
 - [x] ~~`docs/guide/contributing.md` — test commands only list 3 crates~~ — added noti-queue and noti-server (dcef4e9)
 - [x] ~~`docs/reference/cli.md` — `send` command table missing `--priority` parameter~~ — added (dcef4e9)
-- [ ] Core features not documented anywhere: message templates, retry policies, batch/failover sending, delivery status tracking, priority system
+- [x] ~~Core features not documented anywhere: message templates, retry policies, batch/failover sending, delivery status tracking, priority system~~ — created `docs/guide/core-features.md` with full documentation
 
 ## Documentation — Fixed This Round
 

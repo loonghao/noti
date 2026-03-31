@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use noti_core::{ProviderRegistry, StatusTracker, TemplateRegistry};
-use noti_queue::{InMemoryQueue, QueueBackend, SqliteQueue, WorkerConfig, WorkerHandle, WorkerPool};
+use noti_queue::{
+    InMemoryQueue, QueueBackend, QueueError, SqliteQueue, WorkerConfig, WorkerHandle, WorkerPool,
+};
 use tokio::sync::{Notify, RwLock};
 
 use crate::config::QueueBackendType;
@@ -19,6 +21,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Create state with the default in-memory queue backend.
     pub fn new(registry: ProviderRegistry) -> Self {
         let queue = Arc::new(InMemoryQueue::new());
         let task_notify = queue.notifier();
@@ -37,15 +40,18 @@ impl AppState {
     ///
     /// For persistent backends (SQLite), this also recovers any tasks that
     /// were left in `Processing` state after an unclean shutdown.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueueError`] if the SQLite database cannot be opened.
     pub async fn with_queue_backend(
         registry: ProviderRegistry,
         backend: &QueueBackendType,
         db_path: &str,
-    ) -> Self {
+    ) -> Result<Self, QueueError> {
         let (queue, task_notify): (Arc<dyn QueueBackend>, Arc<Notify>) = match backend {
             QueueBackendType::Sqlite => {
-                let q = SqliteQueue::open(db_path)
-                    .expect("failed to open SQLite queue database");
+                let q = SqliteQueue::open(db_path)?;
                 let notify = q.notifier();
                 (Arc::new(q), notify)
             }
@@ -63,14 +69,14 @@ impl AppState {
             Err(e) => tracing::warn!(error = %e, "failed to recover stale tasks"),
         }
 
-        Self {
+        Ok(Self {
             registry: Arc::new(registry),
             status_tracker: StatusTracker::new(),
             template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
             queue,
             task_notify,
             started_at: SystemTime::now(),
-        }
+        })
     }
 
     /// Start background worker pool for async task processing.
