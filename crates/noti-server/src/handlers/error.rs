@@ -7,9 +7,10 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 /// Standardized error response for all API endpoints.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiError {
     /// Machine-readable error code (e.g. "not_found", "bad_request").
     pub error: String,
@@ -17,6 +18,7 @@ pub struct ApiError {
     pub message: String,
     /// HTTP status code (not serialized to JSON body, used for response status).
     #[serde(skip)]
+    #[schema(ignore)]
     pub status: StatusCode,
 }
 

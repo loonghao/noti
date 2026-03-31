@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use noti_core::{Message, MessageFormat, Priority, RetryPolicy};
 
 /// Retry configuration for the API.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RetryConfig {
     /// Maximum number of retries.
     pub max_retries: Option<u32>,

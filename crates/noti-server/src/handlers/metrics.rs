@@ -1,13 +1,14 @@
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::state::AppState;
 
 /// Prometheus-compatible metrics response (in JSON format).
 ///
 /// Provides key operational metrics for monitoring dashboards.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct MetricsResponse {
     /// Queue statistics.
     pub queue: QueueMetrics,
@@ -20,7 +21,7 @@ pub struct MetricsResponse {
 }
 
 /// Queue-related metrics.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct QueueMetrics {
     pub queued: usize,
     pub processing: usize,
@@ -31,7 +32,7 @@ pub struct QueueMetrics {
 }
 
 /// Provider-related metrics.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ProviderMetrics {
     /// Total registered providers.
     pub total_registered: usize,
@@ -39,7 +40,15 @@ pub struct ProviderMetrics {
     pub with_attachment_support: usize,
 }
 
-/// GET /api/v1/metrics — Get operational metrics.
+/// Get operational metrics for monitoring.
+#[utoipa::path(
+    get,
+    path = "/api/v1/metrics",
+    tag = "Monitoring",
+    responses(
+        (status = 200, description = "Server metrics", body = MetricsResponse)
+    )
+)]
 pub async fn get_metrics(State(state): State<AppState>) -> Json<MetricsResponse> {
     let queue_stats = state.queue.stats().await.unwrap_or_default();
     let all_providers = state.registry.all_providers();

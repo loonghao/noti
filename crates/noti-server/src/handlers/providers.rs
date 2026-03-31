@@ -1,12 +1,13 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Provider summary info.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProviderInfo {
     pub name: String,
     pub scheme: String,
@@ -17,7 +18,7 @@ pub struct ProviderInfo {
 }
 
 /// Parameter definition info.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ParamInfo {
     pub name: String,
     pub description: String,
@@ -26,14 +27,14 @@ pub struct ParamInfo {
 }
 
 /// List providers response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProviderListResponse {
     pub providers: Vec<ProviderSummary>,
     pub total: usize,
 }
 
 /// Provider summary for list endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ProviderSummary {
     pub name: String,
     pub scheme: String,
@@ -41,7 +42,15 @@ pub struct ProviderSummary {
     pub supports_attachments: bool,
 }
 
-/// GET /api/v1/providers — List all available providers.
+/// List all available notification providers.
+#[utoipa::path(
+    get,
+    path = "/api/v1/providers",
+    tag = "Providers",
+    responses(
+        (status = 200, description = "List of all providers", body = ProviderListResponse)
+    )
+)]
 pub async fn list_providers(State(state): State<AppState>) -> Json<ProviderListResponse> {
     let mut providers: Vec<ProviderSummary> = state
         .registry
@@ -61,7 +70,17 @@ pub async fn list_providers(State(state): State<AppState>) -> Json<ProviderListR
     Json(ProviderListResponse { providers, total })
 }
 
-/// GET /api/v1/providers/:name — Get detailed info about a specific provider.
+/// Get detailed info about a specific provider.
+#[utoipa::path(
+    get,
+    path = "/api/v1/providers/{name}",
+    tag = "Providers",
+    params(("name" = String, Path, description = "Provider name")),
+    responses(
+        (status = 200, description = "Provider details", body = ProviderInfo),
+        (status = 404, description = "Provider not found", body = ApiError),
+    )
+)]
 pub async fn get_provider(
     State(state): State<AppState>,
     Path(name): Path<String>,

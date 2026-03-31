@@ -6,6 +6,7 @@ use crate::task::{NotificationTask, TaskId, TaskStatus};
 
 /// Statistics about the current queue state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct QueueStats {
     /// Number of tasks waiting to be processed.
     pub queued: usize,

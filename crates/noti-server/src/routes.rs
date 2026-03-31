@@ -1,10 +1,13 @@
 use axum::Router;
 use axum::routing::{get, post};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::handlers;
+use crate::openapi::ApiDoc;
 use crate::state::AppState;
 
-/// Build the application router with all API routes.
+/// Build the application router with all API routes and Swagger UI.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         // Health check
@@ -58,4 +61,9 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/queue/purge", post(handlers::queue::purge_tasks))
         .with_state(state)
+        // Swagger UI and OpenAPI spec (stateless, merged after with_state)
+        .merge(
+            SwaggerUi::new("/swagger-ui")
+                .url("/api-docs/openapi.json", ApiDoc::openapi()),
+        )
 }

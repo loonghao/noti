@@ -11,6 +11,7 @@ pub type TaskId = String;
 
 /// Current status of a queued notification task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Waiting in queue to be picked up by a worker.

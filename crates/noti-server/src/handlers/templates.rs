@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use noti_core::MessageTemplate;
 
@@ -11,7 +12,7 @@ use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Request body for creating a template.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateTemplateRequest {
     /// Template name (unique identifier).
     pub name: String,
@@ -25,14 +26,14 @@ pub struct CreateTemplateRequest {
 }
 
 /// Request body for rendering a template.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RenderTemplateRequest {
     /// Variable values for rendering.
     pub variables: HashMap<String, String>,
 }
 
 /// Template info response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TemplateResponse {
     pub name: String,
     pub body: String,
@@ -42,14 +43,14 @@ pub struct TemplateResponse {
 }
 
 /// Rendered template response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RenderedTemplateResponse {
     pub text: String,
     pub title: Option<String>,
 }
 
 /// Request body for updating a template.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTemplateRequest {
     /// New template body with {{variable}} placeholders.
     pub body: Option<String>,
@@ -61,21 +62,30 @@ pub struct UpdateTemplateRequest {
 }
 
 /// Template list response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TemplateListResponse {
     pub templates: Vec<String>,
     pub total: usize,
 }
 
 /// Response for deleting a template.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeleteTemplateResponse {
     pub name: String,
     pub deleted: bool,
     pub message: String,
 }
 
-/// POST /api/v1/templates — Create a new message template.
+/// Create a new message template.
+#[utoipa::path(
+    post,
+    path = "/api/v1/templates",
+    tag = "Templates",
+    request_body = CreateTemplateRequest,
+    responses(
+        (status = 201, description = "Template created", body = TemplateResponse),
+    )
+)]
 pub async fn create_template(
     State(state): State<AppState>,
     Json(req): Json<CreateTemplateRequest>,
@@ -111,7 +121,15 @@ pub async fn create_template(
     ))
 }
 
-/// GET /api/v1/templates — List all registered templates.
+/// List all registered templates.
+#[utoipa::path(
+    get,
+    path = "/api/v1/templates",
+    tag = "Templates",
+    responses(
+        (status = 200, description = "Template list", body = TemplateListResponse)
+    )
+)]
 pub async fn list_templates(State(state): State<AppState>) -> Json<TemplateListResponse> {
     let registry = state.template_registry.read().await;
     let names: Vec<String> = registry.names().into_iter().map(|s| s.to_string()).collect();
@@ -123,7 +141,17 @@ pub async fn list_templates(State(state): State<AppState>) -> Json<TemplateListR
     })
 }
 
-/// GET /api/v1/templates/:name — Get a specific template.
+/// Get a specific template by name.
+#[utoipa::path(
+    get,
+    path = "/api/v1/templates/{name}",
+    tag = "Templates",
+    params(("name" = String, Path, description = "Template name")),
+    responses(
+        (status = 200, description = "Template found", body = TemplateResponse),
+        (status = 404, description = "Template not found", body = ApiError),
+    )
+)]
 pub async fn get_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -142,7 +170,19 @@ pub async fn get_template(
     }))
 }
 
-/// POST /api/v1/templates/:name/render — Render a template with variables.
+/// Render a template with variable substitution.
+#[utoipa::path(
+    post,
+    path = "/api/v1/templates/{name}/render",
+    tag = "Templates",
+    params(("name" = String, Path, description = "Template name")),
+    request_body = RenderTemplateRequest,
+    responses(
+        (status = 200, description = "Template rendered", body = RenderedTemplateResponse),
+        (status = 400, description = "Missing required variables", body = ApiError),
+        (status = 404, description = "Template not found", body = ApiError),
+    )
+)]
 pub async fn render_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -163,7 +203,18 @@ pub async fn render_template(
     Ok(Json(RenderedTemplateResponse { text, title }))
 }
 
-/// PUT /api/v1/templates/:name — Update an existing template.
+/// Update an existing template.
+#[utoipa::path(
+    put,
+    path = "/api/v1/templates/{name}",
+    tag = "Templates",
+    params(("name" = String, Path, description = "Template name")),
+    request_body = UpdateTemplateRequest,
+    responses(
+        (status = 200, description = "Template updated", body = TemplateResponse),
+        (status = 404, description = "Template not found", body = ApiError),
+    )
+)]
 pub async fn update_template(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -207,7 +258,17 @@ pub async fn update_template(
     Ok(Json(response))
 }
 
-/// DELETE /api/v1/templates/:name — Delete a template.
+/// Delete a template by name.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/templates/{name}",
+    tag = "Templates",
+    params(("name" = String, Path, description = "Template name")),
+    responses(
+        (status = 200, description = "Template deleted", body = DeleteTemplateResponse),
+        (status = 404, description = "Template not found", body = ApiError),
+    )
+)]
 pub async fn delete_template(
     State(state): State<AppState>,
     Path(name): Path<String>,

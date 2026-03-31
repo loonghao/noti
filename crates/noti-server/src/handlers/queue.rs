@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use noti_core::{ProviderConfig, RetryPolicy};
 use noti_queue::{NotificationTask, QueueStats, TaskStatus};
@@ -15,7 +16,7 @@ use crate::state::AppState;
 // ───────────────────── Request types ─────────────────────
 
 /// Request body for async notification via the queue.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AsyncSendRequest {
     /// Provider name (e.g. "slack", "email", "webhook").
     pub provider: String,
@@ -44,7 +45,7 @@ pub struct AsyncSendRequest {
 }
 
 /// Query parameters for listing tasks.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct ListTasksQuery {
     /// Filter by status: "queued", "processing", "completed", "failed", "cancelled".
     pub status: Option<String>,
@@ -55,7 +56,7 @@ pub struct ListTasksQuery {
 // ───────────────────── Response types ─────────────────────
 
 /// Response for a successfully enqueued task.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct EnqueueResponse {
     pub task_id: String,
     pub status: String,
@@ -63,7 +64,7 @@ pub struct EnqueueResponse {
 }
 
 /// Serializable task info for API responses.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct TaskInfo {
     pub id: String,
     pub provider: String,
@@ -77,7 +78,7 @@ pub struct TaskInfo {
 }
 
 /// Response for queue statistics.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct StatsResponse {
     pub queued: usize,
     pub processing: usize,
@@ -88,14 +89,14 @@ pub struct StatsResponse {
 }
 
 /// Response for purge operation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct PurgeResponse {
     pub purged: usize,
     pub message: String,
 }
 
 /// Response for cancel operation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelResponse {
     pub task_id: String,
     pub cancelled: bool,
@@ -105,7 +106,7 @@ pub struct CancelResponse {
 // ───────────────────── Batch async types ─────────────────────
 
 /// A single notification item within a batch async request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BatchAsyncItem {
     /// Provider name (e.g. "slack", "email", "webhook").
     pub provider: String,
@@ -134,14 +135,14 @@ pub struct BatchAsyncItem {
 }
 
 /// Request body for batch async notification enqueue.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BatchAsyncRequest {
     /// List of notifications to enqueue.
     pub items: Vec<BatchAsyncItem>,
 }
 
 /// Per-item result in a batch enqueue response.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct BatchEnqueueItemResult {
     /// Index of the item in the request.
     pub index: usize,
@@ -158,7 +159,7 @@ pub struct BatchEnqueueItemResult {
 }
 
 /// Response for batch async enqueue.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct BatchEnqueueResponse {
     /// Per-item results.
     pub results: Vec<BatchEnqueueItemResult>,
@@ -209,7 +210,18 @@ fn queue_error(e: noti_queue::QueueError) -> ApiError {
 
 // ───────────────────── Handlers ─────────────────────
 
-/// POST /api/v1/send/async — Enqueue a notification for async processing.
+/// Enqueue a notification for asynchronous processing.
+#[utoipa::path(
+    post,
+    path = "/api/v1/send/async",
+    tag = "Async Queue",
+    request_body = AsyncSendRequest,
+    responses(
+        (status = 202, description = "Notification enqueued", body = EnqueueResponse),
+        (status = 404, description = "Provider not found", body = ApiError),
+        (status = 503, description = "Queue full", body = ApiError),
+    )
+)]
 pub async fn send_async(
     State(state): State<AppState>,
     Json(req): Json<AsyncSendRequest>,
@@ -261,7 +273,17 @@ pub async fn send_async(
     ))
 }
 
-/// POST /api/v1/send/async/batch — Enqueue multiple notifications for async processing.
+/// Enqueue multiple notifications for asynchronous processing.
+#[utoipa::path(
+    post,
+    path = "/api/v1/send/async/batch",
+    tag = "Async Queue",
+    request_body = BatchAsyncRequest,
+    responses(
+        (status = 202, description = "Batch enqueued", body = BatchEnqueueResponse),
+        (status = 400, description = "Invalid request", body = ApiError),
+    )
+)]
 pub async fn send_async_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchAsyncRequest>,
@@ -349,7 +371,17 @@ pub async fn send_async_batch(
     ))
 }
 
-/// GET /api/v1/queue/tasks/{task_id} — Get status of a queued task.
+/// Get status of a queued task.
+#[utoipa::path(
+    get,
+    path = "/api/v1/queue/tasks/{task_id}",
+    tag = "Async Queue",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Task info", body = TaskInfo),
+        (status = 404, description = "Task not found", body = ApiError),
+    )
+)]
 pub async fn get_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
@@ -364,7 +396,16 @@ pub async fn get_task(
     Ok(Json(task_to_info(&task)))
 }
 
-/// GET /api/v1/queue/tasks — List tasks with optional status filter.
+/// List queued tasks with optional status filter.
+#[utoipa::path(
+    get,
+    path = "/api/v1/queue/tasks",
+    tag = "Async Queue",
+    params(ListTasksQuery),
+    responses(
+        (status = 200, description = "Task list", body = Vec<TaskInfo>)
+    )
+)]
 pub async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<ListTasksQuery>,
@@ -386,7 +427,15 @@ pub async fn list_tasks(
     Ok(Json(infos))
 }
 
-/// GET /api/v1/queue/stats — Get queue statistics.
+/// Get queue statistics.
+#[utoipa::path(
+    get,
+    path = "/api/v1/queue/stats",
+    tag = "Async Queue",
+    responses(
+        (status = 200, description = "Queue statistics", body = StatsResponse)
+    )
+)]
 pub async fn get_stats(
     State(state): State<AppState>,
 ) -> Result<Json<StatsResponse>, ApiError> {
@@ -402,7 +451,16 @@ pub async fn get_stats(
     }))
 }
 
-/// POST /api/v1/queue/tasks/{task_id}/cancel — Cancel a queued task.
+/// Cancel a queued task.
+#[utoipa::path(
+    post,
+    path = "/api/v1/queue/tasks/{task_id}/cancel",
+    tag = "Async Queue",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Cancel result", body = CancelResponse)
+    )
+)]
 pub async fn cancel_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
@@ -426,7 +484,15 @@ pub async fn cancel_task(
     }))
 }
 
-/// POST /api/v1/queue/purge — Purge completed/failed/cancelled tasks.
+/// Purge completed, failed, and cancelled tasks from the queue.
+#[utoipa::path(
+    post,
+    path = "/api/v1/queue/purge",
+    tag = "Async Queue",
+    responses(
+        (status = 200, description = "Purge result", body = PurgeResponse)
+    )
+)]
 pub async fn purge_tasks(
     State(state): State<AppState>,
 ) -> Result<Json<PurgeResponse>, ApiError> {

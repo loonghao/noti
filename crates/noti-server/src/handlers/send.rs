@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use noti_core::{DeliveryStatus, ProviderConfig, RetryPolicy, SendResponse};
@@ -12,7 +13,7 @@ use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
 /// Request body for sending a single notification.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SendRequest {
     /// Provider name (e.g. "slack", "email", "webhook").
     pub provider: String,
@@ -36,7 +37,7 @@ pub struct SendRequest {
 }
 
 /// Request body for batch sending.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BatchSendRequest {
     /// List of targets to send to.
     pub targets: Vec<BatchTarget>,
@@ -64,7 +65,7 @@ fn default_mode() -> String {
 }
 
 /// A single target within a batch send request.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct BatchTarget {
     /// Provider name.
     pub provider: String,
@@ -74,7 +75,7 @@ pub struct BatchTarget {
 }
 
 /// API response for a send operation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SendApiResponse {
     /// Unique notification ID for tracking.
     pub notification_id: String,
@@ -90,7 +91,7 @@ pub struct SendApiResponse {
 }
 
 /// API response for a batch send operation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct BatchSendApiResponse {
     /// Unique notification ID for tracking.
     pub notification_id: String,
@@ -107,7 +108,7 @@ pub struct BatchSendApiResponse {
 }
 
 /// Per-target result within a batch response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TargetApiResult {
     pub provider: String,
     pub success: bool,
@@ -115,7 +116,18 @@ pub struct TargetApiResult {
     pub attempts: u32,
 }
 
-/// POST /api/v1/send — Send a single notification.
+/// Send a single notification synchronously.
+#[utoipa::path(
+    post,
+    path = "/api/v1/send",
+    tag = "Notifications",
+    request_body = SendRequest,
+    responses(
+        (status = 200, description = "Notification sent", body = SendApiResponse),
+        (status = 400, description = "Invalid request", body = ApiError),
+        (status = 404, description = "Provider not found", body = ApiError),
+    )
+)]
 pub async fn send_notification(
     State(state): State<AppState>,
     Json(req): Json<SendRequest>,
@@ -211,7 +223,18 @@ pub async fn send_notification(
     }
 }
 
-/// POST /api/v1/send/batch — Send to multiple providers.
+/// Send to multiple providers in parallel or failover mode.
+#[utoipa::path(
+    post,
+    path = "/api/v1/send/batch",
+    tag = "Notifications",
+    request_body = BatchSendRequest,
+    responses(
+        (status = 200, description = "Batch send completed", body = BatchSendApiResponse),
+        (status = 400, description = "Invalid request", body = ApiError),
+        (status = 404, description = "Provider not found", body = ApiError),
+    )
+)]
 pub async fn send_batch(
     State(state): State<AppState>,
     Json(req): Json<BatchSendRequest>,

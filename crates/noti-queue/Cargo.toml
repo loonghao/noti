@@ -7,6 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+openapi = ["utoipa", "noti-core/openapi"]
+
 [dependencies]
 async-trait = { workspace = true }
 noti-core = { path = "../noti-core" }
@@ -16,6 +19,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 tracing = { workspace = true }
+utoipa = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
