@@ -1243,7 +1243,10 @@ async fn e2e_cors_permissive_preflight_succeeds() {
         .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/providers"))
         .header("Origin", "https://example.com")
         .header("Access-Control-Request-Method", "GET")
-        .header("Access-Control-Request-Headers", "Content-Type, Authorization")
+        .header(
+            "Access-Control-Request-Headers",
+            "Content-Type, Authorization",
+        )
         .send()
         .await
         .unwrap();
@@ -1255,18 +1258,15 @@ async fn e2e_cors_permissive_preflight_succeeds() {
         resp.status()
     );
     assert!(
-        resp.headers()
-            .contains_key("access-control-allow-origin"),
+        resp.headers().contains_key("access-control-allow-origin"),
         "preflight response should contain Access-Control-Allow-Origin"
     );
     assert!(
-        resp.headers()
-            .contains_key("access-control-allow-methods"),
+        resp.headers().contains_key("access-control-allow-methods"),
         "preflight response should contain Access-Control-Allow-Methods"
     );
     assert!(
-        resp.headers()
-            .contains_key("access-control-allow-headers"),
+        resp.headers().contains_key("access-control-allow-headers"),
         "preflight response should contain Access-Control-Allow-Headers"
     );
 }
@@ -1301,8 +1301,8 @@ async fn e2e_cors_restricted_allows_matching_origin() {
 
 #[tokio::test]
 async fn e2e_cors_restricted_rejects_non_matching_origin() {
-    let base = spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()])
-        .await;
+    let base =
+        spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()]).await;
     let client = reqwest::Client::new();
 
     let resp = client
@@ -1316,17 +1316,15 @@ async fn e2e_cors_restricted_rejects_non_matching_origin() {
     // but Access-Control-Allow-Origin should NOT be set for non-matching origins.
     assert_eq!(resp.status(), StatusCode::OK);
     assert!(
-        resp.headers()
-            .get("access-control-allow-origin")
-            .is_none(),
+        resp.headers().get("access-control-allow-origin").is_none(),
         "non-matching origin should NOT receive Access-Control-Allow-Origin header"
     );
 }
 
 #[tokio::test]
 async fn e2e_cors_restricted_preflight_non_matching_origin() {
-    let base = spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()])
-        .await;
+    let base =
+        spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()]).await;
     let client = reqwest::Client::new();
 
     let resp = client
@@ -1339,9 +1337,7 @@ async fn e2e_cors_restricted_preflight_non_matching_origin() {
 
     // Preflight for non-matching origin should not include ACAO
     assert!(
-        resp.headers()
-            .get("access-control-allow-origin")
-            .is_none(),
+        resp.headers().get("access-control-allow-origin").is_none(),
         "preflight for non-matching origin should NOT include ACAO"
     );
 }
@@ -1579,8 +1575,8 @@ use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use axum::routing::post as axum_post;
 use axum::Router;
+use axum::routing::post as axum_post;
 
 /// A mock provider that always succeeds.
 struct MockOkProvider;
@@ -1757,7 +1753,10 @@ async fn e2e_worker_processes_task_to_completion() {
 
     // Wait for worker to process the task
     let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed", "task should be completed by worker");
+    assert_eq!(
+        task["status"], "completed",
+        "task should be completed by worker"
+    );
     assert_eq!(task["provider"], "mock-ok");
 
     // Verify stats reflect the completed task

@@ -137,7 +137,20 @@ impl QueueBackend for InMemoryQueue {
 
     async fn dequeue(&self) -> Result<Option<NotificationTask>, QueueError> {
         let mut heap = self.heap.lock().await;
-        if let Some(entry) = heap.pop() {
+        // Skip cancelled (or otherwise non-queued) tasks that remain in the heap
+        // after being cancelled via the `cancel()` method.
+        while let Some(entry) = heap.pop() {
+            let task_id = &entry.task.id;
+
+            let tasks = self.tasks.lock().await;
+            let current_status = tasks.get(task_id).map(|t| t.status.clone());
+            drop(tasks);
+
+            if current_status != Some(TaskStatus::Queued) {
+                // Task was cancelled (or otherwise modified) after enqueue — skip it.
+                continue;
+            }
+
             let mut task = entry.task;
             task.mark_processing();
 
@@ -150,10 +163,9 @@ impl QueueBackend for InMemoryQueue {
             counters.processing += 1;
             drop(counters);
 
-            Ok(Some(task))
-        } else {
-            Ok(None)
+            return Ok(Some(task));
         }
+        Ok(None)
     }
 
     async fn ack(&self, task_id: &str) -> Result<(), QueueError> {
@@ -481,5 +493,82 @@ mod tests {
         let queue = InMemoryQueue::new();
         let result = queue.get_task("nonexistent").await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dequeue_skips_cancelled_tasks() {
+        let queue = InMemoryQueue::new();
+
+        let id_a = queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
+        let _id_b = queue
+            .enqueue(make_task("b", Priority::Normal))
+            .await
+            .unwrap();
+
+        // Cancel task a while it is still in the heap
+        let cancelled = queue.cancel(&id_a).await.unwrap();
+        assert!(cancelled);
+
+        // Dequeue should skip 'a' (cancelled) and return 'b'
+        let task = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(task.provider, "b");
+        assert_eq!(task.status, TaskStatus::Processing);
+
+        // Stats: a was cancelled (queued->cancelled), b was dequeued (queued->processing)
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.queued, 0);
+        assert_eq!(stats.processing, 1);
+        assert_eq!(stats.cancelled, 1);
+    }
+
+    #[tokio::test]
+    async fn test_dequeue_all_cancelled_returns_none() {
+        let queue = InMemoryQueue::new();
+
+        let id = queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
+        queue.cancel(&id).await.unwrap();
+
+        // Heap still has the entry, but dequeue should skip it and return None
+        let result = queue.dequeue().await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dequeue_skips_cancelled_preserves_priority_order() {
+        let queue = InMemoryQueue::new();
+
+        // Enqueue: low, urgent, normal
+        let id_low = queue
+            .enqueue(make_task("low", Priority::Low))
+            .await
+            .unwrap();
+        let id_urgent = queue
+            .enqueue(make_task("urgent", Priority::Urgent))
+            .await
+            .unwrap();
+        let _id_normal = queue
+            .enqueue(make_task("normal", Priority::Normal))
+            .await
+            .unwrap();
+
+        // Cancel the urgent task — dequeue should skip it
+        queue.cancel(&id_urgent).await.unwrap();
+
+        // First dequeue should return 'normal' (highest non-cancelled priority)
+        let t1 = queue.dequeue().await.unwrap().unwrap();
+        assert_eq!(t1.provider, "normal");
+
+        // Cancel low too
+        queue.cancel(&id_low).await.unwrap();
+
+        // Next dequeue should skip 'low' (cancelled) and return None
+        let t2 = queue.dequeue().await.unwrap();
+        assert!(t2.is_none());
     }
 }
