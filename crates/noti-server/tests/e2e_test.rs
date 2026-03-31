@@ -1572,3 +1572,524 @@ async fn e2e_validated_json_valid_request_passes_validation() {
         "valid payload should not trigger 422 validation error"
     );
 }
+
+// ───────────────────── Worker processing & Webhook callback (e2e) ─────────────────────
+
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use axum::routing::post as axum_post;
+use axum::Router;
+
+/// A mock provider that always succeeds.
+struct MockOkProvider;
+
+#[async_trait]
+impl noti_core::NotifyProvider for MockOkProvider {
+    fn name(&self) -> &str {
+        "mock-ok"
+    }
+    fn url_scheme(&self) -> &str {
+        "mock-ok"
+    }
+    fn params(&self) -> Vec<noti_core::ParamDef> {
+        vec![]
+    }
+    fn description(&self) -> &str {
+        "always succeeds"
+    }
+    fn example_url(&self) -> &str {
+        "mock-ok://test"
+    }
+    async fn send(
+        &self,
+        _message: &noti_core::Message,
+        _config: &noti_core::ProviderConfig,
+    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
+        Ok(noti_core::SendResponse::success("mock-ok", "ok"))
+    }
+}
+
+/// A mock provider that always fails (returns an error).
+struct MockFailProvider;
+
+#[async_trait]
+impl noti_core::NotifyProvider for MockFailProvider {
+    fn name(&self) -> &str {
+        "mock-fail"
+    }
+    fn url_scheme(&self) -> &str {
+        "mock-fail"
+    }
+    fn params(&self) -> Vec<noti_core::ParamDef> {
+        vec![]
+    }
+    fn description(&self) -> &str {
+        "always fails"
+    }
+    fn example_url(&self) -> &str {
+        "mock-fail://test"
+    }
+    async fn send(
+        &self,
+        _message: &noti_core::Message,
+        _config: &noti_core::ProviderConfig,
+    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
+        Err(noti_core::NotiError::Network("simulated failure".into()))
+    }
+}
+
+/// Shared state for the mock callback receiver.
+#[derive(Clone)]
+struct CallbackReceiverState {
+    payloads: Arc<Mutex<Vec<Value>>>,
+}
+
+/// Handler that records incoming callback payloads.
+async fn callback_handler(
+    axum::extract::State(state): axum::extract::State<CallbackReceiverState>,
+    axum::Json(payload): axum::Json<Value>,
+) -> StatusCode {
+    state.payloads.lock().unwrap().push(payload);
+    StatusCode::OK
+}
+
+/// Start a mock HTTP server that records POST payloads at `/callback`.
+/// Returns (base_url, shared payloads).
+async fn spawn_callback_server() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let payloads: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let state = CallbackReceiverState {
+        payloads: payloads.clone(),
+    };
+
+    let app = Router::new()
+        .route("/callback", axum_post(callback_handler))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind callback server");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{addr}"), payloads)
+}
+
+/// Start a noti server with mock providers and background workers enabled.
+/// Workers will actually process queued tasks.
+/// Returns (base_url, worker_handle).
+async fn spawn_server_with_workers() -> (String, noti_queue::WorkerHandle) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+    registry.register(Arc::new(MockFailProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(2)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let app = noti_server::routes::build_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{addr}"), worker_handle)
+}
+
+/// Helper: poll a task until it reaches a terminal state or timeout.
+async fn wait_for_terminal_status(client: &reqwest::Client, base: &str, task_id: &str) -> Value {
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(5);
+
+    loop {
+        let resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let body: Value = resp.json().await.unwrap();
+        let status = body["status"].as_str().unwrap_or("");
+
+        if matches!(status, "completed" | "failed" | "cancelled") {
+            return body;
+        }
+
+        if start.elapsed() > timeout {
+            panic!(
+                "task {task_id} did not reach terminal state within {timeout:?}, last status: {status}"
+            );
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn e2e_worker_processes_task_to_completion() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue a task for mock-ok provider
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "worker e2e test"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for worker to process the task
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "completed", "task should be completed by worker");
+    assert_eq!(task["provider"], "mock-ok");
+
+    // Verify stats reflect the completed task
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= 1);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_worker_handles_failed_task() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue a task for mock-fail provider with no retries
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "worker failure test",
+            "retry": {"max_retries": 0, "delay_ms": 10}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for worker to process and fail the task
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "failed", "task should be failed by worker");
+    assert!(
+        task["last_error"].is_string(),
+        "failed task should have an error message"
+    );
+
+    // Verify stats reflect the failed task
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["failed"].as_u64().unwrap() >= 1);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_webhook_callback_on_success() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue a task with callback_url
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "callback success test",
+            "callback_url": callback_url,
+            "metadata": {"trace_id": "e2e-callback-ok"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for task to complete
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "completed");
+
+    // Give callback a moment to fire (best-effort, async)
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Verify callback was received
+    let received = payloads.lock().unwrap();
+    assert!(
+        !received.is_empty(),
+        "callback server should have received at least one payload"
+    );
+
+    let cb = &received[0];
+    assert_eq!(cb["task_id"], task_id);
+    assert_eq!(cb["provider"], "mock-ok");
+    assert_eq!(cb["status"], "completed");
+    assert!(cb["attempts"].as_u64().unwrap() >= 1);
+    assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_webhook_callback_on_failure() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue a task with callback_url that will fail
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "callback failure test",
+            "callback_url": callback_url,
+            "retry": {"max_retries": 0, "delay_ms": 10}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for task to fail
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "failed");
+
+    // Give callback a moment to fire
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Verify callback was received with failure info
+    let received = payloads.lock().unwrap();
+    assert!(
+        !received.is_empty(),
+        "callback server should receive payload on failure"
+    );
+
+    let cb = &received[0];
+    assert_eq!(cb["task_id"], task_id);
+    assert_eq!(cb["provider"], "mock-fail");
+    assert_eq!(cb["status"], "failed");
+    assert!(
+        cb["last_error"].is_string(),
+        "failed callback should include last_error"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_no_callback_when_url_not_set() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue a task WITHOUT callback_url
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "no callback test"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for task to complete
+    let _task = wait_for_terminal_status(&client, &base, &task_id).await;
+
+    // Give extra time
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Callback server should NOT have received anything
+    let received = payloads.lock().unwrap();
+    assert!(
+        received.is_empty(),
+        "callback server should NOT receive payload when no callback_url is set, got {} payloads: {callback_base}",
+        received.len()
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_worker_multiple_tasks_processed() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let mut task_ids = Vec::new();
+
+    // Enqueue 5 tasks
+    for i in 0..5 {
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": format!("batch worker test {i}")
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        task_ids.push(body["task_id"].as_str().unwrap().to_string());
+    }
+
+    // Wait for all tasks to complete
+    for task_id in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        assert_eq!(
+            task["status"], "completed",
+            "task {task_id} should be completed"
+        );
+    }
+
+    // Verify stats
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= 5);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_webhook_callback_not_fired_for_cancelled_before_processing() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let callback_url = format!("{callback_base}/callback");
+
+    // Use a server WITHOUT workers so the task stays queued
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue a task with callback_url (but no workers to process it)
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "slack",
+            "text": "cancel before processing",
+            "callback_url": callback_url,
+            "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/test"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Cancel the task while it's still queued
+    let resp = client
+        .post(format!("{base}/api/v1/queue/tasks/{task_id}/cancel"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cancel_body: Value = resp.json().await.unwrap();
+    assert!(cancel_body["cancelled"].as_bool().unwrap());
+
+    // Give time for any spurious callback
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Callback should NOT be fired (cancellation via API doesn't trigger worker callback path)
+    let received = payloads.lock().unwrap();
+    assert!(
+        received.is_empty(),
+        "callback should not fire for API-cancelled tasks (not worker-triggered)"
+    );
+}
+
+#[tokio::test]
+async fn e2e_worker_task_with_metadata_preserved() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue with metadata
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "metadata test",
+            "callback_url": callback_url,
+            "metadata": {
+                "request_id": "req-abc-123",
+                "source": "e2e-test",
+                "env": "test"
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for completion
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "completed");
+
+    // Verify metadata is preserved in task info
+    assert_eq!(task["metadata"]["request_id"], "req-abc-123");
+    assert_eq!(task["metadata"]["source"], "e2e-test");
+    assert_eq!(task["metadata"]["env"], "test");
+
+    // Give callback time
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Verify metadata in callback payload
+    let received = payloads.lock().unwrap();
+    assert!(!received.is_empty());
+    let cb = &received[0];
+    assert_eq!(cb["metadata"]["request_id"], "req-abc-123");
+    assert_eq!(cb["metadata"]["source"], "e2e-test");
+    assert_eq!(cb["metadata"]["env"], "test");
+
+    worker_handle.shutdown_and_join().await;
+}
