@@ -1,9 +1,23 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use noti_core::{Message, MessageFormat, Priority, RetryPolicy};
+use noti_core::{Message, MessageFormat, NotifyProvider, Priority, ProviderRegistry, RetryPolicy};
+
+use super::error::ApiError;
+
+/// Look up a provider by name, returning an `ApiError::not_found` if missing.
+pub fn require_provider(
+    registry: &ProviderRegistry,
+    name: &str,
+) -> Result<Arc<dyn NotifyProvider>, ApiError> {
+    registry
+        .get_by_name(name)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("provider '{name}' not found")))
+}
 
 /// Retry configuration for the API.
 #[derive(Debug, Deserialize, Serialize, ToSchema)]

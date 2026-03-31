@@ -138,10 +138,7 @@ pub async fn send_notification(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<SendRequest>,
 ) -> Result<Json<SendApiResponse>, ApiError> {
-    let provider = state
-        .registry
-        .get_by_name(&req.provider)
-        .ok_or_else(|| ApiError::not_found(format!("provider '{}' not found", req.provider)))?;
+    let provider = common::require_provider(&state.registry, &req.provider)?;
 
     let config = ProviderConfig {
         values: req.config,
@@ -250,12 +247,7 @@ pub async fn send_batch(
     let mut configs = Vec::new();
 
     for target in &req.targets {
-        let provider = state
-            .registry
-            .get_by_name(&target.provider)
-            .ok_or_else(|| {
-                ApiError::not_found(format!("provider '{}' not found", target.provider))
-            })?;
+        let provider = common::require_provider(&state.registry, &target.provider)?;
         providers.push(provider.clone());
         configs.push(ProviderConfig {
             values: target.config.clone(),

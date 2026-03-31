@@ -234,10 +234,7 @@ pub async fn send_async(
     ValidatedJson(req): ValidatedJson<AsyncSendRequest>,
 ) -> Result<(StatusCode, Json<EnqueueResponse>), ApiError> {
     // Validate provider exists
-    let _provider = state
-        .registry
-        .get_by_name(&req.provider)
-        .ok_or_else(|| ApiError::not_found(format!("provider '{}' not found", req.provider)))?;
+    let _provider = common::require_provider(&state.registry, &req.provider)?;
 
     let config = ProviderConfig {
         values: req.config,

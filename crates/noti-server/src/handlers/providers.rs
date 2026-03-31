@@ -3,6 +3,7 @@ use axum::extract::{Path, State};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::handlers::common;
 use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
@@ -85,10 +86,7 @@ pub async fn get_provider(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<ProviderInfo>, ApiError> {
-    let provider = state
-        .registry
-        .get_by_name(&name)
-        .ok_or_else(|| ApiError::not_found(format!("provider '{}' not found", name)))?;
+    let provider = common::require_provider(&state.registry, &name)?;
 
     let params = provider
         .params()
