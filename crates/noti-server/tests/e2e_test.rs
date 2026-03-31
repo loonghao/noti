@@ -1575,6 +1575,7 @@ async fn e2e_validated_json_valid_request_passes_validation() {
 
 // ───────────────────── Worker processing & Webhook callback (e2e) ─────────────────────
 
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -1845,18 +1846,20 @@ async fn e2e_webhook_callback_on_success() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Verify callback was received
-    let received = payloads.lock().unwrap();
-    assert!(
-        !received.is_empty(),
-        "callback server should have received at least one payload"
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "callback server should have received at least one payload"
+        );
 
-    let cb = &received[0];
-    assert_eq!(cb["task_id"], task_id);
-    assert_eq!(cb["provider"], "mock-ok");
-    assert_eq!(cb["status"], "completed");
-    assert!(cb["attempts"].as_u64().unwrap() >= 1);
-    assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
+        let cb = &received[0];
+        assert_eq!(cb["task_id"], task_id);
+        assert_eq!(cb["provider"], "mock-ok");
+        assert_eq!(cb["status"], "completed");
+        assert!(cb["attempts"].as_u64().unwrap() >= 1);
+        assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -1894,20 +1897,22 @@ async fn e2e_webhook_callback_on_failure() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Verify callback was received with failure info
-    let received = payloads.lock().unwrap();
-    assert!(
-        !received.is_empty(),
-        "callback server should receive payload on failure"
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "callback server should receive payload on failure"
+        );
 
-    let cb = &received[0];
-    assert_eq!(cb["task_id"], task_id);
-    assert_eq!(cb["provider"], "mock-fail");
-    assert_eq!(cb["status"], "failed");
-    assert!(
-        cb["last_error"].is_string(),
-        "failed callback should include last_error"
-    );
+        let cb = &received[0];
+        assert_eq!(cb["task_id"], task_id);
+        assert_eq!(cb["provider"], "mock-fail");
+        assert_eq!(cb["status"], "failed");
+        assert!(
+            cb["last_error"].is_string(),
+            "failed callback should include last_error"
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -1940,12 +1945,14 @@ async fn e2e_no_callback_when_url_not_set() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Callback server should NOT have received anything
-    let received = payloads.lock().unwrap();
-    assert!(
-        received.is_empty(),
-        "callback server should NOT receive payload when no callback_url is set, got {} payloads: {callback_base}",
-        received.len()
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.is_empty(),
+            "callback server should NOT receive payload when no callback_url is set, got {} payloads: {callback_base}",
+            received.len()
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -2084,12 +2091,483 @@ async fn e2e_worker_task_with_metadata_preserved() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Verify metadata in callback payload
-    let received = payloads.lock().unwrap();
-    assert!(!received.is_empty());
-    let cb = &received[0];
-    assert_eq!(cb["metadata"]["request_id"], "req-abc-123");
-    assert_eq!(cb["metadata"]["source"], "e2e-test");
-    assert_eq!(cb["metadata"]["env"], "test");
+    {
+        let received = payloads.lock().unwrap();
+        assert!(!received.is_empty());
+        let cb = &received[0];
+        assert_eq!(cb["metadata"]["request_id"], "req-abc-123");
+        assert_eq!(cb["metadata"]["source"], "e2e-test");
+        assert_eq!(cb["metadata"]["env"], "test");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Priority ordering & Retry behavior (e2e) ─────────────────────
+
+/// A mock provider that fails the first N calls then succeeds.
+struct MockFlakyProvider {
+    fail_count: u32,
+    call_counter: AtomicU32,
+}
+
+impl MockFlakyProvider {
+    fn new(fail_count: u32) -> Self {
+        Self {
+            fail_count,
+            call_counter: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl noti_core::NotifyProvider for MockFlakyProvider {
+    fn name(&self) -> &str {
+        "mock-flaky"
+    }
+    fn url_scheme(&self) -> &str {
+        "mock-flaky"
+    }
+    fn params(&self) -> Vec<noti_core::ParamDef> {
+        vec![]
+    }
+    fn description(&self) -> &str {
+        "fails first N calls then succeeds"
+    }
+    fn example_url(&self) -> &str {
+        "mock-flaky://test"
+    }
+    async fn send(
+        &self,
+        _message: &noti_core::Message,
+        _config: &noti_core::ProviderConfig,
+    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
+        let call = self.call_counter.fetch_add(1, AtomicOrdering::SeqCst);
+        if call < self.fail_count {
+            Err(noti_core::NotiError::Network(format!(
+                "flaky failure #{}",
+                call + 1
+            )))
+        } else {
+            Ok(noti_core::SendResponse::success(
+                "mock-flaky",
+                "ok after retries",
+            ))
+        }
+    }
+}
+
+/// Start a noti server with a single worker (serial processing) and all mock providers.
+/// The single worker ensures tasks are dequeued in strict priority order.
+/// Returns (base_url, worker_handle).
+async fn spawn_server_with_workers_serial(
+    extra_providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+) -> (String, noti_queue::WorkerHandle) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+    registry.register(Arc::new(MockFailProvider));
+    for p in extra_providers {
+        registry.register(p);
+    }
+
+    let state = noti_server::state::AppState::new(registry);
+    // Single worker ensures sequential processing in priority order.
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let app = noti_server::routes::build_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{addr}"), worker_handle)
+}
+
+#[tokio::test]
+async fn e2e_priority_ordering_urgent_before_low() {
+    // Enqueue tasks with different priorities on a server with NO workers,
+    // then start a single worker so tasks are processed in priority order.
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // Enqueue tasks with different priorities (low first, urgent last)
+    let priorities = vec!["low", "normal", "high", "urgent"];
+    let mut task_ids = Vec::new();
+
+    for pri in &priorities {
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": format!("priority-{pri}"),
+                "priority": pri,
+                "retry": {"max_retries": 0, "delay_ms": 10}
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        task_ids.push(body["task_id"].as_str().unwrap().to_string());
+    }
+
+    // Start a single worker — processes urgent first, then high, normal, low
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all tasks to complete
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    // Verify all completed
+    for task_id in &task_ids {
+        let resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(
+            body["status"], "completed",
+            "task {task_id} should be completed"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_priority_ordering_verified_by_completion_order() {
+    // Enqueue low then urgent, verify urgent callback arrives before low
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue: low first, then urgent — urgent should be processed first
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "low-priority-task",
+            "priority": "low",
+            "callback_url": &callback_url,
+            "metadata": {"order": "low"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let low_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "urgent-priority-task",
+            "priority": "urgent",
+            "callback_url": &callback_url,
+            "metadata": {"order": "urgent"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let urgent_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Start single worker to enforce serial processing
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for both tasks
+    wait_for_terminal_status(&client, &base, &low_id).await;
+    wait_for_terminal_status(&client, &base, &urgent_id).await;
+
+    // Give callbacks time
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Verify callback order: urgent should arrive before low
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 2,
+            "expected at least 2 callbacks, got {}",
+            received.len()
+        );
+
+        // First callback should be for the urgent task
+        assert_eq!(
+            received[0]["metadata"]["order"], "urgent",
+            "urgent task should be processed first, but got: {:?}",
+            received[0]["metadata"]["order"]
+        );
+        assert_eq!(
+            received[1]["metadata"]["order"], "low",
+            "low task should be processed second"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_retry_task_eventually_succeeds() {
+    // MockFlakyProvider fails first 2 calls, then succeeds.
+    // With max_retries=3, the task should eventually complete.
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "retry success test",
+            "retry": {"max_retries": 3, "delay_ms": 10},
+            "callback_url": &callback_url,
+            "metadata": {"test": "retry-success"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Wait for worker to process through retries and succeed
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(
+        task["status"], "completed",
+        "flaky task should eventually succeed after retries"
+    );
+    // The task went through 3 attempts: fail, fail, succeed
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+
+    // Give callback time
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "callback should be received for completed task"
+        );
+        assert_eq!(received[0]["status"], "completed");
+        assert_eq!(received[0]["metadata"]["test"], "retry-success");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_retry_exhausted_task_fails() {
+    // MockFlakyProvider fails first 5 calls, but max_retries=2 means only 3 total attempts.
+    // The task should fail after exhausting retries.
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "retry exhaustion test",
+            "retry": {"max_retries": 2, "delay_ms": 10},
+            "callback_url": &callback_url,
+            "metadata": {"test": "retry-fail"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(
+        task["status"], "failed",
+        "task should fail after exhausting retries"
+    );
+    assert!(
+        task["last_error"].is_string(),
+        "failed task should have error message"
+    );
+
+    // Give callback time
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "callback should be received for failed task"
+        );
+        assert_eq!(received[0]["status"], "failed");
+        assert!(received[0]["last_error"].is_string());
+        assert_eq!(received[0]["metadata"]["test"], "retry-fail");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_retry_zero_retries_fails_immediately() {
+    // With max_retries=0, a failing task should fail on the first attempt.
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "no retry test",
+            "retry": {"max_retries": 0, "delay_ms": 10}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "failed");
+    // With 0 retries, only 1 attempt should have been made
+    assert_eq!(
+        task["attempts"].as_u64().unwrap(),
+        1,
+        "with max_retries=0, should have exactly 1 attempt"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_priority_high_tasks_processed_before_normal() {
+    // Enqueue 3 normal + 1 high, verify all complete (high processed first)
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
+    let client = reqwest::Client::new();
+
+    // Enqueue 3 normal tasks
+    let mut normal_ids = Vec::new();
+    for i in 0..3 {
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": format!("normal-{i}"),
+                "priority": "normal"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        normal_ids.push(
+            resp.json::<Value>().await.unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+
+    // Enqueue 1 high-priority task
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "high-priority",
+            "priority": "high"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let high_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Wait for all to complete
+    wait_for_terminal_status(&client, &base, &high_id).await;
+    for nid in &normal_ids {
+        wait_for_terminal_status(&client, &base, nid).await;
+    }
+
+    // All should be completed
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= 4);
 
     worker_handle.shutdown_and_join().await;
 }
