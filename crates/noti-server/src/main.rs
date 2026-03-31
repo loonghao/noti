@@ -1,9 +1,8 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-
 use noti_core::ProviderRegistry;
 use noti_queue::WorkerConfig;
-use noti_server::middleware::rate_limit::{RateLimitConfig, RateLimiterState, rate_limit_middleware};
+use noti_server::config::ServerConfig;
+use noti_server::middleware::auth::{AuthState, auth_middleware};
+use noti_server::middleware::rate_limit::{RateLimiterState, rate_limit_middleware};
 use noti_server::state::AppState;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -11,10 +10,18 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
+    // Load configuration from environment variables
+    let config = ServerConfig::from_env();
+
+    // Initialize tracing with configured log level
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| config.log_level.clone().into()),
+        )
         .init();
+
+    tracing::info!("loaded configuration from environment");
 
     // Build provider registry
     let mut registry = ProviderRegistry::new();
@@ -22,26 +29,45 @@ async fn main() {
 
     let state = AppState::new(registry);
 
-    // Start background worker pool (4 concurrent workers by default)
-    let worker_handle = state.start_workers(WorkerConfig::default());
-    tracing::info!("queue worker pool started");
+    // Start background worker pool
+    let worker_config = WorkerConfig {
+        concurrency: config.worker_count,
+        ..Default::default()
+    };
+    let worker_handle = state.start_workers(worker_config);
+    tracing::info!(workers = config.worker_count, "queue worker pool started");
 
-    // Rate limiter: 100 requests per minute per IP
-    let rate_limiter = RateLimiterState::new(
-        RateLimitConfig::new(100, Duration::from_secs(60)).with_per_ip(true),
-    );
-    tracing::info!("rate limiter enabled (100 req/min per IP)");
+    // Auth middleware
+    let auth_state = AuthState::new(config.auth.clone());
+    if auth_state.is_enabled() {
+        tracing::info!(
+            keys = config.auth.key_count(),
+            "API key authentication enabled"
+        );
+    } else {
+        tracing::info!("API key authentication disabled (no NOTI_API_KEYS set)");
+    }
 
+    // Rate limiter
+    let rate_limiter = RateLimiterState::new(config.rate_limit.clone());
+    tracing::info!("rate limiter enabled");
+
+    // Build application with middleware stack (outermost first)
+    // Order: CORS → Trace → Auth → Rate-limit → Router
     let app = noti_server::routes::build_router(state)
         .layer(axum::middleware::from_fn_with_state(
             rate_limiter,
             rate_limit_middleware,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ))
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!("noti-server listening on {addr}");
+    let addr = config.socket_addr();
+    tracing::info!(%addr, "noti-server listening");
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
