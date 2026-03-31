@@ -91,6 +91,14 @@ rounds or require coordination with the iteration agent.
 - [ ] `e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top
 - [ ] `e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top
 
+## Tests — E2E Test Quality (noti-server)
+
+- [ ] `e2e_priority_ordering_urgent_before_low` (line 2194) — name claims to verify ordering but only asserts all tasks completed; should either add ordering assertion (via callbacks/timestamps) or rename to `e2e_all_priorities_complete`
+- [ ] `e2e_priority_high_tasks_processed_before_normal` (line 2512) — same issue: name claims ordering verification but only checks `stats.completed >= 4`; functionally identical to `e2e_worker_multiple_tasks_processed`
+- [ ] `e2e_retry_zero_retries_fails_immediately` (line 2477) — near-duplicate of `e2e_worker_handles_failed_task` (line 1775); only unique assertion is `attempts == 1`, which should be added to the existing test instead
+- [ ] `e2e_priority_ordering_urgent_before_low` and `e2e_priority_ordering_verified_by_completion_order` — share ~20 lines of "start server without workers, enqueue, then start worker" boilerplate (lines 2197-2211 vs 2269-2283); extract a `spawn_server_without_workers() -> (String, AppState)` helper
+- [ ] `spawn_server_with_workers_serial` (line 2162) — near-duplicate of `spawn_server_with_workers` (line 1681); differ only in concurrency and extra_providers param; merge into one function with parameters
+
 ## Tests — Cross-Module Deduplication (noti-queue)
 
 - [ ] `make_task()` helper defined identically in both `sqlite.rs:489` and `memory.rs:268` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module
