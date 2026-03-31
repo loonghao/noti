@@ -16,7 +16,7 @@ vx just lint         # Clippy lint
 vx just test         # Run tests
 vx just coverage     # Generate coverage report (LCOV)
 vx just coverage-html # Generate HTML coverage report
-vx just ci           # Full CI pipeline (fmt + check + lint + test)
+vx just ci           # Full CI pipeline (fmt-check + check + lint + test)
 vx just run -- send --help   # Run CLI in dev mode
 vx just build-release        # Build CLI release binary
 vx just build-server         # Build server release binary

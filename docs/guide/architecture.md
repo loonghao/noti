@@ -32,8 +32,8 @@ The CLI binary crate. Handles:
 
 Core abstractions shared across the workspace:
 
-- **`Provider` trait** — async interface all providers implement
-- **`Registry`** — provider discovery and instantiation
+- **`NotifyProvider` trait** — async interface all providers implement
+- **`ProviderRegistry`** — provider discovery and instantiation
 - **`URL parsing`** — universal `provider://credentials` scheme parser
 - **`Config`** — profile management and TOML persistence
 - **`Message templates`** — variable substitution with `{{placeholder}}` syntax
@@ -47,8 +47,8 @@ Core abstractions shared across the workspace:
 
 All 125 provider implementations, one file per provider. Each provider:
 
-1. Implements the `Provider` trait
-2. Registers itself with the `Registry`
+1. Implements the `NotifyProvider` trait
+2. Registers itself with the `ProviderRegistry`
 3. Parses its URL scheme format
 4. Sends the notification via the provider's API
 
