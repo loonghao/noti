@@ -17,8 +17,8 @@ async fn main() {
     let config = ServerConfig::from_env();
 
     // Initialize tracing with configured log level and format
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| config.log_level.clone().into());
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| config.log_level.clone().into());
 
     match config.log_format {
         LogFormat::Json => {
@@ -31,9 +31,7 @@ async fn main() {
                 .init();
         }
         LogFormat::Text => {
-            tracing_subscriber::fmt()
-                .with_env_filter(env_filter)
-                .init();
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
         }
     }
 
@@ -43,9 +41,10 @@ async fn main() {
     let mut registry = ProviderRegistry::new();
     noti_providers::register_all_providers(&mut registry);
 
-    let state = AppState::with_queue_backend(registry, &config.queue_backend, &config.queue_db_path)
-        .await
-        .expect("failed to initialize queue backend");
+    let state =
+        AppState::with_queue_backend(registry, &config.queue_backend, &config.queue_db_path)
+            .await
+            .expect("failed to initialize queue backend");
     tracing::info!(backend = ?config.queue_backend, "queue backend initialized");
 
     // Start background worker pool

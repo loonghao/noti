@@ -52,11 +52,7 @@ pub struct ComponentHealth {
     )
 )]
 pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
-    let uptime = state
-        .started_at
-        .elapsed()
-        .unwrap_or_default()
-        .as_secs();
+    let uptime = state.started_at.elapsed().unwrap_or_default().as_secs();
 
     // Check queue health by requesting stats.
     let queue_health = match state.queue.stats().await {

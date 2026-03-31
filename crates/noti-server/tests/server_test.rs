@@ -149,9 +149,7 @@ async fn test_render_template_not_found() {
 #[tokio::test]
 async fn test_status_not_found() {
     let server = build_test_server();
-    let response = server
-        .get("/api/v1/status/nonexistent-id")
-        .await;
+    let response = server.get("/api/v1/status/nonexistent-id").await;
 
     response.assert_status(StatusCode::NOT_FOUND);
 }
@@ -484,9 +482,7 @@ async fn test_queue_task_lifecycle() {
     let task_id = enqueue_body["task_id"].as_str().unwrap();
 
     // Get the task
-    let response = server
-        .get(&format!("/api/v1/queue/tasks/{task_id}"))
-        .await;
+    let response = server.get(&format!("/api/v1/queue/tasks/{task_id}")).await;
     response.assert_status_ok();
     let task_body: serde_json::Value = response.json();
     assert_eq!(task_body["id"], task_id);
@@ -517,9 +513,7 @@ async fn test_queue_task_lifecycle() {
 #[tokio::test]
 async fn test_queue_task_not_found() {
     let server = build_test_server();
-    let response = server
-        .get("/api/v1/queue/tasks/nonexistent-id")
-        .await;
+    let response = server.get("/api/v1/queue/tasks/nonexistent-id").await;
 
     response.assert_status(StatusCode::NOT_FOUND);
 }

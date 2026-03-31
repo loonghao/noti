@@ -177,8 +177,8 @@ mod tests {
     async fn test_fire_callback_invalid_url() {
         let msg = Message::text("test");
         let config = ProviderConfig::new();
-        let mut task = NotificationTask::new("slack", config, msg)
-            .with_callback_url("not-a-valid-url");
+        let mut task =
+            NotificationTask::new("slack", config, msg).with_callback_url("not-a-valid-url");
 
         task.mark_processing();
         task.mark_completed();

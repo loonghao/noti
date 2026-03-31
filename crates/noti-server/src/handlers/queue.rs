@@ -220,9 +220,7 @@ pub async fn send_async(
     // Validate provider exists and config is well-formed
     let provider = common::require_provider(&state.registry, &req.provider)?;
 
-    let config = ProviderConfig {
-        values: req.config,
-    };
+    let config = ProviderConfig { values: req.config };
 
     if let Err(e) = provider.validate_config(&config) {
         return Err(ApiError::bad_request(e.to_string()));
@@ -238,8 +236,7 @@ pub async fn send_async(
 
     let policy = common::build_retry_policy(req.retry.as_ref(), RetryPolicy::default());
 
-    let mut task = NotificationTask::new(&req.provider, config, msg)
-        .with_retry_policy(policy);
+    let mut task = NotificationTask::new(&req.provider, config, msg).with_retry_policy(policy);
 
     if let Some(url) = &req.callback_url {
         task = task.with_callback_url(url);
@@ -249,11 +246,7 @@ pub async fn send_async(
         task = task.with_metadata(k, v);
     }
 
-    let task_id = state
-        .queue
-        .enqueue(task)
-        .await
-        .map_err(queue_error)?;
+    let task_id = state.queue.enqueue(task).await.map_err(queue_error)?;
 
     Ok((
         StatusCode::ACCEPTED,
@@ -329,8 +322,7 @@ pub async fn send_async_batch(
 
         let policy = common::build_retry_policy(item.retry.as_ref(), RetryPolicy::default());
 
-        let mut task = NotificationTask::new(&item.provider, config, msg)
-            .with_retry_policy(policy);
+        let mut task = NotificationTask::new(&item.provider, config, msg).with_retry_policy(policy);
 
         if let Some(url) = &item.callback_url {
             task = task.with_callback_url(url);
@@ -444,9 +436,7 @@ pub async fn list_tasks(
         (status = 200, description = "Queue statistics", body = StatsResponse)
     )
 )]
-pub async fn get_stats(
-    State(state): State<AppState>,
-) -> Result<Json<StatsResponse>, ApiError> {
+pub async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
     let stats: QueueStats = state.queue.stats().await.map_err(queue_error)?;
     Ok(Json(StatsResponse::from(stats)))
 }
@@ -465,11 +455,7 @@ pub async fn cancel_task(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
 ) -> Result<Json<CancelResponse>, ApiError> {
-    let cancelled = state
-        .queue
-        .cancel(&task_id)
-        .await
-        .map_err(queue_error)?;
+    let cancelled = state.queue.cancel(&task_id).await.map_err(queue_error)?;
 
     let message = if cancelled {
         "Task cancelled successfully".to_string()
@@ -493,14 +479,8 @@ pub async fn cancel_task(
         (status = 200, description = "Purge result", body = PurgeResponse)
     )
 )]
-pub async fn purge_tasks(
-    State(state): State<AppState>,
-) -> Result<Json<PurgeResponse>, ApiError> {
-    let purged = state
-        .queue
-        .purge_completed()
-        .await
-        .map_err(queue_error)?;
+pub async fn purge_tasks(State(state): State<AppState>) -> Result<Json<PurgeResponse>, ApiError> {
+    let purged = state.queue.purge_completed().await.map_err(queue_error)?;
 
     Ok(Json(PurgeResponse {
         purged,
@@ -523,10 +503,7 @@ mod tests {
             .route("/api/v1/send/async/batch", post(send_async_batch))
             .route("/api/v1/queue/tasks", get(list_tasks))
             .route("/api/v1/queue/tasks/{task_id}", get(get_task))
-            .route(
-                "/api/v1/queue/tasks/{task_id}/cancel",
-                post(cancel_task),
-            )
+            .route("/api/v1/queue/tasks/{task_id}/cancel", post(cancel_task))
             .route("/api/v1/queue/stats", get(get_stats))
             .route("/api/v1/queue/purge", post(purge_tasks))
             .with_state(state)
@@ -572,9 +549,7 @@ mod tests {
     async fn test_get_task_not_found() {
         let server = TestServer::new(build_test_app());
 
-        let resp = server
-            .get("/api/v1/queue/tasks/nonexistent-id")
-            .await;
+        let resp = server.get("/api/v1/queue/tasks/nonexistent-id").await;
         resp.assert_status(StatusCode::NOT_FOUND);
     }
 
@@ -619,17 +594,17 @@ mod tests {
     async fn test_list_tasks_invalid_status_filter() {
         let server = TestServer::new(build_test_app());
 
-        let resp = server
-            .get("/api/v1/queue/tasks?status=bogus")
-            .await;
+        let resp = server.get("/api/v1/queue/tasks?status=bogus").await;
         resp.assert_status(StatusCode::BAD_REQUEST);
 
         let body: serde_json::Value = resp.json();
         assert_eq!(body["error"], "bad_request");
-        assert!(body["message"]
-            .as_str()
-            .unwrap()
-            .contains("invalid status filter"));
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid status filter")
+        );
     }
 
     #[tokio::test]

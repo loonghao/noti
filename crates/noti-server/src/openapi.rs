@@ -12,9 +12,8 @@ use crate::handlers::{
     metrics::{self, MetricsResponse, ProviderMetrics},
     providers::{self, ParamInfo, ProviderInfo, ProviderListResponse, ProviderSummary},
     queue::{
-        self, AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult,
-        BatchEnqueueResponse, CancelResponse, EnqueueResponse, PurgeResponse, StatsResponse,
-        TaskInfo,
+        self, AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
+        CancelResponse, EnqueueResponse, PurgeResponse, StatsResponse, TaskInfo,
     },
     send::{
         self, BatchSendApiResponse, BatchSendRequest, BatchTarget, SendApiResponse, SendRequest,

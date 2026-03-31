@@ -129,8 +129,7 @@ impl WorkerPool {
                             let provider = match registry.get_by_name(&provider_name) {
                                 Some(p) => p,
                                 None => {
-                                    let err =
-                                        format!("provider '{}' not found", provider_name);
+                                    let err = format!("provider '{}' not found", provider_name);
                                     tracing::error!(worker_id, task_id = %task_id, %err);
                                     if let Err(nack_err) = queue.nack(&task_id, &err).await {
                                         tracing::error!(
@@ -182,7 +181,8 @@ impl WorkerPool {
                                         message = %resp.message,
                                         "provider returned failure response"
                                     );
-                                    if let Err(nack_err) = queue.nack(&task_id, &resp.message).await {
+                                    if let Err(nack_err) = queue.nack(&task_id, &resp.message).await
+                                    {
                                         tracing::error!(
                                             worker_id,
                                             task_id = %task_id,
@@ -205,7 +205,9 @@ impl WorkerPool {
                                         error = %e,
                                         "task send failed"
                                     );
-                                    if let Err(nack_err) = queue.nack(&task_id, &e.to_string()).await {
+                                    if let Err(nack_err) =
+                                        queue.nack(&task_id, &e.to_string()).await
+                                    {
                                         tracing::error!(
                                             worker_id,
                                             task_id = %task_id,

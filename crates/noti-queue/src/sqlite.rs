@@ -70,7 +70,10 @@ fn str_to_status(s: &str) -> TaskStatus {
         "failed" => TaskStatus::Failed,
         "cancelled" => TaskStatus::Cancelled,
         other => {
-            tracing::warn!(status = other, "unknown task status in database, defaulting to Queued");
+            tracing::warn!(
+                status = other,
+                "unknown task status in database, defaulting to Queued"
+            );
             TaskStatus::Queued
         }
     }
@@ -236,7 +239,11 @@ impl QueueBackend for SqliteQueue {
 
         if self.capacity > 0 {
             let count: i64 = conn
-                .query_row("SELECT COUNT(*) FROM tasks WHERE status = 'queued'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE status = 'queued'",
+                    [],
+                    |r| r.get(0),
+                )
                 .backend_err()?;
             if count as usize >= self.capacity {
                 return Err(QueueError::QueueFull {
@@ -421,9 +428,7 @@ impl QueueBackend for SqliteQueue {
         let rows: Vec<TaskRow> = if let Some(ref s) = status {
             let status_str = status_to_str(s);
             stmt = conn
-                .prepare(
-                    "SELECT * FROM tasks WHERE status = ?1 ORDER BY created_at ASC LIMIT ?2",
-                )
+                .prepare("SELECT * FROM tasks WHERE status = ?1 ORDER BY created_at ASC LIMIT ?2")
                 .backend_err()?;
             stmt.query_map(params![status_str, limit_i64], TaskRow::from_rusqlite_row)
                 .backend_err()?
@@ -439,9 +444,7 @@ impl QueueBackend for SqliteQueue {
                 .backend_err()?
         };
 
-        rows.iter()
-            .map(Self::deserialize_task)
-            .collect()
+        rows.iter().map(Self::deserialize_task).collect()
     }
 
     async fn purge_completed(&self) -> Result<usize, QueueError> {
@@ -562,8 +565,7 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_nack_exhausted_retries() {
         let queue = SqliteQueue::in_memory().unwrap();
-        let task = make_task("slack", Priority::Normal)
-            .with_retry_policy(RetryPolicy::none());
+        let task = make_task("slack", Priority::Normal).with_retry_policy(RetryPolicy::none());
         let id = queue.enqueue(task).await.unwrap();
 
         queue.dequeue().await.unwrap();
@@ -605,8 +607,14 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         let queue = SqliteQueue::from_connection(conn, 2).unwrap();
 
-        queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
-        queue.enqueue(make_task("b", Priority::Normal)).await.unwrap();
+        queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_task("b", Priority::Normal))
+            .await
+            .unwrap();
 
         let result = queue.enqueue(make_task("c", Priority::Normal)).await;
         assert!(result.is_err());
@@ -624,13 +632,19 @@ mod tests {
     async fn test_sqlite_list_tasks() {
         let queue = SqliteQueue::in_memory().unwrap();
 
-        queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
+        queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
         queue.enqueue(make_task("b", Priority::High)).await.unwrap();
 
         let all = queue.list_tasks(None, 100).await.unwrap();
         assert_eq!(all.len(), 2);
 
-        let queued = queue.list_tasks(Some(TaskStatus::Queued), 100).await.unwrap();
+        let queued = queue
+            .list_tasks(Some(TaskStatus::Queued), 100)
+            .await
+            .unwrap();
         assert_eq!(queued.len(), 2);
     }
 
@@ -638,8 +652,14 @@ mod tests {
     async fn test_sqlite_purge_completed() {
         let queue = SqliteQueue::in_memory().unwrap();
 
-        let id1 = queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
-        queue.enqueue(make_task("b", Priority::Normal)).await.unwrap();
+        let id1 = queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_task("b", Priority::Normal))
+            .await
+            .unwrap();
 
         queue.dequeue().await.unwrap();
         queue.ack(&id1).await.unwrap();
@@ -652,7 +672,10 @@ mod tests {
     async fn test_sqlite_stats() {
         let queue = SqliteQueue::in_memory().unwrap();
 
-        queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
+        queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
         queue.enqueue(make_task("b", Priority::High)).await.unwrap();
 
         let stats = queue.stats().await.unwrap();
@@ -695,7 +718,10 @@ mod tests {
         let queue = SqliteQueue::in_memory().unwrap();
 
         // Enqueue and dequeue two tasks (they become "processing")
-        let id1 = queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
+        let id1 = queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
         let id2 = queue.enqueue(make_task("b", Priority::High)).await.unwrap();
         queue.enqueue(make_task("c", Priority::Low)).await.unwrap();
 
@@ -724,7 +750,10 @@ mod tests {
     async fn test_sqlite_recover_stale_no_processing() {
         let queue = SqliteQueue::in_memory().unwrap();
 
-        queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
+        queue
+            .enqueue(make_task("a", Priority::Normal))
+            .await
+            .unwrap();
 
         let recovered = queue.recover_stale_tasks().await.unwrap();
         assert_eq!(recovered, 0);

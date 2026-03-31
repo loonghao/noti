@@ -86,11 +86,7 @@ pub struct NotificationTask {
 
 impl NotificationTask {
     /// Create a new notification task with default retry policy.
-    pub fn new(
-        provider: impl Into<String>,
-        config: ProviderConfig,
-        message: Message,
-    ) -> Self {
+    pub fn new(provider: impl Into<String>, config: ProviderConfig, message: Message) -> Self {
         let now = SystemTime::now();
         Self {
             id: Uuid::new_v4().to_string(),
@@ -167,7 +163,8 @@ impl NotificationTask {
 
     /// Whether the task should be retried based on its retry policy.
     pub fn should_retry(&self) -> bool {
-        self.retry_policy.should_retry(self.attempts.saturating_sub(1))
+        self.retry_policy
+            .should_retry(self.attempts.saturating_sub(1))
     }
 }
 
@@ -289,8 +286,7 @@ mod tests {
     fn test_task_serde_roundtrip() {
         let msg = Message::text("test").with_priority(Priority::High);
         let config = ProviderConfig::new().set("webhook_url", "https://example.com");
-        let task = NotificationTask::new("webhook", config, msg)
-            .with_metadata("key", "value");
+        let task = NotificationTask::new("webhook", config, msg).with_metadata("key", "value");
 
         let json = serde_json::to_string(&task).unwrap();
         let parsed: NotificationTask = serde_json::from_str(&json).unwrap();

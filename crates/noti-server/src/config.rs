@@ -46,6 +46,48 @@ impl QueueBackendType {
     }
 }
 
+impl std::fmt::Display for QueueBackendType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Memory => write!(f, "memory"),
+            Self::Sqlite => write!(f, "sqlite"),
+        }
+    }
+}
+
+/// Error returned when a string cannot be parsed into a [`QueueBackendType`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseQueueBackendError {
+    /// The invalid input string.
+    pub input: String,
+}
+
+impl std::fmt::Display for ParseQueueBackendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown queue backend type '{}' (expected: memory, sqlite, sql, db)",
+            self.input
+        )
+    }
+}
+
+impl std::error::Error for ParseQueueBackendError {}
+
+impl TryFrom<&str> for QueueBackendType {
+    type Error = ParseQueueBackendError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s.to_ascii_lowercase().as_str() {
+            "memory" | "mem" | "in-memory" => Ok(Self::Memory),
+            "sqlite" | "sql" | "db" => Ok(Self::Sqlite),
+            _ => Err(ParseQueueBackendError {
+                input: s.to_string(),
+            }),
+        }
+    }
+}
+
 /// Log output format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogFormat {
@@ -168,8 +210,8 @@ impl ServerConfig {
             .map(|v| QueueBackendType::from_str_lossy(&v))
             .unwrap_or(QueueBackendType::Memory);
 
-        let queue_db_path = env::var("NOTI_QUEUE_DB_PATH")
-            .unwrap_or_else(|_| "noti-queue.db".to_string());
+        let queue_db_path =
+            env::var("NOTI_QUEUE_DB_PATH").unwrap_or_else(|_| "noti-queue.db".to_string());
 
         let cors_allowed_origins: Vec<String> = env::var("NOTI_CORS_ALLOWED_ORIGINS")
             .ok()
@@ -269,5 +311,47 @@ mod tests {
         let cfg = ServerConfig::from_env();
         assert!(cfg.port > 0);
         assert!(cfg.worker_count > 0);
+    }
+
+    #[test]
+    fn test_queue_backend_type_try_from_valid() {
+        assert_eq!(
+            QueueBackendType::try_from("memory").unwrap(),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::try_from("mem").unwrap(),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::try_from("in-memory").unwrap(),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::try_from("sqlite").unwrap(),
+            QueueBackendType::Sqlite
+        );
+        assert_eq!(
+            QueueBackendType::try_from("SQL").unwrap(),
+            QueueBackendType::Sqlite
+        );
+        assert_eq!(
+            QueueBackendType::try_from("DB").unwrap(),
+            QueueBackendType::Sqlite
+        );
+    }
+
+    #[test]
+    fn test_queue_backend_type_try_from_invalid() {
+        let err = QueueBackendType::try_from("redis").unwrap_err();
+        assert_eq!(err.input, "redis");
+        assert!(err.to_string().contains("redis"));
+        assert!(err.to_string().contains("expected"));
+    }
+
+    #[test]
+    fn test_queue_backend_type_display() {
+        assert_eq!(QueueBackendType::Memory.to_string(), "memory");
+        assert_eq!(QueueBackendType::Sqlite.to_string(), "sqlite");
     }
 }

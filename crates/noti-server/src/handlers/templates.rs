@@ -136,7 +136,11 @@ pub async fn create_template(
 )]
 pub async fn list_templates(State(state): State<AppState>) -> Json<TemplateListResponse> {
     let registry = state.template_registry.read().await;
-    let names: Vec<String> = registry.names().into_iter().map(|s| s.to_string()).collect();
+    let names: Vec<String> = registry
+        .names()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
     let total = names.len();
 
     Json(TemplateListResponse {

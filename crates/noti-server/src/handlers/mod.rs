@@ -7,5 +7,3 @@ pub mod queue;
 pub mod send;
 pub mod status;
 pub mod templates;
-
-

@@ -30,8 +30,14 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/status", get(handlers::status::get_all_statuses))
         // Template endpoints
-        .route("/api/v1/templates", post(handlers::templates::create_template))
-        .route("/api/v1/templates", get(handlers::templates::list_templates))
+        .route(
+            "/api/v1/templates",
+            post(handlers::templates::create_template),
+        )
+        .route(
+            "/api/v1/templates",
+            get(handlers::templates::list_templates),
+        )
         .route(
             "/api/v1/templates/{name}",
             get(handlers::templates::get_template)
@@ -43,7 +49,10 @@ pub fn build_router(state: AppState) -> Router {
             post(handlers::templates::render_template),
         )
         // Provider info endpoints
-        .route("/api/v1/providers", get(handlers::providers::list_providers))
+        .route(
+            "/api/v1/providers",
+            get(handlers::providers::list_providers),
+        )
         .route(
             "/api/v1/providers/{name}",
             get(handlers::providers::get_provider),
@@ -62,8 +71,5 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/queue/purge", post(handlers::queue::purge_tasks))
         .with_state(state)
         // Swagger UI and OpenAPI spec (stateless, merged after with_state)
-        .merge(
-            SwaggerUi::new("/swagger-ui")
-                .url("/api-docs/openapi.json", ApiDoc::openapi()),
-        )
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
 }

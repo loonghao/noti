@@ -53,11 +53,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<MetricsResponse>
         .filter(|p| p.supports_attachments())
         .count();
 
-    let uptime = state
-        .started_at
-        .elapsed()
-        .unwrap_or_default()
-        .as_secs();
+    let uptime = state.started_at.elapsed().unwrap_or_default().as_secs();
 
     Json(MetricsResponse {
         queue: StatsResponse::from(queue_stats),

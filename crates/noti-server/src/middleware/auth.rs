@@ -161,7 +161,9 @@ pub async fn auth_middleware(
     match extract_api_key(&request) {
         Some(key) if auth.config.is_valid_key(&key) => next.run(request).await,
         Some(_) => unauthorized_response("invalid API key"),
-        None => unauthorized_response("missing API key — provide via Authorization: Bearer <key> or X-API-Key header"),
+        None => unauthorized_response(
+            "missing API key — provide via Authorization: Bearer <key> or X-API-Key header",
+        ),
     }
 }
 
@@ -218,7 +220,12 @@ mod tests {
 
         let body: serde_json::Value = resp.json();
         assert_eq!(body["error"], "unauthorized");
-        assert!(body["message"].as_str().unwrap().contains("missing API key"));
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("missing API key")
+        );
     }
 
     #[tokio::test]
@@ -237,7 +244,12 @@ mod tests {
 
         let body: serde_json::Value = resp.json();
         assert_eq!(body["error"], "unauthorized");
-        assert!(body["message"].as_str().unwrap().contains("invalid API key"));
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid API key")
+        );
     }
 
     #[tokio::test]
@@ -282,10 +294,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_api_keys() {
-        let config = AuthConfig::new(vec![
-            "key-alpha".to_string(),
-            "key-beta".to_string(),
-        ]);
+        let config = AuthConfig::new(vec!["key-alpha".to_string(), "key-beta".to_string()]);
         let server = TestServer::new(build_test_app(config));
 
         // Both keys should work
@@ -310,8 +319,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_excluded_paths() {
-        let config = AuthConfig::new(vec!["secret".to_string()])
-            .with_excluded_path("/api/v1/metrics");
+        let config =
+            AuthConfig::new(vec!["secret".to_string()]).with_excluded_path("/api/v1/metrics");
         let server = TestServer::new(
             Router::new()
                 .route("/api/v1/metrics", get(ok_handler))
@@ -350,11 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_config_key_count() {
-        let config = AuthConfig::new(vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ]);
+        let config = AuthConfig::new(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
         assert_eq!(config.key_count(), 3);
         assert!(config.is_valid_key("a"));
         assert!(!config.is_valid_key("d"));

@@ -1,5 +1,5 @@
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -241,9 +241,9 @@ impl QueueBackend for InMemoryQueue {
         limit: usize,
     ) -> Result<Vec<NotificationTask>, QueueError> {
         let tasks = self.tasks.lock().await;
-        let iter = tasks.values().filter(|t| {
-            status.as_ref().is_none_or(|s| t.status == *s)
-        });
+        let iter = tasks
+            .values()
+            .filter(|t| status.as_ref().is_none_or(|s| t.status == *s));
 
         let mut result: Vec<_> = iter.cloned().collect();
         result.sort_by(|a, b| a.created_at.cmp(&b.created_at));
@@ -351,8 +351,7 @@ mod tests {
     #[tokio::test]
     async fn test_nack_exhausted_retries() {
         let queue = InMemoryQueue::new();
-        let task = make_task("slack", Priority::Normal)
-            .with_retry_policy(RetryPolicy::none());
+        let task = make_task("slack", Priority::Normal).with_retry_policy(RetryPolicy::none());
         let id = queue.enqueue(task).await.unwrap();
 
         queue.dequeue().await.unwrap();
@@ -426,15 +425,15 @@ mod tests {
             .enqueue(make_task("a", Priority::Normal))
             .await
             .unwrap();
-        queue
-            .enqueue(make_task("b", Priority::High))
-            .await
-            .unwrap();
+        queue.enqueue(make_task("b", Priority::High)).await.unwrap();
 
         let all = queue.list_tasks(None, 100).await.unwrap();
         assert_eq!(all.len(), 2);
 
-        let queued = queue.list_tasks(Some(TaskStatus::Queued), 100).await.unwrap();
+        let queued = queue
+            .list_tasks(Some(TaskStatus::Queued), 100)
+            .await
+            .unwrap();
         assert_eq!(queued.len(), 2);
     }
 
@@ -470,10 +469,7 @@ mod tests {
             .enqueue(make_task("a", Priority::Normal))
             .await
             .unwrap();
-        queue
-            .enqueue(make_task("b", Priority::High))
-            .await
-            .unwrap();
+        queue.enqueue(make_task("b", Priority::High)).await.unwrap();
 
         let stats = queue.stats().await.unwrap();
         assert_eq!(stats.queued, 2);

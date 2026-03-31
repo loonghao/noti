@@ -71,10 +71,14 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(serde_json::json!({
-            "error": self.error,
-            "message": self.message,
-        }))).into_response()
+        (
+            self.status,
+            Json(serde_json::json!({
+                "error": self.error,
+                "message": self.message,
+            })),
+        )
+            .into_response()
     }
 }
 

@@ -84,7 +84,10 @@ mod tests {
             .expect("should have x-request-id");
         let id_str = id.to_str().unwrap();
         // Should be a valid UUID v4
-        assert!(Uuid::parse_str(id_str).is_ok(), "not a valid UUID: {id_str}");
+        assert!(
+            Uuid::parse_str(id_str).is_ok(),
+            "not a valid UUID: {id_str}"
+        );
     }
 
     #[tokio::test]

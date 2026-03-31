@@ -5,8 +5,8 @@
 //! 422 Unprocessable Entity with structured field-level errors on failure.
 
 use axum::Json;
-use axum::extract::rejection::JsonRejection;
 use axum::extract::FromRequest;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
@@ -68,9 +68,7 @@ impl IntoResponse for ValidatedJsonRejection {
 /// Format validation errors into a JSON-friendly structure.
 ///
 /// Returns a map of field name → list of error messages.
-fn format_validation_errors(
-    errors: &validator::ValidationErrors,
-) -> serde_json::Value {
+fn format_validation_errors(errors: &validator::ValidationErrors) -> serde_json::Value {
     let mut fields = serde_json::Map::new();
 
     for (field, field_errors) in errors.field_errors() {
@@ -104,10 +102,7 @@ where
 {
     type Rejection = ValidatedJsonRejection;
 
-    async fn from_request(
-        req: axum::extract::Request,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(value) = Json::<T>::from_request(req, state)
             .await
             .map_err(ValidatedJsonRejection::JsonError)?;

@@ -140,9 +140,7 @@ pub async fn send_notification(
 ) -> Result<Json<SendApiResponse>, ApiError> {
     let provider = common::require_provider(&state.registry, &req.provider)?;
 
-    let config = ProviderConfig {
-        values: req.config,
-    };
+    let config = ProviderConfig { values: req.config };
 
     if let Err(e) = provider.validate_config(&config) {
         return Err(ApiError::bad_request(e.to_string()));
@@ -179,8 +177,7 @@ pub async fn send_notification(
     let result: Result<SendResponse, _> = if policy.max_retries == 0 {
         provider.send(&msg, &config).await
     } else {
-        let outcome =
-            noti_core::send_with_retry(provider.as_ref(), &msg, &config, &policy).await;
+        let outcome = noti_core::send_with_retry(provider.as_ref(), &msg, &config, &policy).await;
         outcome.result
     };
 
@@ -296,10 +293,7 @@ pub async fn send_batch(
 
     // Track all targets
     for p in &providers {
-        state
-            .status_tracker
-            .track(&notification_id, p.name())
-            .await;
+        state.status_tracker.track(&notification_id, p.name()).await;
     }
 
     // Build send targets

@@ -273,10 +273,7 @@ fn extract_client_ip<B>(request: &Request<B>) -> Option<IpAddr> {
         .map(|ci| ci.0.ip())
 }
 
-fn inject_rate_limit_headers(
-    headers: &mut axum::http::HeaderMap,
-    info: &RateLimitInfo,
-) {
+fn inject_rate_limit_headers(headers: &mut axum::http::HeaderMap, info: &RateLimitInfo) {
     headers.insert("x-ratelimit-limit", info.limit.into());
     headers.insert("x-ratelimit-remaining", info.remaining.into());
 }
@@ -420,7 +417,10 @@ mod tests {
         // After consuming 1 token from a 10-token bucket, remaining should be ~9
         // (may be exactly 9 due to micro-refill between calls)
         let remaining = bucket.remaining();
-        assert!((8..=9).contains(&remaining), "expected 8-9, got {remaining}");
+        assert!(
+            (8..=9).contains(&remaining),
+            "expected 8-9, got {remaining}"
+        );
 
         // Tokens refill over time — for a 10/10s bucket, that's 1 token/sec
         assert!(bucket.remaining() <= 10);
