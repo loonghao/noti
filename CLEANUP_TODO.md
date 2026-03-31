@@ -34,4 +34,4 @@ rounds or require coordination with the iteration agent.
 
 ## Build
 
-- [ ] `justfile` `build-release` only builds `noti-cli` — no recipe for building `noti-server`
+- [x] ~~`justfile` `build-release` only builds `noti-cli` — no recipe for building `noti-server`~~ — added `build-server` recipe (9c73d13)
