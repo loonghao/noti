@@ -25,6 +25,5 @@ utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
-serde_json = { workspace = true }
 tempfile = "3.18"
 tokio = { workspace = true, features = ["fs", "time", "macros", "rt-multi-thread"] }
