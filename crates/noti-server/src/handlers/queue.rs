@@ -92,6 +92,19 @@ pub struct StatsResponse {
     pub total: usize,
 }
 
+impl From<QueueStats> for StatsResponse {
+    fn from(stats: QueueStats) -> Self {
+        Self {
+            queued: stats.queued,
+            processing: stats.processing,
+            completed: stats.completed,
+            failed: stats.failed,
+            cancelled: stats.cancelled,
+            total: stats.total(),
+        }
+    }
+}
+
 /// Response for purge operation.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct PurgeResponse {
@@ -401,10 +414,14 @@ pub async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<ListTasksQuery>,
 ) -> Result<Json<Vec<TaskInfo>>, ApiError> {
-    let status_filter = query
-        .status
-        .as_deref()
-        .and_then(parse_task_status);
+    let status_filter = match query.status.as_deref() {
+        Some(s) => Some(parse_task_status(s).ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "invalid status filter '{s}'; expected one of: queued, processing, completed, failed, cancelled"
+            ))
+        })?),
+        None => None,
+    };
 
     let limit = query.limit.unwrap_or(50).min(1000);
 
@@ -431,15 +448,7 @@ pub async fn get_stats(
     State(state): State<AppState>,
 ) -> Result<Json<StatsResponse>, ApiError> {
     let stats: QueueStats = state.queue.stats().await.map_err(queue_error)?;
-
-    Ok(Json(StatsResponse {
-        queued: stats.queued,
-        processing: stats.processing,
-        completed: stats.completed,
-        failed: stats.failed,
-        cancelled: stats.cancelled,
-        total: stats.total(),
-    }))
+    Ok(Json(StatsResponse::from(stats)))
 }
 
 /// Cancel a queued task.
@@ -604,6 +613,23 @@ mod tests {
 
         let tasks: Vec<TaskInfo> = resp.json();
         assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_tasks_invalid_status_filter() {
+        let server = TestServer::new(build_test_app());
+
+        let resp = server
+            .get("/api/v1/queue/tasks?status=bogus")
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["error"], "bad_request");
+        assert!(body["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid status filter"));
     }
 
     #[tokio::test]

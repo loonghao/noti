@@ -331,3 +331,195 @@ async fn test_metrics_endpoint() {
     assert!(body["version"].is_string());
     assert!(body["uptime_seconds"].as_u64().is_some());
 }
+
+// ───────────────────── Async send integration tests ─────────────────────
+
+#[tokio::test]
+async fn test_send_async_provider_not_found() {
+    let server = build_test_server();
+    let response = server
+        .post("/api/v1/send/async")
+        .json(&json!({
+            "provider": "nonexistent",
+            "text": "hello"
+        }))
+        .await;
+
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_send_async_missing_config() {
+    let server = build_test_server();
+    let response = server
+        .post("/api/v1/send/async")
+        .json(&json!({
+            "provider": "slack",
+            "text": "hello",
+            "config": {}
+        }))
+        .await;
+
+    response.assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_send_async_valid_provider() {
+    let server = build_test_server();
+    let response = server
+        .post("/api/v1/send/async")
+        .json(&json!({
+            "provider": "slack",
+            "text": "hello",
+            "config": {
+                "webhook_url": "https://hooks.slack.com/services/T00/B00/xxx"
+            },
+            "metadata": {"trace_id": "abc123"},
+            "callback_url": "https://example.com/callback"
+        }))
+        .await;
+
+    response.assert_status(StatusCode::ACCEPTED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["status"], "queued");
+    assert!(body["task_id"].is_string());
+}
+
+#[tokio::test]
+async fn test_send_async_batch_mixed_providers() {
+    let server = build_test_server();
+    let response = server
+        .post("/api/v1/send/async/batch")
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "slack",
+                    "text": "hello",
+                    "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/xxx"}
+                },
+                {
+                    "provider": "nonexistent",
+                    "text": "world"
+                }
+            ]
+        }))
+        .await;
+
+    response.assert_status(StatusCode::ACCEPTED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["enqueued"], 1);
+    assert_eq!(body["failed"], 1);
+
+    let results = body["results"].as_array().unwrap();
+    // First item should succeed (valid provider + config)
+    assert!(results[0]["success"].as_bool().unwrap());
+    assert!(results[0]["task_id"].is_string());
+    // Second item should fail (unknown provider)
+    assert!(!results[1]["success"].as_bool().unwrap());
+    assert!(results[1]["error"].is_string());
+}
+
+// ───────────────────── Queue management integration tests ─────────────────────
+
+#[tokio::test]
+async fn test_queue_stats_empty() {
+    let server = build_test_server();
+    let response = server.get("/api/v1/queue/stats").await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["queued"], 0);
+    assert_eq!(body["processing"], 0);
+}
+
+#[tokio::test]
+async fn test_queue_tasks_list_empty() {
+    let server = build_test_server();
+    let response = server.get("/api/v1/queue/tasks").await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_queue_tasks_invalid_status_filter() {
+    let server = build_test_server();
+    let response = server.get("/api/v1/queue/tasks?status=bogus").await;
+
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["error"], "bad_request");
+}
+
+#[tokio::test]
+async fn test_queue_tasks_valid_status_filter() {
+    let server = build_test_server();
+    let response = server
+        .get("/api/v1/queue/tasks?status=queued&limit=5")
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_queue_task_lifecycle() {
+    let server = build_test_server();
+
+    // Enqueue a task
+    let response = server
+        .post("/api/v1/send/async")
+        .json(&json!({
+            "provider": "slack",
+            "text": "lifecycle test",
+            "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/xxx"}
+        }))
+        .await;
+    response.assert_status(StatusCode::ACCEPTED);
+    let enqueue_body: serde_json::Value = response.json();
+    let task_id = enqueue_body["task_id"].as_str().unwrap();
+
+    // Get the task
+    let response = server
+        .get(&format!("/api/v1/queue/tasks/{task_id}"))
+        .await;
+    response.assert_status_ok();
+    let task_body: serde_json::Value = response.json();
+    assert_eq!(task_body["id"], task_id);
+    assert_eq!(task_body["provider"], "slack");
+    assert_eq!(task_body["status"], "queued");
+
+    // Cancel the task
+    let response = server
+        .post(&format!("/api/v1/queue/tasks/{task_id}/cancel"))
+        .await;
+    response.assert_status_ok();
+    let cancel_body: serde_json::Value = response.json();
+    assert!(cancel_body["cancelled"].as_bool().unwrap());
+
+    // Verify stats reflect the cancelled task
+    let response = server.get("/api/v1/queue/stats").await;
+    response.assert_status_ok();
+    let stats_body: serde_json::Value = response.json();
+    assert_eq!(stats_body["cancelled"], 1);
+
+    // Purge completed/cancelled tasks
+    let response = server.post("/api/v1/queue/purge").await;
+    response.assert_status_ok();
+    let purge_body: serde_json::Value = response.json();
+    assert_eq!(purge_body["purged"], 1);
+}
+
+#[tokio::test]
+async fn test_queue_task_not_found() {
+    let server = build_test_server();
+    let response = server
+        .get("/api/v1/queue/tasks/nonexistent-id")
+        .await;
+
+    response.assert_status(StatusCode::NOT_FOUND);
+}

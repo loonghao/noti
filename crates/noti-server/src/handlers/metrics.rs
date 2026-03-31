@@ -40,7 +40,13 @@ pub struct ProviderMetrics {
     )
 )]
 pub async fn get_metrics(State(state): State<AppState>) -> Json<MetricsResponse> {
-    let queue_stats = state.queue.stats().await.unwrap_or_default();
+    let queue_stats = match state.queue.stats().await {
+        Ok(stats) => stats,
+        Err(e) => {
+            tracing::warn!("failed to fetch queue stats for metrics: {e}");
+            Default::default()
+        }
+    };
     let all_providers = state.registry.all_providers();
     let attachment_count = all_providers
         .iter()
@@ -54,14 +60,7 @@ pub async fn get_metrics(State(state): State<AppState>) -> Json<MetricsResponse>
         .as_secs();
 
     Json(MetricsResponse {
-        queue: StatsResponse {
-            queued: queue_stats.queued,
-            processing: queue_stats.processing,
-            completed: queue_stats.completed,
-            failed: queue_stats.failed,
-            cancelled: queue_stats.cancelled,
-            total: queue_stats.total(),
-        },
+        queue: StatsResponse::from(queue_stats),
         providers: ProviderMetrics {
             total_registered: all_providers.len(),
             with_attachment_support: attachment_count,
