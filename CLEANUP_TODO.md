@@ -86,9 +86,10 @@ rounds or require coordination with the iteration agent.
 ## Code — Minor (noti-server)
 
 - [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
-- [ ] `e2e_test.rs`: 6 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper
-- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 39 times — each spawn_server variant should return `(String, Client)` tuple
-- [ ] `e2e_test.rs`: `spawn_server_with_body_limit` and `spawn_server_with_request_id` defined mid-file (lines 905, 1020) — consolidate all spawn helpers at file top
+- [ ] `e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper
+- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 61 times — each spawn_server variant should return `(String, Client)` tuple
+- [ ] `e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top
+- [ ] `e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
