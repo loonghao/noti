@@ -35,7 +35,7 @@ noti is organized as a Rust workspace with five crates:
 noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary — argument parsing, output formatting
-│   ├── noti-core/       # Core abstractions — Provider trait, Registry, URL parsing
+│   ├── noti-core/       # Core abstractions — NotifyProvider trait, ProviderRegistry, URL parsing
 │   ├── noti-providers/  # 125 provider implementations (one file each)
 │   ├── noti-queue/      # Async message queue — background task processing
 │   └── noti-server/     # REST API server — HTTP endpoints, middleware
