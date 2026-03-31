@@ -42,7 +42,7 @@ These variables are used by the install scripts (`install.sh` / `install.ps1`):
 NOTI_CONFIG=/etc/noti/config.toml noti send --profile team --message "Hello"
 
 # Install specific version
-NOTI_INSTALL_VERSION=v0.1.2 curl -fsSL https://raw.githubusercontent.com/loonghao/noti/main/scripts/install.sh | bash
+NOTI_INSTALL_VERSION=v0.1.3 curl -fsSL https://raw.githubusercontent.com/loonghao/noti/main/scripts/install.sh | bash
 
 # Install to custom directory
 NOTI_INSTALL_DIR=/opt/bin curl -fsSL https://raw.githubusercontent.com/loonghao/noti/main/scripts/install.sh | bash
