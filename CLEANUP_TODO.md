@@ -13,6 +13,13 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`docs/reference/cli.md` — `send` command table missing `--priority` parameter~~ — added (dcef4e9)
 - [ ] Core features not documented anywhere: message templates, retry policies, batch/failover sending, delivery status tracking, priority system
 
+## Documentation — Fixed This Round
+
+- [x] ~~`docs/guide/contributing.md` — Provider trait signature completely wrong (trait name, method names, params, return types)~~ — updated to match `NotifyProvider` (715bd8d)
+- [x] ~~`docs/reference/environment-variables.md` — missing all 14 noti-server env vars~~ — added full server env var table (715bd8d)
+- [x] ~~`docs/guide/architecture.md` — missing health check, CORS, rusqlite, tower-http, validator in tech stack~~ — added (715bd8d)
+- [x] ~~`docs/guide/agent-integration.md` — references non-existent `skills/noti-cli/` path~~ — fixed to `skills/noti-openclaw/` (715bd8d)
+
 ## Code — Structural Refactoring (noti-server)
 
 - [x] ~~`handlers/send.rs` and `handlers/queue.rs` share identical `build_message()` function~~ — extracted to `handlers/common.rs` (293b523)
@@ -31,6 +38,14 @@ rounds or require coordination with the iteration agent.
 ## Code — Silent Error Discards (noti-queue)
 
 - [x] ~~`worker.rs` `let _ = queue.ack/nack(...)` silently discards errors~~ — replaced with `if let Err(e) = ... { tracing::error!(...) }` (1de1311)
+
+## Code — SQLite Backend Quality (noti-queue)
+
+- [x] ~~`sqlite.rs` `epoch_ms_to_system_time` — unsafe `ms as u64` (negative i64 overflows)~~ — fixed with `ms.max(0) as u64` (112ce6f)
+- [x] ~~`sqlite.rs` `list_tasks` — duplicated iteration logic across if/else branches~~ — simplified with collect (112ce6f)
+- [ ] `sqlite.rs` — 14× repeated `.map_err(|e| QueueError::Backend(e.to_string()))` pattern — consider helper trait/function
+- [ ] `sqlite.rs` `str_to_status` — silently falls back to `Queued` for unknown status values, should log warning
+- [ ] `state.rs` `new()` vs `with_queue_backend()` — API inconsistency (one always succeeds, other can panic)
 
 ## Build
 
