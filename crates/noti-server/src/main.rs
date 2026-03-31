@@ -7,7 +7,7 @@ use noti_server::middleware::auth::{AuthState, auth_middleware};
 use noti_server::middleware::rate_limit::{RateLimiterState, rate_limit_middleware};
 use noti_server::middleware::request_id::request_id_middleware;
 use noti_server::state::AppState;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -69,6 +69,28 @@ async fn main() {
     let rate_limiter = RateLimiterState::new(config.rate_limit.clone());
     tracing::info!("rate limiter enabled");
 
+    // CORS configuration
+    let cors_layer = if config.cors_allowed_origins.is_empty()
+        || config.cors_allowed_origins.iter().any(|o| o == "*")
+    {
+        tracing::info!("CORS: permissive (allow all origins)");
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let origins: Vec<axum::http::HeaderValue> = config
+            .cors_allowed_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        tracing::info!(origins = ?config.cors_allowed_origins, "CORS: restricted origins");
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
+
     // Build application with middleware stack (outermost first)
     // Order: CORS → Trace → RequestId → Auth → Rate-limit → BodyLimit → Router
     let app = noti_server::routes::build_router(state)
@@ -83,7 +105,7 @@ async fn main() {
         ))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive());
+        .layer(cors_layer);
 
     let addr = config.socket_addr();
     tracing::info!(%addr, "noti-server listening");

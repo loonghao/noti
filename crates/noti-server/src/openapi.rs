@@ -8,7 +8,7 @@ use utoipa::OpenApi;
 use crate::handlers::{
     common::RetryConfig,
     error::ApiError,
-    health::{self, HealthResponse},
+    health::{self, ComponentHealth, DependencyHealth, HealthResponse},
     metrics::{self, MetricsResponse, ProviderMetrics, QueueMetrics},
     providers::{self, ParamInfo, ProviderInfo, ProviderListResponse, ProviderSummary},
     queue::{
@@ -81,7 +81,7 @@ use crate::handlers::{
         // Error
         ApiError,
         // Health
-        HealthResponse,
+        HealthResponse, DependencyHealth, ComponentHealth,
         // Common
         RetryConfig,
         // Send

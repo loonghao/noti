@@ -18,6 +18,7 @@
 //! | `NOTI_MAX_BODY_SIZE` | `2097152` | Max request body size in bytes (default 2 MiB) |
 //! | `NOTI_QUEUE_BACKEND` | `memory` | Queue backend: `memory` or `sqlite` |
 //! | `NOTI_QUEUE_DB_PATH` | `noti-queue.db` | SQLite database path (when backend=sqlite) |
+//! | `NOTI_CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins; `*` = permissive |
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -87,6 +88,9 @@ pub struct ServerConfig {
     pub queue_backend: QueueBackendType,
     /// SQLite database path (used when `queue_backend` is `Sqlite`).
     pub queue_db_path: String,
+    /// CORS allowed origins. Empty vec = permissive (allow all).
+    /// Populated from `NOTI_CORS_ALLOWED_ORIGINS`.
+    pub cors_allowed_origins: Vec<String>,
 }
 
 /// Default max body size: 2 MiB.
@@ -105,6 +109,7 @@ impl Default for ServerConfig {
             max_body_size: DEFAULT_MAX_BODY_SIZE,
             queue_backend: QueueBackendType::Memory,
             queue_db_path: "noti-queue.db".to_string(),
+            cors_allowed_origins: Vec::new(),
         }
     }
 }
@@ -166,6 +171,16 @@ impl ServerConfig {
         let queue_db_path = env::var("NOTI_QUEUE_DB_PATH")
             .unwrap_or_else(|_| "noti-queue.db".to_string());
 
+        let cors_allowed_origins: Vec<String> = env::var("NOTI_CORS_ALLOWED_ORIGINS")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Self {
             host,
             port,
@@ -177,6 +192,7 @@ impl ServerConfig {
             max_body_size,
             queue_backend,
             queue_db_path,
+            cors_allowed_origins,
         }
     }
 
@@ -222,6 +238,7 @@ mod tests {
         assert_eq!(cfg.log_level, "info");
         assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(!cfg.auth.enabled);
+        assert!(cfg.cors_allowed_origins.is_empty());
     }
 
     #[test]
