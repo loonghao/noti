@@ -12,7 +12,10 @@ pub fn print_success(mode: OutputMode, message: &str) {
     match mode {
         OutputMode::Json => {
             let out = serde_json::json!({ "status": "success", "message": message });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+            );
         }
         OutputMode::Human => {
             println!("✓ {message}");
@@ -25,7 +28,10 @@ pub fn print_error(mode: OutputMode, message: &str) {
     match mode {
         OutputMode::Json => {
             let out = serde_json::json!({ "status": "error", "message": message });
-            eprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
+            eprintln!(
+                "{}",
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+            );
         }
         OutputMode::Human => {
             eprintln!("✗ {message}");
