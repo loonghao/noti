@@ -34,7 +34,10 @@ impl AppState {
     }
 
     /// Create state with a specific queue backend.
-    pub fn with_queue_backend(
+    ///
+    /// For persistent backends (SQLite), this also recovers any tasks that
+    /// were left in `Processing` state after an unclean shutdown.
+    pub async fn with_queue_backend(
         registry: ProviderRegistry,
         backend: &QueueBackendType,
         db_path: &str,
@@ -52,6 +55,13 @@ impl AppState {
                 (Arc::new(q), notify)
             }
         };
+
+        // Recover stale tasks left in "processing" state from a previous crash
+        match queue.recover_stale_tasks().await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(recovered = n, "recovered stale processing tasks"),
+            Err(e) => tracing::warn!(error = %e, "failed to recover stale tasks"),
+        }
 
         Self {
             registry: Arc::new(registry),

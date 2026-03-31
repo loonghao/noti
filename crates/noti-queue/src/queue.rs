@@ -70,6 +70,20 @@ pub trait QueueBackend: Send + Sync {
 
     /// Purge all completed/failed/cancelled tasks from the queue.
     async fn purge_completed(&self) -> Result<usize, QueueError>;
+
+    /// Recover stale tasks that were left in `Processing` state.
+    ///
+    /// After an unclean shutdown, persistent backends may have tasks stuck
+    /// in the `Processing` state. This method resets them back to `Queued`
+    /// so they can be retried by workers.
+    ///
+    /// Returns the number of recovered tasks.
+    ///
+    /// The default implementation is a no-op (returns 0), which is correct
+    /// for in-memory backends where all state is lost on restart.
+    async fn recover_stale_tasks(&self) -> Result<usize, QueueError> {
+        Ok(0)
+    }
 }
 
 #[cfg(test)]

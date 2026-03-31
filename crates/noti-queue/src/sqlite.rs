@@ -439,6 +439,25 @@ impl QueueBackend for SqliteQueue {
 
         Ok(deleted)
     }
+
+    async fn recover_stale_tasks(&self) -> Result<usize, QueueError> {
+        let conn = self.conn.lock().await;
+        let now = system_time_to_epoch_ms(SystemTime::now());
+
+        let recovered = conn
+            .execute(
+                "UPDATE tasks SET status = 'queued', updated_at = ?1 WHERE status = 'processing'",
+                params![now],
+            )
+            .map_err(|e| QueueError::Backend(e.to_string()))?;
+
+        if recovered > 0 {
+            drop(conn);
+            self.notify.notify_waiters();
+        }
+
+        Ok(recovered)
+    }
 }
 
 #[cfg(test)]
@@ -652,5 +671,48 @@ mod tests {
             loaded.callback_url.as_deref(),
             Some("https://example.com/callback")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_recover_stale_tasks() {
+        let queue = SqliteQueue::in_memory().unwrap();
+
+        // Enqueue and dequeue two tasks (they become "processing")
+        let id1 = queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
+        let id2 = queue.enqueue(make_task("b", Priority::High)).await.unwrap();
+        queue.enqueue(make_task("c", Priority::Low)).await.unwrap();
+
+        queue.dequeue().await.unwrap(); // b (high priority)
+        queue.dequeue().await.unwrap(); // a (normal priority)
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.processing, 2);
+        assert_eq!(stats.queued, 1);
+
+        // Simulate server restart — recover stale "processing" tasks
+        let recovered = queue.recover_stale_tasks().await.unwrap();
+        assert_eq!(recovered, 2);
+
+        // All should now be queued
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.processing, 0);
+        assert_eq!(stats.queued, 3);
+
+        // Verify recovered tasks are dequeue-able again
+        let t = queue.dequeue().await.unwrap().unwrap();
+        assert!(t.id == id2 || t.id == id1);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_recover_stale_no_processing() {
+        let queue = SqliteQueue::in_memory().unwrap();
+
+        queue.enqueue(make_task("a", Priority::Normal)).await.unwrap();
+
+        let recovered = queue.recover_stale_tasks().await.unwrap();
+        assert_eq!(recovered, 0);
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.queued, 1);
     }
 }
