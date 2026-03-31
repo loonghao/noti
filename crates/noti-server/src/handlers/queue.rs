@@ -233,12 +233,16 @@ pub async fn send_async(
     State(state): State<AppState>,
     ValidatedJson(req): ValidatedJson<AsyncSendRequest>,
 ) -> Result<(StatusCode, Json<EnqueueResponse>), ApiError> {
-    // Validate provider exists
-    let _provider = common::require_provider(&state.registry, &req.provider)?;
+    // Validate provider exists and config is well-formed
+    let provider = common::require_provider(&state.registry, &req.provider)?;
 
     let config = ProviderConfig {
         values: req.config,
     };
+
+    if let Err(e) = provider.validate_config(&config) {
+        return Err(ApiError::bad_request(e.to_string()));
+    }
 
     let msg = common::build_message(
         &req.text,
@@ -299,21 +303,37 @@ pub async fn send_async_batch(
 
     for (index, item) in req.items.into_iter().enumerate() {
         // Validate provider exists
-        if state.registry.get_by_name(&item.provider).is_none() {
+        let provider = match state.registry.get_by_name(&item.provider) {
+            Some(p) => p,
+            None => {
+                results.push(BatchEnqueueItemResult {
+                    index,
+                    provider: item.provider,
+                    success: false,
+                    task_id: None,
+                    error: Some("provider not found".to_string()),
+                });
+                failed += 1;
+                continue;
+            }
+        };
+
+        let config = ProviderConfig {
+            values: item.config,
+        };
+
+        // Validate config before enqueuing
+        if let Err(e) = provider.validate_config(&config) {
             results.push(BatchEnqueueItemResult {
                 index,
                 provider: item.provider,
                 success: false,
                 task_id: None,
-                error: Some("provider not found".to_string()),
+                error: Some(e.to_string()),
             });
             failed += 1;
             continue;
         }
-
-        let config = ProviderConfig {
-            values: item.config,
-        };
 
         let msg = common::build_message(
             &item.text,
