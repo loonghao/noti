@@ -33,4 +33,3 @@ axum-test = "19"
 reqwest = { workspace = true }
 rstest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
-tower-http = { workspace = true, features = ["cors"] }
