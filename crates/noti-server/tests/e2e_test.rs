@@ -5,8 +5,14 @@
 //! TCP transport and header serialization.
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
+use axum::extract::DefaultBodyLimit;
 use noti_core::ProviderRegistry;
+use noti_server::middleware::auth::{AuthConfig, AuthState, auth_middleware};
+use noti_server::middleware::rate_limit::{
+    RateLimitConfig, RateLimiterState, rate_limit_middleware,
+};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
@@ -28,6 +34,99 @@ async fn spawn_server() -> String {
     });
 
     format!("http://{addr}")
+}
+
+/// Start a server with auth middleware enabled.
+/// Returns (base_url, valid_api_keys).
+async fn spawn_server_with_auth(api_keys: Vec<String>) -> (String, Vec<String>) {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+
+    let state = noti_server::state::AppState::new(registry);
+    let auth_config = AuthConfig::new(api_keys.clone());
+    let auth_state = AuthState::new(auth_config);
+
+    let app = noti_server::routes::build_router(state).layer(
+        axum::middleware::from_fn_with_state(auth_state, auth_middleware),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{addr}"), api_keys)
+}
+
+/// Start a server with rate limit middleware enabled (global mode).
+/// Returns (base_url, max_requests).
+async fn spawn_server_with_rate_limit(max_requests: u64, window_secs: u64) -> (String, u64) {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+
+    let state = noti_server::state::AppState::new(registry);
+    let rate_config =
+        RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
+    let rate_state = RateLimiterState::new(rate_config);
+
+    let app = noti_server::routes::build_router(state).layer(
+        axum::middleware::from_fn_with_state(rate_state, rate_limit_middleware),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{addr}"), max_requests)
+}
+
+/// Start a server with both auth and rate limit middleware (production-like stack).
+/// Middleware order: Auth → Rate-limit → BodyLimit → Router
+async fn spawn_server_with_full_middleware(
+    api_keys: Vec<String>,
+    max_requests: u64,
+    window_secs: u64,
+) -> (String, Vec<String>) {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+
+    let state = noti_server::state::AppState::new(registry);
+    let auth_config = AuthConfig::new(api_keys.clone());
+    let auth_state = AuthState::new(auth_config);
+    let rate_config =
+        RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
+    let rate_state = RateLimiterState::new(rate_config);
+
+    let app = noti_server::routes::build_router(state)
+        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(axum::middleware::from_fn_with_state(
+            rate_state,
+            rate_limit_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            auth_middleware,
+        ));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{addr}"), api_keys)
 }
 
 // ───────────────────── Health & Meta ─────────────────────
@@ -477,4 +576,353 @@ async fn e2e_queue_task_not_found() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ───────────────────── Auth middleware (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_auth_rejects_unauthenticated_request() {
+    let (base, _keys) = spawn_server_with_auth(vec!["test-key-alpha".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "unauthorized");
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("missing API key"));
+}
+
+#[tokio::test]
+async fn e2e_auth_rejects_invalid_key() {
+    let (base, _keys) = spawn_server_with_auth(vec!["correct-key".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .header("Authorization", "Bearer wrong-key")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "unauthorized");
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .contains("invalid API key"));
+}
+
+#[tokio::test]
+async fn e2e_auth_accepts_valid_bearer_token() {
+    let (base, keys) = spawn_server_with_auth(vec!["my-secret-key".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .header("Authorization", format!("Bearer {}", keys[0]))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["total"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn e2e_auth_accepts_x_api_key_header() {
+    let (base, keys) = spawn_server_with_auth(vec!["x-api-key-value".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .header("X-API-Key", &keys[0])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn e2e_auth_health_bypasses_auth() {
+    let (base, _keys) = spawn_server_with_auth(vec!["secret".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    // /health is excluded from auth by default
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn e2e_auth_multiple_keys() {
+    let (base, keys) =
+        spawn_server_with_auth(vec!["key-one".to_string(), "key-two".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    for key in &keys {
+        let resp = client
+            .get(format!("{base}/api/v1/providers"))
+            .header("Authorization", format!("Bearer {key}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "key '{key}' should be accepted"
+        );
+    }
+}
+
+#[tokio::test]
+async fn e2e_auth_post_endpoint_requires_key() {
+    let (base, keys) = spawn_server_with_auth(vec!["post-key".to_string()]).await;
+    let client = reqwest::Client::new();
+
+    // Without key → 401
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "slack", "text": "test"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // With key → should proceed (will get 400/404 from handler, not 401)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("Authorization", format!("Bearer {}", keys[0]))
+        .json(&json!({"provider": "slack", "text": "test", "config": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ───────────────────── Rate limit middleware (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_rate_limit_allows_within_quota() {
+    let (base, max_requests) = spawn_server_with_rate_limit(5, 60).await;
+    let client = reqwest::Client::new();
+
+    for i in 0..max_requests {
+        let resp = client
+            .get(format!("{base}/health"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "request {i} should be allowed"
+        );
+
+        // Verify rate limit headers are present
+        assert!(
+            resp.headers().contains_key("x-ratelimit-limit"),
+            "missing x-ratelimit-limit header on request {i}"
+        );
+        assert!(
+            resp.headers().contains_key("x-ratelimit-remaining"),
+            "missing x-ratelimit-remaining header on request {i}"
+        );
+        assert_eq!(
+            resp.headers()["x-ratelimit-limit"].to_str().unwrap(),
+            max_requests.to_string()
+        );
+    }
+}
+
+#[tokio::test]
+async fn e2e_rate_limit_returns_429_when_exceeded() {
+    let (base, max_requests) = spawn_server_with_rate_limit(3, 60).await;
+    let client = reqwest::Client::new();
+
+    // Exhaust the quota
+    for _ in 0..max_requests {
+        let resp = client
+            .get(format!("{base}/health"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // Next request should be rate limited
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // Verify 429 response structure
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "rate limit exceeded");
+    assert!(body["retry_after_seconds"].as_u64().is_some());
+    assert_eq!(body["limit"], max_requests);
+}
+
+#[tokio::test]
+async fn e2e_rate_limit_429_has_retry_after_header() {
+    let (base, _max) = spawn_server_with_rate_limit(1, 60).await;
+    let client = reqwest::Client::new();
+
+    // Use up the single allowed request
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Trigger 429
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        resp.headers().contains_key("retry-after"),
+        "429 response should include Retry-After header"
+    );
+    let retry_after = resp.headers()["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert!(
+        retry_after > 0,
+        "Retry-After should be positive, got {retry_after}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_rate_limit_remaining_decrements() {
+    let (base, _max) = spawn_server_with_rate_limit(10, 60).await;
+    let client = reqwest::Client::new();
+
+    let resp1 = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+    let remaining1: u64 = resp1.headers()["x-ratelimit-remaining"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let resp2 = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+    let remaining2: u64 = resp2.headers()["x-ratelimit-remaining"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    assert!(
+        remaining2 < remaining1,
+        "remaining should decrement: {remaining1} -> {remaining2}"
+    );
+}
+
+// ───────────────────── Full middleware stack (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_full_middleware_auth_before_rate_limit() {
+    let (base, keys) =
+        spawn_server_with_full_middleware(vec!["full-stack-key".to_string()], 5, 60).await;
+    let client = reqwest::Client::new();
+
+    // Unauthenticated → 401 (auth fires before rate limit)
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Authenticated → 200 with rate limit headers
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .header("Authorization", format!("Bearer {}", keys[0]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().contains_key("x-ratelimit-limit"));
+    assert!(resp.headers().contains_key("x-ratelimit-remaining"));
+}
+
+#[tokio::test]
+async fn e2e_full_middleware_health_bypasses_auth_has_rate_limit() {
+    let (base, _keys) =
+        spawn_server_with_full_middleware(vec!["bypass-key".to_string()], 100, 60).await;
+    let client = reqwest::Client::new();
+
+    // /health bypasses auth but still gets rate limit headers
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().contains_key("x-ratelimit-limit"));
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn e2e_full_middleware_exhausts_rate_limit() {
+    let (base, keys) =
+        spawn_server_with_full_middleware(vec!["exhaust-key".to_string()], 3, 60).await;
+    let client = reqwest::Client::new();
+    let key = &keys[0];
+
+    // Use up quota with authenticated requests
+    for _ in 0..3 {
+        let resp = client
+            .get(format!("{base}/api/v1/providers"))
+            .header("Authorization", format!("Bearer {key}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // 4th authenticated request → 429
+    let resp = client
+        .get(format!("{base}/api/v1/providers"))
+        .header("Authorization", format!("Bearer {key}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
