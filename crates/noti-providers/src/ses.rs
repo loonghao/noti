@@ -166,18 +166,20 @@ impl NotifyProvider for SesProvider {
                 .await?;
             let raw_b64 = base64::engine::general_purpose::STANDARD.encode(raw_email.as_bytes());
 
-            let mut params = vec![
-                ("Action", "SendRawEmail".to_string()),
-                ("Source", from_header),
-                ("RawMessage.Data", raw_b64),
+            let mut params: Vec<(String, String)> = vec![
+                ("Action".into(), "SendRawEmail".into()),
+                ("Source".into(), from_header),
+                ("RawMessage.Data".into(), raw_b64),
             ];
 
-            // Add destinations
-            params.push(("Destinations.member.1", to.to_string()));
+            // Add destinations — member index is 1-based; "to" is member.1
+            params.push(("Destinations.member.1".into(), to.to_string()));
             if let Some(cc_addrs) = cc {
                 for (i, addr) in cc_addrs.split(',').enumerate() {
-                    params.push(("Destinations.member.1", addr.trim().to_string()));
-                    let _ = i;
+                    params.push((
+                        format!("Destinations.member.{}", i + 2),
+                        addr.trim().to_string(),
+                    ));
                 }
             }
 
@@ -212,18 +214,20 @@ impl NotifyProvider for SesProvider {
             }
         } else {
             // Simple SendEmail for text-only messages
-            let mut params = vec![
-                ("Action", "SendEmail".to_string()),
-                ("Source", from_header),
-                ("Destination.ToAddresses.member.1", to.to_string()),
-                ("Message.Subject.Data", subject.to_string()),
-                ("Message.Body.Text.Data", message.text.clone()),
+            let mut params: Vec<(String, String)> = vec![
+                ("Action".into(), "SendEmail".into()),
+                ("Source".into(), from_header),
+                ("Destination.ToAddresses.member.1".into(), to.to_string()),
+                ("Message.Subject.Data".into(), subject.to_string()),
+                ("Message.Body.Text.Data".into(), message.text.clone()),
             ];
 
             if let Some(cc_addrs) = cc {
                 for (i, addr) in cc_addrs.split(',').enumerate() {
-                    params.push(("Destination.CcAddresses.member.1", addr.trim().to_string()));
-                    let _ = i;
+                    params.push((
+                        format!("Destination.CcAddresses.member.{}", i + 1),
+                        addr.trim().to_string(),
+                    ));
                 }
             }
 

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
     /// Lowest priority — informational, non-urgent.

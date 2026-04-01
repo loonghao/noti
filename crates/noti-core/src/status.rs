@@ -10,6 +10,7 @@ pub type NotificationId = String;
 
 /// Current delivery status of a notification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {
     /// Queued for sending but not yet dispatched.
@@ -41,10 +42,12 @@ impl std::fmt::Display for DeliveryStatus {
 
 /// A timestamped event in the delivery lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct StatusEvent {
     /// The status at this point.
     pub status: DeliveryStatus,
     /// When this event occurred.
+    #[cfg_attr(feature = "openapi", schema(value_type = f64))]
     pub timestamp: SystemTime,
     /// Optional detail message (e.g. error reason).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -53,6 +56,7 @@ pub struct StatusEvent {
 
 /// Full tracking record for a single notification delivery to one provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct DeliveryRecord {
     /// Unique notification identifier.
     pub notification_id: NotificationId,
@@ -66,10 +70,13 @@ pub struct DeliveryRecord {
     pub attempts: u32,
     /// Total time from first attempt to final status.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<f64>))]
     pub total_duration: Option<Duration>,
     /// When the record was created.
+    #[cfg_attr(feature = "openapi", schema(value_type = f64))]
     pub created_at: SystemTime,
     /// When the record was last updated.
+    #[cfg_attr(feature = "openapi", schema(value_type = f64))]
     pub updated_at: SystemTime,
 }
 
@@ -255,6 +262,7 @@ impl StatusTracker {
 
 /// Aggregate counts of delivery statuses.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct StatusSummary {
     pub pending: usize,
     pub sending: usize,

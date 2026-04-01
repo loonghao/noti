@@ -66,7 +66,7 @@ noti --json providers info wecom
 
 ## OpenClaw Skill
 
-noti ships with a built-in [OpenClaw](https://github.com/nicepkg/openclaw) skill definition in `skills/noti-cli/`. Agents can auto-discover noti's capabilities through:
+noti ships with a built-in [OpenClaw](https://github.com/nicepkg/openclaw) skill definition in `skills/noti-openclaw/`. Agents can auto-discover noti's capabilities through:
 
 - **`SKILL.md`** — Skill metadata, activation conditions, standard workflow
 - **`references/install-and-usage.md`** — Installation and usage patterns
