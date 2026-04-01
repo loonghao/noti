@@ -4210,23 +4210,25 @@ async fn e2e_concurrent_tasks_no_duplicate_processing() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Each task should have produced exactly one callback
-    let received = payloads.lock().unwrap();
-    assert_eq!(
-        received.len(),
-        task_count,
-        "expected exactly {task_count} callbacks, got {}",
-        received.len()
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            task_count,
+            "expected exactly {task_count} callbacks, got {}",
+            received.len()
+        );
 
-    // Verify all task IDs appear exactly once
-    let callback_task_ids: Vec<&str> = received
-        .iter()
-        .map(|p| p["task_id"].as_str().unwrap())
-        .collect();
-    for id in &task_ids {
-        let count = callback_task_ids.iter().filter(|&&cid| cid == id).count();
-        assert_eq!(count, 1, "task {id} should have exactly 1 callback");
-    }
+        // Verify all task IDs appear exactly once
+        let callback_task_ids: Vec<&str> = received
+            .iter()
+            .map(|p| p["task_id"].as_str().unwrap())
+            .collect();
+        for id in &task_ids {
+            let count = callback_task_ids.iter().filter(|&&cid| cid == id).count();
+            assert_eq!(count, 1, "task {id} should have exactly 1 callback");
+        }
+    } // MutexGuard dropped before await
 
     worker_handle.shutdown_and_join().await;
 }
