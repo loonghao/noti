@@ -383,3 +383,241 @@ Clients can provide their API key via either header:
   "message": "missing API key — provide via Authorization: Bearer <key> or X-API-Key header"
 }
 ```
+
+## CORS (Cross-Origin Resource Sharing)
+
+Control which browser origins can access the noti-server API. CORS is the **outermost** middleware layer, ensuring preflight requests are handled before any other processing.
+
+### Configuration
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `NOTI_CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins; `*` = permissive |
+
+### Modes
+
+**Permissive mode** (default): When the variable is unset, empty, or contains `*`, all origins, methods, and headers are allowed.
+
+**Restricted mode**: Set specific origins to lock down access:
+
+```bash
+export NOTI_CORS_ALLOWED_ORIGINS="https://dashboard.example.com,https://admin.example.com"
+```
+
+In restricted mode, only listed origins are allowed. Methods and headers remain permissive (`Any`).
+
+### Middleware Order
+
+CORS runs first in the middleware stack:
+
+```
+CORS → Trace → RequestId → Auth → Rate-limit → BodyLimit → Router
+```
+
+This ensures `OPTIONS` preflight requests receive correct headers without hitting auth or rate limiting.
+
+## Request ID Tracking
+
+Every request passing through the server is assigned a unique identifier for end-to-end log correlation.
+
+### How It Works
+
+1. If the client sends an `X-Request-Id` header, the server **preserves** it.
+2. Otherwise, the server generates a new **UUID v4**.
+3. The ID is injected into a `tracing::info_span`, so **all downstream log entries** automatically include the `request_id` field.
+4. The same `X-Request-Id` is **echoed back** in the response headers.
+
+### Usage
+
+**Client-provided ID** (useful for distributed tracing):
+
+```bash
+curl -H "X-Request-Id: my-trace-123" http://localhost:3000/api/v1/send ...
+# Response header: X-Request-Id: my-trace-123
+```
+
+**Server-generated ID** (automatic):
+
+```bash
+curl -v http://localhost:3000/health
+# Response header: X-Request-Id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+### JSON Log Correlation
+
+When `NOTI_LOG_FORMAT=json`, every log line includes the request ID:
+
+```json
+{"timestamp":"...","level":"INFO","request_id":"a1b2c3d4-...","method":"POST","path":"/api/v1/send","message":"..."}
+```
+
+## Body Size Limit
+
+Protect the server from oversized payloads with a configurable maximum request body size.
+
+### Configuration
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `NOTI_MAX_BODY_SIZE` | `2097152` (2 MiB) | Maximum request body size in bytes |
+
+### Behavior
+
+Requests exceeding the limit receive a `413 Payload Too Large` response before any parsing occurs. This prevents memory exhaustion from very large payloads.
+
+```bash
+# Set a 1 MiB limit
+export NOTI_MAX_BODY_SIZE=1048576
+```
+
+## Request Validation
+
+All API endpoints that accept JSON bodies use the `ValidatedJson` extractor, which automatically validates the deserialized payload using field-level rules.
+
+### Validation Errors
+
+When validation fails, the server returns `422 Unprocessable Entity` with structured field-level errors:
+
+```json
+{
+  "error": "validation_failed",
+  "fields": {
+    "provider": [{"code": "length", "message": "provider must not be empty"}],
+    "text": [{"code": "length", "message": "text must not be empty"}]
+  }
+}
+```
+
+This makes it straightforward for API clients to display per-field error messages.
+
+## Queue Management
+
+The async queue system provides endpoints for monitoring and managing background notification tasks.
+
+### Queue Backends
+
+| Backend | Env Value | Persistence | Description |
+|:--------|:----------|:------------|:------------|
+| In-Memory | `memory` | No (lost on restart) | Default, fastest, suitable for development |
+| SQLite | `sqlite` | Yes | Survives restarts, auto-recovers stale tasks |
+
+Configure via:
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `NOTI_QUEUE_BACKEND` | `memory` | Queue backend type |
+| `NOTI_QUEUE_DB_PATH` | `noti-queue.db` | SQLite database file path |
+| `NOTI_WORKER_COUNT` | `4` | Number of background worker threads |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|:-------|:---------|:------------|
+| `POST` | `/api/v1/send/async` | Enqueue a single notification (returns 202 + task_id) |
+| `POST` | `/api/v1/send/async/batch` | Enqueue multiple notifications at once |
+| `GET` | `/api/v1/queue/tasks` | List tasks with optional `?status=` filter and `?limit=` |
+| `GET` | `/api/v1/queue/tasks/:task_id` | Get a single task's status and metadata |
+| `POST` | `/api/v1/queue/tasks/:task_id/cancel` | Cancel a queued task |
+| `GET` | `/api/v1/queue/stats` | Queue statistics (queued/processing/completed/failed/cancelled) |
+| `POST` | `/api/v1/queue/purge` | Remove all terminal tasks (completed, failed, cancelled) |
+
+### Async Send Request
+
+```json
+{
+  "provider": "slack",
+  "config": {"webhook": "https://hooks.slack.com/..."},
+  "text": "Deployment complete",
+  "title": "Deploy Alert",
+  "priority": "high",
+  "retry": {"max_retries": 3, "delay_ms": 1000},
+  "metadata": {"deploy_id": "d-123", "env": "production"},
+  "callback_url": "https://your-server.com/webhook/noti-callback"
+}
+```
+
+### Task Lifecycle
+
+```
+Queued → Processing → Completed
+                    ↘ Failed (retries exhausted)
+         Queued → Cancelled (via cancel endpoint)
+```
+
+### Webhook Callbacks
+
+When `callback_url` is provided, the server sends a POST request to the URL when the task reaches a terminal state (completed or failed):
+
+```json
+{
+  "task_id": "abc-123",
+  "status": "completed",
+  "provider": "slack",
+  "attempts": 1,
+  "metadata": {"deploy_id": "d-123"}
+}
+```
+
+### Stale Task Recovery
+
+When using the SQLite backend, tasks left in `Processing` state after an unclean shutdown are automatically recovered to `Queued` state on the next server startup.
+
+### Queue Statistics Response
+
+```json
+{
+  "queued": 5,
+  "processing": 2,
+  "completed": 100,
+  "failed": 3,
+  "cancelled": 1,
+  "total": 111
+}
+```
+
+## Logging
+
+Configure structured logging for production observability.
+
+### Configuration
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `NOTI_LOG_LEVEL` | `info` | Tracing filter level (`trace`, `debug`, `info`, `warn`, `error`) |
+| `NOTI_LOG_FORMAT` | `text` | Output format: `text` (human-readable) or `json` (structured) |
+
+### JSON Format
+
+Enable structured JSON logging for log aggregation pipelines:
+
+```bash
+export NOTI_LOG_FORMAT=json
+export NOTI_LOG_LEVEL=info
+```
+
+Output includes span events (request lifecycle), flattened fields, and automatic `request_id` correlation from the Request ID middleware.
+
+## Health Check
+
+The `/health` endpoint provides service status including dependency health.
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.5",
+  "uptime_seconds": 3600,
+  "dependencies": {
+    "queue": {"status": "up", "detail": "queued=5 processing=2 completed=100"},
+    "providers": {"status": "up", "detail": "125 registered"}
+  }
+}
+```
+
+| Status | Description |
+|:-------|:------------|
+| `ok` | All dependencies healthy |
+| `degraded` | One or more dependencies unhealthy (still returns 200) |
+
+The health endpoint is excluded from authentication by default (`NOTI_AUTH_EXCLUDED_PATHS=/health`).

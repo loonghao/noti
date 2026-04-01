@@ -6979,3 +6979,106 @@ async fn e2e_backoff_multiplier_1_is_fixed() {
 
     worker_handle.shutdown_and_join().await;
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Health Check structure e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Verify `/health` returns expected JSON structure with all documented fields.
+#[tokio::test]
+async fn e2e_health_response_has_documented_structure() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client.get(format!("{base}/health")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: Value = resp.json().await.unwrap();
+    // Top-level fields
+    assert!(body["status"].is_string(), "missing 'status' field");
+    assert!(body["version"].is_string(), "missing 'version' field");
+    assert!(
+        body["uptime_seconds"].is_number(),
+        "missing 'uptime_seconds' field"
+    );
+    // Dependencies
+    let deps = &body["dependencies"];
+    assert!(deps["queue"]["status"].is_string(), "missing queue.status");
+    assert!(
+        deps["providers"]["status"].is_string(),
+        "missing providers.status"
+    );
+    // Providers should be "up" (125+ registered)
+    assert_eq!(deps["providers"]["status"], "up");
+    assert_eq!(body["status"], "ok");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Request ID generation e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Verify the server generates a UUID v4 request ID when none is provided.
+#[tokio::test]
+async fn e2e_request_id_generated_is_valid_uuid() {
+    let base = spawn_server_with_request_id().await;
+    let client = reqwest::Client::new();
+
+    let resp = client.get(format!("{base}/health")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let id_header = resp
+        .headers()
+        .get("x-request-id")
+        .expect("response should have x-request-id header");
+    let id_str = id_header.to_str().unwrap();
+    // UUID v4 format: 8-4-4-4-12 hex chars
+    assert_eq!(id_str.len(), 36, "UUID should be 36 chars");
+    assert!(id_str.contains('-'), "UUID should contain dashes");
+}
+
+/// Verify the server preserves a client-provided request ID.
+#[tokio::test]
+async fn e2e_request_id_preserves_client_provided() {
+    let base = spawn_server_with_request_id().await;
+    let client = reqwest::Client::new();
+    let custom_id = "my-custom-trace-id-abc";
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("X-Request-Id", custom_id)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let id_header = resp
+        .headers()
+        .get("x-request-id")
+        .expect("response should echo x-request-id");
+    assert_eq!(id_header.to_str().unwrap(), custom_id);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CORS middleware e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Verify permissive CORS returns wildcard origin and allows arbitrary origin header.
+#[tokio::test]
+async fn e2e_cors_permissive_returns_wildcard_for_arbitrary_origin() {
+    let base = spawn_server_with_cors_permissive().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("Origin", "https://arbitrary.example.com")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let allow_origin = resp
+        .headers()
+        .get("access-control-allow-origin")
+        .expect("should have CORS allow-origin header");
+    assert_eq!(allow_origin.to_str().unwrap(), "*");
+}
