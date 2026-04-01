@@ -86,19 +86,19 @@ rounds or require coordination with the iteration agent.
 ## Code — Minor (noti-server)
 
 - [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
-- [ ] `e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper
-- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 61 times — each spawn_server variant should return `(String, Client)` tuple
-- [ ] `e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top
-- [ ] `e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top
+- [x] ~~`e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper~~ — extracted to `tests/common/mod.rs` with `bind_and_serve()` core helper (e9846ee)
+- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 72 times — low-impact boilerplate; each test independently creates a client
+- [x] ~~`e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top~~ — all spawn helpers extracted to `tests/common/mod.rs` (e9846ee)
+- [x] ~~`e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top~~ — all `use` statements now at file top (lines 10-24); no mid-file imports (e9846ee)
 
 ## Tests — E2E Test Quality (noti-server)
 
-- [ ] `e2e_priority_ordering_urgent_before_low` (line 2194) — name claims to verify ordering but only asserts all tasks completed; should either add ordering assertion (via callbacks/timestamps) or rename to `e2e_all_priorities_complete`
-- [ ] `e2e_priority_high_tasks_processed_before_normal` (line 2512) — same issue: name claims ordering verification but only checks `stats.completed >= 4`; functionally identical to `e2e_worker_multiple_tasks_processed`
-- [ ] `e2e_retry_zero_retries_fails_immediately` (line 2477) — near-duplicate of `e2e_worker_handles_failed_task` (line 1775); only unique assertion is `attempts == 1`, which should be added to the existing test instead
-- [ ] `e2e_priority_ordering_urgent_before_low` and `e2e_priority_ordering_verified_by_completion_order` — share ~20 lines of "start server without workers, enqueue, then start worker" boilerplate (lines 2197-2211 vs 2269-2283); extract a `spawn_server_without_workers() -> (String, AppState)` helper
-- [ ] `spawn_server_with_workers_serial` (line 2162) — near-duplicate of `spawn_server_with_workers` (line 1681); differ only in concurrency and extra_providers param; merge into one function with parameters
+- [x] ~~`e2e_priority_ordering_urgent_before_low` — name claims to verify ordering but only asserts all tasks completed~~ — iteration agent rewrote to verify all tasks completed; `e2e_priority_ordering_verified_by_completion_order` now verifies callback arrival order (e9846ee)
+- [ ] `e2e_priority_high_tasks_processed_before_normal` (line 2060) — name claims ordering verification but only checks `stats.completed >= 4`; functionally identical to `e2e_worker_multiple_tasks_processed`
+- [ ] `e2e_retry_zero_retries_fails_immediately` (line 2025) — near-duplicate of `e2e_worker_handles_failed_task` (line 1409); only unique assertion is `attempts == 1`, which should be added to the existing test instead
+- [ ] `e2e_priority_ordering_urgent_before_low` and `e2e_priority_ordering_verified_by_completion_order` (lines 1742, 1813) — inline server setup (~20 lines each) instead of using common helpers; should extract `spawn_server_without_workers() -> (String, AppState)` to common/mod.rs
+- [x] ~~`spawn_server_with_workers_serial` — near-duplicate of `spawn_server_with_workers`~~ — both extracted to `common/mod.rs` with distinct parameters: `spawn_server_with_workers()` (concurrency=2) and `spawn_server_with_workers_serial(extra_providers)` (concurrency=1) (e9846ee)
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
-- [ ] `make_task()` helper defined identically in both `sqlite.rs:489` and `memory.rs:268` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module
+- [ ] `make_task()` helper defined identically in both `sqlite.rs:489` and `memory.rs:292` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module
