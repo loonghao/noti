@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.5](https://github.com/loonghao/noti/compare/v0.1.4...v0.1.5) (2026-04-01)
+
+
+### Features
+
+* **cli:** agent-first CLI refactoring based on Google best practices ([9dc6981](https://github.com/loonghao/noti/commit/9dc69815d6e3b4a0fcf1c26b543e5da329b7d53a))
+* squash merge auto-improve + fix clawhub publish version ([ffbb116](https://github.com/loonghao/noti/commit/ffbb11650365b7c03cb80de9923e031566f40b07))
+* squash merge auto-improve incremental changes ([a88ac49](https://github.com/loonghao/noti/commit/a88ac49c3924cc82cf0c4dcc9e46842f042b5467))
+
+
+### Bug Fixes
+
+* **ci:** use correct clawhub publish command instead of clawhub skill publish ([2be1ae5](https://github.com/loonghao/noti/commit/2be1ae598700558b98a406cec30ad01b8fa261df))
+
 ## [0.1.4](https://github.com/loonghao/noti/compare/v0.1.3...v0.1.4) (2026-04-01)
 
 
