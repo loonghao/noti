@@ -263,7 +263,9 @@ fn build_message(args: &SendArgs) -> Result<Message> {
             .parse::<Priority>()
             .map_err(|e| anyhow::anyhow!(e))?;
 
-        let mut message = Message::text(text).with_format(format).with_priority(priority);
+        let mut message = Message::text(text)
+            .with_format(format)
+            .with_priority(priority);
 
         if let Some(ref title) = args.title {
             message = message.with_title(title);
