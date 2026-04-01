@@ -414,6 +414,148 @@ async fn e2e_swagger_ui_accessible() {
     );
 }
 
+#[tokio::test]
+async fn e2e_openapi_schema_retry_config_has_backoff_fields() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    // Navigate to RetryConfig schema
+    let schemas = &body["components"]["schemas"];
+    assert!(
+        schemas["RetryConfig"].is_object(),
+        "RetryConfig schema should exist in OpenAPI components"
+    );
+
+    let retry_props = &schemas["RetryConfig"]["properties"];
+    assert!(
+        retry_props.is_object(),
+        "RetryConfig should have properties"
+    );
+
+    // Verify all four fields are present
+    assert!(
+        retry_props["max_retries"].is_object(),
+        "RetryConfig should have max_retries field"
+    );
+    assert!(
+        retry_props["delay_ms"].is_object(),
+        "RetryConfig should have delay_ms field"
+    );
+    assert!(
+        retry_props["backoff_multiplier"].is_object(),
+        "RetryConfig should have backoff_multiplier field"
+    );
+    assert!(
+        retry_props["max_delay_ms"].is_object(),
+        "RetryConfig should have max_delay_ms field"
+    );
+
+    // Verify types: backoff_multiplier should be number, max_delay_ms should be integer
+    let bm_type = retry_props["backoff_multiplier"]["type"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        bm_type == "number" || retry_props["backoff_multiplier"]["format"].is_string(),
+        "backoff_multiplier should be a number type, got: {bm_type}"
+    );
+
+    let md_type = retry_props["max_delay_ms"]["type"].as_str().unwrap_or("");
+    assert!(
+        md_type == "integer" || retry_props["max_delay_ms"]["format"].is_string(),
+        "max_delay_ms should be an integer type, got: {md_type}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_openapi_schema_all_key_components_exist() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let schemas = body["components"]["schemas"].as_object().unwrap();
+
+    // Verify all key schema components are present
+    let expected_schemas = [
+        "ApiError",
+        "RetryConfig",
+        "SendRequest",
+        "HealthResponse",
+        "EnqueueResponse",
+        "StatsResponse",
+        "TaskInfo",
+        "TemplateResponse",
+        "ProviderInfo",
+        "MetricsResponse",
+    ];
+
+    for name in &expected_schemas {
+        assert!(
+            schemas.contains_key(*name),
+            "missing schema component: {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn e2e_openapi_schema_all_api_paths_exist() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let paths = body["paths"].as_object().unwrap();
+
+    // All API routes should be documented
+    let expected_paths = [
+        "/health",
+        "/api/v1/send",
+        "/api/v1/send/batch",
+        "/api/v1/send/async",
+        "/api/v1/send/async/batch",
+        "/api/v1/status/{notification_id}",
+        "/api/v1/status",
+        "/api/v1/templates",
+        "/api/v1/templates/{name}",
+        "/api/v1/templates/{name}/render",
+        "/api/v1/providers",
+        "/api/v1/providers/{name}",
+        "/api/v1/queue/stats",
+        "/api/v1/queue/tasks",
+        "/api/v1/queue/tasks/{task_id}",
+        "/api/v1/queue/tasks/{task_id}/cancel",
+        "/api/v1/queue/purge",
+        "/api/v1/metrics",
+    ];
+
+    for path in &expected_paths {
+        assert!(
+            paths.contains_key(*path),
+            "missing API path in OpenAPI spec: {path}"
+        );
+    }
+}
+
 // ───────────────────── Status endpoints ─────────────────────
 
 #[tokio::test]

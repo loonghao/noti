@@ -298,3 +298,88 @@ Priority can be set in the JSON body of send requests:
   "priority": "high"
 }
 ```
+
+## Rate Limiting
+
+Protect the server from abuse with configurable token-bucket rate limiting. Supports both global and per-IP modes.
+
+### How It Works
+
+The middleware uses a **token bucket** algorithm. Each bucket holds `max_requests` tokens and refills at a constant rate over the configured `window`. When a request arrives, it consumes one token; if no tokens remain, the server responds with `429 Too Many Requests`.
+
+### Configuration
+
+Rate limiting is configured via environment variables:
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `NOTI_RATE_LIMIT_MAX` | `100` | Maximum requests allowed per window |
+| `NOTI_RATE_LIMIT_WINDOW_SECS` | `60` | Window duration in seconds |
+| `NOTI_RATE_LIMIT_PER_IP` | `true` | Per-IP rate limiting (`true`) or global (`false`) |
+
+### Per-IP Tracking
+
+When `per_ip` is enabled (default), each client IP gets its own independent token bucket. Client IP is extracted in this priority order:
+
+1. `X-Forwarded-For` header (first IP in the comma-separated list)
+2. `X-Real-IP` header
+3. TCP connection address (`ConnectInfo`)
+
+Up to 10,000 IPs are tracked simultaneously. When the limit is reached, idle (fully-refilled) buckets are evicted.
+
+### Response Headers
+
+Every successful response includes rate limit headers:
+
+| Header | Description |
+|:-------|:------------|
+| `x-ratelimit-limit` | Maximum requests allowed per window |
+| `x-ratelimit-remaining` | Remaining requests in the current window |
+
+### 429 Response
+
+When the rate limit is exceeded, the server responds with:
+
+```json
+{
+  "error": "rate limit exceeded",
+  "retry_after_seconds": 12,
+  "limit": 100
+}
+```
+
+The response also includes a `Retry-After` header with the number of seconds to wait.
+
+## API Key Authentication
+
+Protect API endpoints with API key authentication. Disabled by default; enabled by setting API keys via environment variables.
+
+### Configuration
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `NOTI_API_KEYS` | *(empty)* | Comma-separated API keys; empty = auth disabled |
+| `NOTI_AUTH_EXCLUDED_PATHS` | `/health` | Comma-separated paths that bypass authentication |
+
+### Key Delivery
+
+Clients can provide their API key via either header:
+
+- `Authorization: Bearer <key>`
+- `X-API-Key: <key>`
+
+### Behavior
+
+- **Disabled** (no keys configured): all requests pass through.
+- **Enabled** (one or more keys configured): requests without a valid key receive `401 Unauthorized`.
+- **Excluded paths** (e.g., `/health`): bypass authentication regardless.
+- **Middleware ordering**: authentication runs **before** rate limiting — invalid keys are rejected without consuming rate limit tokens.
+
+### 401 Response
+
+```json
+{
+  "error": "unauthorized",
+  "message": "missing API key — provide via Authorization: Bearer <key> or X-API-Key header"
+}
+```
