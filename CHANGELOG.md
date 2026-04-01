@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.4](https://github.com/loonghao/noti/compare/v0.1.3...v0.1.4) (2026-04-01)
+
+
+### Features
+
+* squash merge auto-improve branch into release/auto-improve ([1bf3bde](https://github.com/loonghao/noti/commit/1bf3bde80b15348e4df344a8bd060f9335e436b7))
+
+
+### Documentation
+
+* enhance README with rich badges, hero section and bilingual sync ([bae6b68](https://github.com/loonghao/noti/commit/bae6b687309762000cdc2127f1966bbcec3280ec))
+
+
+### Miscellaneous Chores
+
+* **cleanup:** lint: fix clippy await_holding_lock warning in e2e_test ([13e9001](https://github.com/loonghao/noti/commit/13e90010b6718442ce98924c55de1dbad2cf5223))
+
 ## [0.1.3](https://github.com/loonghao/noti/compare/v0.1.2...v0.1.3) (2026-03-30)
 
 

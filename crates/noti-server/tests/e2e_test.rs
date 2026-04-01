@@ -5434,5 +5434,7 @@ async fn e2e_sqlite_concurrent_batch_async_requests() {
         );
     }
 
+
     worker_handle.shutdown_and_join().await;
 }
+
