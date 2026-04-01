@@ -595,3 +595,288 @@ fn test_config_test_profile_with_unknown_provider() {
         .assert()
         .failure();
 }
+
+// ======================== Agent-First CLI: Schema introspection ========================
+
+#[rstest]
+fn test_schema_list_all() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args(["schema"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("schema"));
+}
+
+#[rstest]
+fn test_schema_list_all_json() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args(["--json", "schema"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"provider\""))
+        .stdout(predicate::str::contains("\"required_params\""));
+}
+
+#[rstest]
+fn test_schema_specific_provider() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args(["schema", "wecom"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("wecom"))
+        .stdout(predicate::str::contains("key"));
+}
+
+#[rstest]
+fn test_schema_specific_provider_json() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args(["--json", "schema", "slack"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"provider\": \"slack\""))
+        .stdout(predicate::str::contains("\"params\""))
+        .stdout(predicate::str::contains("\"send_command\""));
+}
+
+#[rstest]
+fn test_schema_unknown_provider() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args(["schema", "nonexistent"])
+        .assert()
+        .failure();
+}
+
+// ======================== Agent-First CLI: Dry-run ========================
+
+#[rstest]
+fn test_send_dry_run() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args([
+            "send",
+            "--message",
+            "test message",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=test-key-123",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry-run"));
+}
+
+#[rstest]
+fn test_send_dry_run_json() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args([
+            "--json",
+            "send",
+            "--message",
+            "test message",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=test-key-123",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"status\": \"dry_run\""))
+        .stdout(predicate::str::contains("\"valid\": true"))
+        .stdout(predicate::str::contains("\"provider\": \"wecom\""));
+}
+
+#[rstest]
+fn test_config_set_dry_run() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+    let config_str = config_path.to_str().unwrap();
+
+    Command::cargo_bin("noti")
+        .unwrap()
+        .env("NOTI_CONFIG", config_str)
+        .args([
+            "config",
+            "set",
+            "--name",
+            "dry-test",
+            "--provider",
+            "slack",
+            "--param",
+            "webhook_url=https://hooks.slack.com/test",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry-run"));
+
+    // Verify nothing was actually saved
+    Command::cargo_bin("noti")
+        .unwrap()
+        .env("NOTI_CONFIG", config_str)
+        .args(["config", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No profiles"));
+}
+
+#[rstest]
+fn test_config_remove_dry_run() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let config_path = temp_dir.path().join("config.toml");
+    let config_str = config_path.to_str().unwrap();
+
+    // First, create a profile
+    Command::cargo_bin("noti")
+        .unwrap()
+        .env("NOTI_CONFIG", config_str)
+        .args([
+            "config",
+            "set",
+            "--name",
+            "keep-me",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=abc",
+        ])
+        .assert()
+        .success();
+
+    // Dry-run remove
+    Command::cargo_bin("noti")
+        .unwrap()
+        .env("NOTI_CONFIG", config_str)
+        .args(["config", "remove", "keep-me", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry-run"));
+
+    // Verify it was NOT removed
+    Command::cargo_bin("noti")
+        .unwrap()
+        .env("NOTI_CONFIG", config_str)
+        .args(["config", "get", "keep-me"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("wecom"));
+}
+
+// ======================== Agent-First CLI: JSON payload ========================
+
+#[rstest]
+fn test_send_json_payload_dry_run() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args([
+            "--json",
+            "send",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=test-key-123",
+            "--json-payload",
+            r#"{"text": "hello from agent", "format": "markdown", "priority": "high"}"#,
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"status\": \"dry_run\""))
+        .stdout(predicate::str::contains("hello from agent"));
+}
+
+#[rstest]
+fn test_send_json_payload_invalid_json() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args([
+            "send",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=test-key-123",
+            "--json-payload",
+            "not valid json",
+        ])
+        .assert()
+        .failure();
+}
+
+// ======================== Agent-First CLI: --fields filtering ========================
+
+#[rstest]
+fn test_send_dry_run_with_fields() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args([
+            "--json",
+            "--fields",
+            "status,provider",
+            "send",
+            "--message",
+            "test",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=test-key-123",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"status\""))
+        .stdout(predicate::str::contains("\"provider\""));
+}
+
+// ======================== Agent-First CLI: NOTI_OUTPUT env var ========================
+
+#[rstest]
+fn test_noti_output_env_json() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .env("NOTI_OUTPUT", "json")
+        .args(["schema", "wecom"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"provider\": \"wecom\""));
+}
+
+// ======================== Agent-First CLI: Input hardening ========================
+
+#[rstest]
+fn test_send_rejects_path_traversal() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args([
+            "send",
+            "--message",
+            "test",
+            "--provider",
+            "wecom",
+            "--param",
+            "key=abc",
+            "--file",
+            "../../../etc/passwd",
+        ])
+        .assert()
+        .failure();
+}
+
+// ======================== Schema help text ========================
+
+#[rstest]
+fn test_schema_help() {
+    Command::cargo_bin("noti")
+        .unwrap()
+        .args(["schema", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Introspect"));
+}

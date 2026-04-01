@@ -23,6 +23,9 @@ pub enum ConfigAction {
         /// Provider-specific key-value parameters (e.g. --param key=value).
         #[arg(long = "param", value_name = "KEY=VALUE")]
         params: Vec<String>,
+        /// Validate the profile without saving it.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Display a single profile.
     Get {
@@ -35,6 +38,9 @@ pub enum ConfigAction {
     Remove {
         /// Profile name.
         name: String,
+        /// Show what would be removed without actually removing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Test a profile by sending a test message.
     Test {
@@ -55,6 +61,7 @@ pub async fn execute(
             name,
             provider,
             params,
+            dry_run,
         } => {
             let mut config = ProviderConfig::new();
             for param in params {
@@ -63,6 +70,33 @@ pub async fn execute(
                     .context(format!("invalid param format: {param}"))?;
                 config = config.set(k, v);
             }
+
+            // Validate provider exists and config is valid
+            if let Some(p) = registry.get_by_name(provider) {
+                if let Err(e) = p.validate_config(&config) {
+                    print_error(output, &e.to_string());
+                    std::process::exit(1);
+                }
+            }
+
+            if *dry_run {
+                let result = serde_json::json!({
+                    "status": "dry_run",
+                    "valid": true,
+                    "profile": name,
+                    "provider": provider,
+                    "config_keys": config.values.keys().collect::<Vec<_>>(),
+                });
+                match output {
+                    OutputMode::Json => print_json(&result),
+                    OutputMode::Human => {
+                        println!("✓ dry-run: profile '{name}' is valid (not saved)");
+                        println!("  provider: {provider}");
+                    }
+                }
+                return Ok(());
+            }
+
             let profile = Profile {
                 provider: provider.clone(),
                 config,
@@ -127,7 +161,29 @@ pub async fn execute(
                 }
             }
         }
-        ConfigAction::Remove { name } => {
+        ConfigAction::Remove { name, dry_run } => {
+            if *dry_run {
+                let app_config = AppConfig::load().unwrap_or_default();
+                let exists = app_config.get_profile(name).is_some();
+                let result = serde_json::json!({
+                    "status": "dry_run",
+                    "profile": name,
+                    "exists": exists,
+                    "would_remove": exists,
+                });
+                match output {
+                    OutputMode::Json => print_json(&result),
+                    OutputMode::Human => {
+                        if exists {
+                            println!("✓ dry-run: profile '{name}' exists and would be removed");
+                        } else {
+                            println!("✗ dry-run: profile '{name}' not found");
+                        }
+                    }
+                }
+                return Ok(());
+            }
+
             let mut app_config = AppConfig::load().unwrap_or_default();
             if app_config.remove_profile(name) {
                 app_config.save().map_err(|e| anyhow::anyhow!("{e}"))?;
