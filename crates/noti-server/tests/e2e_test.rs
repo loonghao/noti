@@ -5499,13 +5499,15 @@ async fn e2e_batch_async_flaky_with_retry_succeeds() {
 
     // Both callbacks should arrive
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert_eq!(
-        received.len(),
-        2,
-        "expected 2 callbacks, got {}",
-        received.len()
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "expected 2 callbacks, got {}",
+            received.len()
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -5567,20 +5569,22 @@ async fn e2e_batch_async_flaky_retry_exhausted_fails() {
     assert_eq!(task_ok["status"], "completed");
 
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert_eq!(
-        received.len(),
-        2,
-        "expected 2 callbacks, got {}",
-        received.len()
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "expected 2 callbacks, got {}",
+            received.len()
+        );
 
-    // Verify the flaky callback reports failure
-    let flaky_cb = received
-        .iter()
-        .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
-        .expect("should find flaky task callback");
-    assert_eq!(flaky_cb["status"], "failed");
+        // Verify the flaky callback reports failure
+        let flaky_cb = received
+            .iter()
+            .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
+            .expect("should find flaky task callback");
+        assert_eq!(flaky_cb["status"], "failed");
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -5677,13 +5681,15 @@ async fn e2e_batch_async_mixed_retry_policies() {
 
     // All 4 callbacks should arrive
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let received = payloads.lock().unwrap();
-    assert_eq!(
-        received.len(),
-        4,
-        "expected 4 callbacks, got {}",
-        received.len()
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            4,
+            "expected 4 callbacks, got {}",
+            received.len()
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -5748,13 +5754,15 @@ async fn e2e_concurrent_batch_async_with_rate_limit_partial_reject() {
 
     // Wait for accepted tasks to complete
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let received = payloads.lock().unwrap();
-    assert_eq!(
-        received.len() as u32,
-        accepted,
-        "callbacks should match accepted count: expected {accepted}, got {}",
-        received.len()
-    );
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len() as u32,
+            accepted,
+            "callbacks should match accepted count: expected {accepted}, got {}",
+            received.len()
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -5807,8 +5815,10 @@ async fn e2e_batch_async_within_rate_limit_succeeds() {
     }
 
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert_eq!(received.len(), 2);
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(received.len(), 2);
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -5881,12 +5891,264 @@ async fn e2e_sequential_batch_async_rate_limit_exhaustion() {
 
     // Wait for the 2 accepted tasks to complete
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let received = payloads.lock().unwrap();
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "only 2 accepted tasks should produce callbacks"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── SQLite batch async retry policy tests ─────────────────────
+
+/// SQLite mirror of `e2e_batch_async_flaky_with_retry_succeeds`.
+/// Batch-enqueue items where some use `mock-flaky` on SQLite queue backend.
+/// With retry policy configured, flaky tasks should eventually succeed.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_flaky_with_retry_succeeds() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "sqlite flaky retry batch item 1",
+                    "retry": {"max_retries": 3, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "high"
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite reliable batch item",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "normal"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+    assert_eq!(body["failed"], 0);
+
+    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
     assert_eq!(
-        received.len(),
-        2,
-        "only 2 accepted tasks should produce callbacks"
+        task_flaky["status"], "completed",
+        "SQLite: flaky task should succeed after retries"
     );
+    assert!(
+        task_flaky["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: flaky task should have taken multiple attempts"
+    );
+
+    assert_eq!(task_ok["status"], "completed");
+    assert_eq!(task_ok["attempts"].as_u64().unwrap(), 1);
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "SQLite: expected 2 callbacks, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// SQLite mirror of `e2e_batch_async_flaky_retry_exhausted_fails`.
+/// Batch-enqueue items where flaky provider has too few retries configured on SQLite backend —
+/// the task should fail after exhausting retries, while mock-ok still succeeds.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_flaky_retry_exhausted_fails() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "sqlite flaky exhaustion batch",
+                    "retry": {"max_retries": 1, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "urgent"
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite reliable batch item",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "low"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+
+    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
+    assert_eq!(
+        task_flaky["status"], "failed",
+        "SQLite: flaky task should fail after exhausting retries"
+    );
+    assert!(
+        task_flaky["attempts"].as_u64().unwrap() >= 2,
+        "SQLite: flaky task should have attempted at least 2 times"
+    );
+
+    assert_eq!(task_ok["status"], "completed");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "SQLite: expected 2 callbacks, got {}",
+            received.len()
+        );
+
+        let flaky_cb = received
+            .iter()
+            .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
+            .expect("SQLite: should find flaky task callback");
+        assert_eq!(flaky_cb["status"], "failed");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// SQLite mirror of `e2e_batch_async_mixed_retry_policies`.
+/// Batch with mixed retry policies on SQLite backend: flaky with sufficient retries,
+/// mock-fail with zero retries, mock-ok with no retries, mock-fail with retries.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_mixed_retry_policies() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "sqlite flaky with enough retries",
+                    "retry": {"max_retries": 5, "delay_ms": 10},
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "sqlite always fails with zero retries",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite always succeeds",
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "sqlite always fails with retries",
+                    "retry": {"max_retries": 2, "delay_ms": 10},
+                    "callback_url": &callback_url
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 4);
+    assert_eq!(body["failed"], 0);
+
+    let task_ids: Vec<String> = (0..4)
+        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    let mut terminal_statuses = Vec::new();
+    for tid in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, tid).await;
+        terminal_statuses.push(task);
+    }
+
+    assert_eq!(
+        terminal_statuses[0]["status"], "completed",
+        "SQLite: flaky with enough retries should complete"
+    );
+
+    assert_eq!(
+        terminal_statuses[1]["status"], "failed",
+        "SQLite: mock-fail with zero retries should fail"
+    );
+    assert_eq!(
+        terminal_statuses[1]["attempts"].as_u64().unwrap(),
+        1,
+        "SQLite: zero-retry mock-fail should only try once"
+    );
+
+    assert_eq!(terminal_statuses[2]["status"], "completed");
+    assert_eq!(terminal_statuses[2]["attempts"].as_u64().unwrap(), 1);
+
+    assert_eq!(
+        terminal_statuses[3]["status"], "failed",
+        "SQLite: mock-fail with retries should still fail"
+    );
+    assert!(
+        terminal_statuses[3]["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: mock-fail should exhaust all retries"
+    );
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            4,
+            "SQLite: expected 4 callbacks, got {}",
+            received.len()
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
