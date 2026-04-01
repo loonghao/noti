@@ -67,6 +67,15 @@ impl ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
         }
     }
+
+    /// Create a 503 Service Unavailable error.
+    pub fn service_unavailable(error_code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            error: error_code.into(),
+            message: message.into(),
+            status: StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -135,6 +144,14 @@ mod tests {
         let err = ApiError::unprocessable("bad data");
         assert_eq!(err.error, "unprocessable_entity");
         assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn test_service_unavailable() {
+        let err = ApiError::service_unavailable("queue_full", "queue is full");
+        assert_eq!(err.error, "queue_full");
+        assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(err.message, "queue is full");
     }
 
     #[test]

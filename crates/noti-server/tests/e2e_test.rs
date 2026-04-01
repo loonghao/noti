@@ -4342,3 +4342,189 @@ async fn e2e_concurrent_mixed_success_failure() {
 
     worker_handle.shutdown_and_join().await;
 }
+
+// ───────────────────── Error response structure consistency (e2e) ─────────────────────
+
+/// Helper: assert that a JSON error response has the standard {error, message} shape.
+fn assert_error_shape(body: &Value, expected_error: &str, context: &str) {
+    assert!(
+        body["error"].is_string(),
+        "{context}: response should have a string 'error' field, got: {body}"
+    );
+    assert!(
+        body["message"].is_string(),
+        "{context}: response should have a string 'message' field, got: {body}"
+    );
+    assert_eq!(
+        body["error"].as_str().unwrap(),
+        expected_error,
+        "{context}: error code mismatch"
+    );
+}
+
+/// All 404 error responses share the same {error: "not_found", message: "..."} shape.
+#[tokio::test]
+async fn e2e_error_structure_not_found_responses() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Provider not found
+    let resp = client
+        .get(format!("{base}/api/v1/providers/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "provider not found");
+
+    // Status not found
+    let resp = client
+        .get(format!("{base}/api/v1/status/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "status not found");
+
+    // Queue task not found
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "queue task not found");
+
+    // Template not found
+    let resp = client
+        .get(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "template not found");
+
+    // Template delete not found
+    let resp = client
+        .delete(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "template delete not found");
+
+    // Send with nonexistent provider
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "nonexistent", "text": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "send provider not found");
+
+    // Async send with nonexistent provider
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({"provider": "nonexistent", "text": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "async send provider not found");
+}
+
+/// 400 Bad Request errors share the same {error: "bad_request", message: "..."} shape.
+#[tokio::test]
+async fn e2e_error_structure_bad_request_responses() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Send with missing config (provider validation failure)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "slack", "text": "hello", "config": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "bad_request", "send missing config");
+
+    // Invalid status filter
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=bogus"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "bad_request", "invalid status filter");
+
+    // Template render with missing required var
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({"name": "err-struct-tpl", "body": "{{a}} and {{b}}"}))
+        .send()
+        .await
+        .unwrap();
+    let resp = client
+        .post(format!("{base}/api/v1/templates/err-struct-tpl/render"))
+        .json(&json!({"variables": {"a": "hello"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "bad_request", "template render missing var");
+}
+
+/// 422 Unprocessable Entity (validation) errors include {error, message, fields}.
+#[tokio::test]
+async fn e2e_error_structure_validation_responses() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "", "text": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    assert!(
+        body["message"].is_string(),
+        "validation error should have message"
+    );
+    assert!(
+        body["fields"].is_object(),
+        "validation error should have fields object"
+    );
+}
+
+/// Invalid JSON body returns {error: "invalid_json", message: "..."}.
+#[tokio::test]
+async fn e2e_error_structure_invalid_json_response() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("content-type", "application/json")
+        .body("not valid json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "invalid_json", "invalid json body");
+}
