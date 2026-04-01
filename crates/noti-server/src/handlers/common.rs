@@ -6,17 +6,17 @@ use utoipa::ToSchema;
 
 use noti_core::{Message, MessageFormat, NotifyProvider, Priority, ProviderRegistry, RetryPolicy};
 
-use super::error::ApiError;
+use super::error::{ApiError, codes};
 
 /// Look up a provider by name, returning an `ApiError::not_found` if missing.
 pub fn require_provider(
     registry: &ProviderRegistry,
     name: &str,
 ) -> Result<Arc<dyn NotifyProvider>, ApiError> {
-    registry
-        .get_by_name(name)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found(format!("provider '{name}' not found")))
+    registry.get_by_name(name).cloned().ok_or_else(|| {
+        ApiError::not_found(format!("provider '{name}' not found"))
+            .with_code(codes::PROVIDER_NOT_FOUND)
+    })
 }
 
 /// Retry configuration for the API.

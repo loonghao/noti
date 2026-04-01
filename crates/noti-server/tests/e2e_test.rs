@@ -4674,6 +4674,130 @@ async fn e2e_error_structure_invalid_json_response() {
     assert_error_shape(&body, "invalid_json", "invalid json body");
 }
 
+// ───────────────────── Granular error codes (e2e) ─────────────────────
+
+/// Verify that 404 error responses include the granular `code` field.
+#[tokio::test]
+async fn e2e_error_codes_not_found_responses_have_code() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Provider not found → PROVIDER_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/providers/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "PROVIDER_NOT_FOUND");
+
+    // Template not found → TEMPLATE_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "TEMPLATE_NOT_FOUND");
+
+    // Notification status not found → NOTIFICATION_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/status/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "NOTIFICATION_NOT_FOUND");
+
+    // Queue task not found → TASK_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "TASK_NOT_FOUND");
+}
+
+/// Verify that 400 error responses include the granular `code` field.
+#[tokio::test]
+async fn e2e_error_codes_bad_request_responses_have_code() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Config validation failure → CONFIG_VALIDATION_FAILED
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "slack", "text": "hello", "config": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "CONFIG_VALIDATION_FAILED");
+
+    // Invalid status filter → INVALID_PARAMETER
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=bogus"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "INVALID_PARAMETER");
+
+    // Template variable missing → TEMPLATE_VARIABLE_MISSING
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({"name": "code-test-tpl", "body": "{{a}} and {{b}}"}))
+        .send()
+        .await
+        .unwrap();
+    let resp = client
+        .post(format!("{base}/api/v1/templates/code-test-tpl/render"))
+        .json(&json!({"variables": {"a": "hello"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "TEMPLATE_VARIABLE_MISSING");
+}
+
+/// Verify that error responses without a code omit the field entirely (backward compat).
+#[tokio::test]
+async fn e2e_error_codes_absent_when_not_applicable() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Invalid JSON body → no code field (handled by ValidatedJsonRejection, not ApiError)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("content-type", "application/json")
+        .body("not valid json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_json");
+    assert!(
+        body.get("code").is_none() || body["code"].is_null(),
+        "invalid_json error should not have a code field"
+    );
+}
+
 // ───────────────────── Batch async: mixed valid/invalid providers + priorities ─────────────────────
 
 /// Batch-enqueue items with a mix of valid and invalid providers at different priorities.

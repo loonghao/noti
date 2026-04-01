@@ -11,7 +11,7 @@ use noti_core::{ProviderConfig, RetryPolicy};
 use noti_queue::{NotificationTask, QueueStats, TaskStatus};
 
 use crate::handlers::common::{self, RetryConfig};
-use crate::handlers::error::ApiError;
+use crate::handlers::error::{ApiError, codes};
 use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
@@ -190,10 +190,23 @@ fn parse_task_status(s: &str) -> Option<TaskStatus> {
 fn queue_error(e: noti_queue::QueueError) -> ApiError {
     match &e {
         noti_queue::QueueError::QueueFull { .. } => {
-            ApiError::service_unavailable("queue_full", e.to_string())
+            ApiError::service_unavailable("queue_full", e.to_string()).with_code(codes::QUEUE_FULL)
         }
-        noti_queue::QueueError::NotFound(_) => ApiError::not_found(e.to_string()),
-        _ => ApiError::internal(e.to_string()),
+        noti_queue::QueueError::NotFound(_) => {
+            ApiError::not_found(e.to_string()).with_code(codes::TASK_NOT_FOUND)
+        }
+        noti_queue::QueueError::ShutDown => {
+            ApiError::internal(e.to_string()).with_code(codes::QUEUE_SHUT_DOWN)
+        }
+        noti_queue::QueueError::Serialization(_) => {
+            ApiError::internal(e.to_string()).with_code(codes::QUEUE_SERIALIZATION_ERROR)
+        }
+        noti_queue::QueueError::Backend(_) => {
+            ApiError::internal(e.to_string()).with_code(codes::QUEUE_BACKEND_ERROR)
+        }
+        noti_queue::QueueError::Notification(_) => {
+            ApiError::internal(e.to_string()).with_code(codes::NOTIFICATION_SEND_ERROR)
+        }
     }
 }
 
@@ -221,7 +234,7 @@ pub async fn send_async(
     let config = ProviderConfig { values: req.config };
 
     if let Err(e) = provider.validate_config(&config) {
-        return Err(ApiError::bad_request(e.to_string()));
+        return Err(ApiError::bad_request(e.to_string()).with_code(codes::CONFIG_VALIDATION_FAILED));
     }
 
     let msg = common::build_message(
@@ -385,7 +398,10 @@ pub async fn get_task(
         .get_task(&task_id)
         .await
         .map_err(queue_error)?
-        .ok_or_else(|| ApiError::not_found(format!("task '{}' not found", task_id)))?;
+        .ok_or_else(|| {
+            ApiError::not_found(format!("task '{}' not found", task_id))
+                .with_code(codes::TASK_NOT_FOUND)
+        })?;
 
     Ok(Json(task_to_info(&task)))
 }
@@ -409,6 +425,7 @@ pub async fn list_tasks(
             ApiError::bad_request(format!(
                 "invalid status filter '{s}'; expected one of: queued, processing, completed, failed, cancelled"
             ))
+            .with_code(codes::INVALID_PARAMETER)
         })?),
         None => None,
     };

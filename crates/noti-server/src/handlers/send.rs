@@ -10,7 +10,7 @@ use validator::Validate;
 use noti_core::{DeliveryStatus, ProviderConfig, RetryPolicy, SendResponse};
 
 use crate::handlers::common::{self, RetryConfig};
-use crate::handlers::error::ApiError;
+use crate::handlers::error::{ApiError, codes};
 use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
@@ -143,7 +143,7 @@ pub async fn send_notification(
     let config = ProviderConfig { values: req.config };
 
     if let Err(e) = provider.validate_config(&config) {
-        return Err(ApiError::bad_request(e.to_string()));
+        return Err(ApiError::bad_request(e.to_string()).with_code(codes::CONFIG_VALIDATION_FAILED));
     }
 
     let msg = common::build_message(

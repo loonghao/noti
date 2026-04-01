@@ -621,3 +621,81 @@ The `/health` endpoint provides service status including dependency health.
 | `degraded` | One or more dependencies unhealthy (still returns 200) |
 
 The health endpoint is excluded from authentication by default (`NOTI_AUTH_EXCLUDED_PATHS=/health`).
+
+## Structured Error Codes
+
+All API error responses include a standard `{error, message}` shape. In addition, most errors now carry a granular `code` field that provides precise machine-readable classification.
+
+### Error Response Structure
+
+```json
+{
+  "error": "not_found",
+  "message": "provider 'nonexistent' not found",
+  "code": "PROVIDER_NOT_FOUND"
+}
+```
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `error` | `string` | HTTP-level error category (`bad_request`, `not_found`, `internal_error`, etc.) |
+| `message` | `string` | Human-readable description of the error |
+| `code` | `string?` | Granular error code in `UPPER_SNAKE_CASE` — omitted when not applicable |
+
+The `code` field is optional for backward compatibility. Clients should check for its presence before using it.
+
+### Error Code Reference
+
+#### 400 — Bad Request
+
+| Code | Description |
+|:-----|:------------|
+| `CONFIG_VALIDATION_FAILED` | Provider-specific configuration failed validation |
+| `INVALID_PARAMETER` | A query or path parameter value is invalid |
+| `TEMPLATE_VARIABLE_MISSING` | Required template variables are missing during render |
+
+#### 404 — Not Found
+
+| Code | Description |
+|:-----|:------------|
+| `PROVIDER_NOT_FOUND` | The requested notification provider does not exist |
+| `TEMPLATE_NOT_FOUND` | The requested message template does not exist |
+| `NOTIFICATION_NOT_FOUND` | The requested notification (delivery tracking) does not exist |
+| `TASK_NOT_FOUND` | The requested queue task does not exist |
+
+#### 500 — Internal Error
+
+| Code | Description |
+|:-----|:------------|
+| `QUEUE_BACKEND_ERROR` | An internal queue backend error occurred |
+| `QUEUE_SERIALIZATION_ERROR` | Serialization/deserialization error in the queue layer |
+| `QUEUE_SHUT_DOWN` | The queue has been shut down |
+| `NOTIFICATION_SEND_ERROR` | A notification send error from the core layer |
+
+#### 503 — Service Unavailable
+
+| Code | Description |
+|:-----|:------------|
+| `QUEUE_FULL` | The queue is at capacity and cannot accept more tasks |
+
+### Usage Example
+
+```bash
+# The code field enables precise error handling
+curl -s http://localhost:3000/api/v1/providers/nonexistent | jq .
+# {
+#   "error": "not_found",
+#   "message": "provider 'nonexistent' not found",
+#   "code": "PROVIDER_NOT_FOUND"
+# }
+
+# Validation errors from ValidatedJson do NOT include a code field
+curl -s -X POST http://localhost:3000/api/v1/send \
+  -H 'Content-Type: application/json' \
+  -d '{"provider": "", "text": "hello"}' | jq .
+# {
+#   "error": "validation_failed",
+#   "message": "Request body validation failed",
+#   "fields": {"provider": ["provider must not be empty"]}
+# }
+```
