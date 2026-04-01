@@ -10,7 +10,6 @@ on:
       - "justfile"
       - "vx.toml"
   push:
-    branches-ignore: [main]
     paths:
       - "skills/**"
       - "scripts/package_openclaw_skill.py"
@@ -53,3 +52,41 @@ jobs:
           name: skill-packages
           path: dist/skills/*.zip
           if-no-files-found: error
+
+  publish-to-clawhub:
+    name: Publish to ClawHub
+    runs-on: ubuntu-latest
+    needs: package-skills
+    # Only publish on pushes to main (not PRs, not feature branches)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub
+
+      - name: Publish skills to ClawHub
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+          CLAWHUB_DISABLE_TELEMETRY: "1"
+        run: |
+          clawhub login --token "$CLAWHUB_TOKEN"
+          for skill_dir in skills/*/; do
+            skill_name="$(basename "$skill_dir")"
+            if [ ! -f "${skill_dir}SKILL.md" ]; then
+              echo "SKIP: ${skill_name} has no SKILL.md"
+              continue
+            fi
+            echo "Publishing skill: ${skill_name}"
+            clawhub skill publish "${skill_dir}" \
+              --slug "${skill_name}" \
+              --name "${skill_name}" \
+              --no-input
+            echo "Published: ${skill_name}"
+          done
