@@ -69,6 +69,7 @@ The noti-server exposes full CRUD for templates:
 | `GET` | `/api/v1/templates/:name` | Get a template by name |
 | `PUT` | `/api/v1/templates/:name` | Update a template |
 | `DELETE` | `/api/v1/templates/:name` | Delete a template |
+| `POST` | `/api/v1/templates/:name/render` | Render a template with variables |
 
 ## Retry Policies
 
@@ -258,7 +259,7 @@ Priority can be set in the JSON body of send requests:
 ```json
 {
   "provider": "slack",
-  "message": "Deployment complete",
+  "text": "Deployment complete",
   "priority": "high"
 }
 ```
