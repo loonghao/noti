@@ -87,7 +87,7 @@ rounds or require coordination with the iteration agent.
 
 - [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
 - [x] ~~`e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper~~ — extracted to `tests/common/mod.rs` with `bind_and_serve()` core helper (e9846ee)
-- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 121 times (was 88 before 1d0b78d–392dfeb) — low-impact boilerplate; each test independently creates a client
+- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 130 times (was 121 before 157cf8d–64d421c) — low-impact boilerplate; each test independently creates a client
 - [x] ~~`e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top~~ — all spawn helpers extracted to `tests/common/mod.rs` (e9846ee)
 - [x] ~~`e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top~~ — all `use` statements now at file top (lines 10-24); no mid-file imports (e9846ee)
 
@@ -101,6 +101,9 @@ rounds or require coordination with the iteration agent.
 - [ ] `e2e_graceful_shutdown_waits_for_inflight_task` (line 3088) ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task` (line 3339) — ~95% identical, same pattern
 - [ ] `e2e_batch_async_mixed_providers_and_priorities` (line 4540) ≈ `e2e_sqlite_batch_async_mixed_providers_and_priorities` (line 4677) — ~95% identical, same InMemory vs SQLite pattern
 - [ ] `e2e_batch_async_mock_fail_provider_with_priorities` (line 4864) ≈ `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` (line 4980) — ~95% identical, same pattern
+- [ ] `e2e_batch_async_flaky_with_retry_succeeds` (line 5446) ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds` (line 5912) — ~95% identical, same InMemory vs SQLite pattern (added 157cf8d–64d421c)
+- [ ] `e2e_batch_async_flaky_retry_exhausted_fails` (line 5518) ≈ `e2e_sqlite_batch_async_flaky_retry_exhausted_fails` (line 5984) — ~95% identical, same pattern (added 157cf8d–64d421c)
+- [ ] `e2e_batch_async_mixed_retry_policies` (line 5595) ≈ `e2e_sqlite_batch_async_mixed_retry_policies` (line 6060) — ~95% identical, same pattern (added 157cf8d–64d421c)
 - [x] ~~`spawn_server_with_workers_serial` — near-duplicate of `spawn_server_with_workers`~~ — both extracted to `common/mod.rs` with distinct parameters: `spawn_server_with_workers()` (concurrency=2) and `spawn_server_with_workers_serial(extra_providers)` (concurrency=1) (e9846ee)
 
 ## Tests — Cross-Module Deduplication (noti-queue)

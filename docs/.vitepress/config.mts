@@ -19,7 +19,7 @@ export default defineConfig({
       { text: 'Providers', link: '/providers/overview' },
       { text: 'Reference', link: '/reference/cli' },
       {
-        text: 'v0.1.3',
+        text: 'v0.1.4',
         items: [
           { text: 'Changelog', link: 'https://github.com/loonghao/noti/blob/main/CHANGELOG.md' },
           { text: 'Releases', link: 'https://github.com/loonghao/noti/releases' },
