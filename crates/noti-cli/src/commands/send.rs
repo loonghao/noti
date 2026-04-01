@@ -5,13 +5,20 @@ use noti_core::{
     parse_notification_url,
 };
 
-use crate::output::{OutputMode, print_error, print_json};
+use crate::input;
+use crate::output::{OutputMode, print_error, print_json_filtered};
 
 #[derive(Args, Debug)]
 pub struct SendArgs {
     /// Message text to send.
-    #[arg(short, long)]
-    pub message: String,
+    #[arg(short, long, required_unless_present = "json_payload")]
+    pub message: Option<String>,
+
+    /// Send a message from a raw JSON payload (agent-friendly).
+    /// Accepts a JSON object with fields: text, title, format, priority, extra.
+    /// Example: --json-payload '{"text":"hello","format":"markdown"}'
+    #[arg(long, conflicts_with_all = &["message", "title", "format", "priority"])]
+    pub json_payload: Option<String>,
 
     /// Notification URL (e.g. "wecom://<key>", "slack://<tokens>").
     #[arg(short, long, group = "target")]
@@ -50,13 +57,22 @@ pub struct SendArgs {
     /// Request timeout in seconds.
     #[arg(long, default_value = "30")]
     pub timeout: u64,
+
+    /// Validate inputs and config without actually sending the message.
+    /// Use this to verify parameters before executing a real send.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 pub async fn execute(
     args: &SendArgs,
     registry: &ProviderRegistry,
     output: OutputMode,
+    fields: &Option<Vec<String>>,
 ) -> Result<()> {
+    // --- Input hardening ---
+    validate_inputs(args)?;
+
     // Resolve provider and config
     let (provider_name, config) = resolve_target(args, registry)?;
 
@@ -66,23 +82,8 @@ pub async fn execute(
         .or_else(|| registry.get_by_scheme(&provider_name))
         .context(format!("unknown provider: {provider_name}"))?;
 
-    // Build message
-    let format = args
-        .format
-        .parse::<MessageFormat>()
-        .map_err(|e| anyhow::anyhow!(e))?;
-
-    let priority = args
-        .priority
-        .parse::<Priority>()
-        .map_err(|e| anyhow::anyhow!(e))?;
-
-    let mut message = Message::text(&args.message)
-        .with_format(format)
-        .with_priority(priority);
-    if let Some(ref title) = args.title {
-        message = message.with_title(title);
-    }
+    // Build message (from --json-payload or individual flags)
+    let mut message = build_message(args)?;
 
     // Attach files
     for file_path in &args.files {
@@ -93,19 +94,75 @@ pub async fn execute(
         message = message.with_attachment(Attachment::from_path(path));
     }
 
-    // Warn if provider doesn't support attachments but files were given
-    if message.has_attachments() && !provider.supports_attachments() {
-        eprintln!(
-            "⚠ provider '{}' does not support file attachments; files will be ignored",
-            provider.name()
-        );
+    // Validate config against provider schema
+    if let Err(e) = provider.validate_config(&config) {
+        print_error(output, &e.to_string());
+        std::process::exit(1);
     }
 
-    // Send
+    // Warn if provider doesn't support attachments but files were given
+    if message.has_attachments() && !provider.supports_attachments() {
+        match output {
+            OutputMode::Json => {
+                let warning = serde_json::json!({
+                    "status": "warning",
+                    "message": format!(
+                        "provider '{}' does not support file attachments; files will be ignored",
+                        provider.name()
+                    )
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&warning).unwrap_or_default()
+                );
+            }
+            OutputMode::Human => {
+                eprintln!(
+                    "⚠ provider '{}' does not support file attachments; files will be ignored",
+                    provider.name()
+                );
+            }
+        }
+    }
+
+    // --- Dry run: validate everything, skip actual send ---
+    if args.dry_run {
+        let dry_run_result = serde_json::json!({
+            "status": "dry_run",
+            "valid": true,
+            "provider": provider.name(),
+            "message_preview": {
+                "text": message.text,
+                "title": message.title,
+                "format": message.format.to_string(),
+                "priority": message.priority.to_string(),
+                "attachment_count": message.attachments.len(),
+            },
+            "config_keys": config.values.keys().collect::<Vec<_>>(),
+        });
+
+        match output {
+            OutputMode::Json => print_json_filtered(&dry_run_result, fields),
+            OutputMode::Human => {
+                println!("✓ dry-run: all inputs valid");
+                println!("  provider: {}", provider.name());
+                println!("  message: {:?}", message.text);
+                if let Some(ref title) = message.title {
+                    println!("  title: {title}");
+                }
+                println!("  format: {}", message.format);
+                println!("  priority: {}", message.priority);
+                println!("  attachments: {}", message.attachments.len());
+            }
+        }
+        return Ok(());
+    }
+
+    // --- Actual send ---
     match provider.send(&message, &config).await {
         Ok(response) => {
             match output {
-                OutputMode::Json => print_json(&response),
+                OutputMode::Json => print_json_filtered(&response, fields),
                 OutputMode::Human => {
                     if response.success {
                         println!("✓ [{}] {}", response.provider, response.message);
@@ -123,6 +180,96 @@ pub async fn execute(
             print_error(output, &e.to_string());
             std::process::exit(1);
         }
+    }
+}
+
+/// Validate all CLI inputs using input hardening rules.
+fn validate_inputs(args: &SendArgs) -> Result<()> {
+    if let Some(ref msg) = args.message {
+        input::validate_string_input(msg, "--message")?;
+    }
+    if let Some(ref title) = args.title {
+        input::validate_string_input(title, "--title")?;
+    }
+    if let Some(ref profile) = args.profile {
+        input::validate_identifier(profile, "--profile")?;
+    }
+    if let Some(ref provider) = args.provider {
+        input::validate_identifier(provider, "--provider")?;
+    }
+    for file_path in &args.files {
+        input::validate_file_path(file_path, "--file")?;
+    }
+    for param in &args.params {
+        input::validate_string_input(param, "--param")?;
+    }
+    Ok(())
+}
+
+/// Build a Message from either --json-payload or individual CLI flags.
+fn build_message(args: &SendArgs) -> Result<Message> {
+    if let Some(ref json_str) = args.json_payload {
+        // Agent path: parse raw JSON directly into Message fields
+        let payload: serde_json::Value =
+            serde_json::from_str(json_str).context("invalid JSON in --json-payload")?;
+
+        let text = payload
+            .get("text")
+            .and_then(|v| v.as_str())
+            .context("--json-payload must contain a 'text' field")?;
+
+        let mut message = Message::text(text);
+
+        if let Some(title) = payload.get("title").and_then(|v| v.as_str()) {
+            message = message.with_title(title);
+        }
+
+        if let Some(format_str) = payload.get("format").and_then(|v| v.as_str()) {
+            let format = format_str
+                .parse::<MessageFormat>()
+                .map_err(|e| anyhow::anyhow!(e))?;
+            message = message.with_format(format);
+        }
+
+        if let Some(priority_str) = payload.get("priority").and_then(|v| v.as_str()) {
+            let priority = priority_str
+                .parse::<Priority>()
+                .map_err(|e| anyhow::anyhow!(e))?;
+            message = message.with_priority(priority);
+        }
+
+        // Pass through extra fields
+        if let Some(extra) = payload.get("extra").and_then(|v| v.as_object()) {
+            for (k, v) in extra {
+                message = message.with_extra(k, v.clone());
+            }
+        }
+
+        Ok(message)
+    } else {
+        // Human path: build from individual flags
+        let text = args
+            .message
+            .as_deref()
+            .context("--message is required when not using --json-payload")?;
+
+        let format = args
+            .format
+            .parse::<MessageFormat>()
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        let priority = args
+            .priority
+            .parse::<Priority>()
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        let mut message = Message::text(text).with_format(format).with_priority(priority);
+
+        if let Some(ref title) = args.title {
+            message = message.with_title(title);
+        }
+
+        Ok(message)
     }
 }
 
