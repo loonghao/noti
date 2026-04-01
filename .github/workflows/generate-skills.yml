@@ -71,10 +71,17 @@ jobs:
       - name: Install ClawHub CLI
         run: npm install -g clawhub
 
+      - name: Extract project version
+        id: version
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('.release-please-manifest.json'))['.'])")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Publish skills to ClawHub
         env:
           CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
           CLAWHUB_DISABLE_TELEMETRY: "1"
+          SKILL_VERSION: ${{ steps.version.outputs.version }}
         run: |
           clawhub login --token "$CLAWHUB_TOKEN"
           for skill_dir in skills/*/; do
@@ -83,10 +90,11 @@ jobs:
               echo "SKIP: ${skill_name} has no SKILL.md"
               continue
             fi
-            echo "Publishing skill: ${skill_name}"
-            clawhub publish "${skill_dir}" \
+            echo "Publishing skill: ${skill_name} v${SKILL_VERSION}"
+            clawhub skill publish "${skill_dir}" \
               --slug "${skill_name}" \
               --name "${skill_name}" \
+              --version "${SKILL_VERSION}" \
               --no-input
             echo "Published: ${skill_name}"
           done

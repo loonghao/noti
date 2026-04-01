@@ -541,6 +541,39 @@ pub async fn spawn_server_with_workers_and_rate_limit(
     (base, worker_handle, max_requests)
 }
 
+/// Start a server with in-memory SQLite queue, mock providers, workers, and global rate limiting.
+/// Returns `(base_url, worker_handle, max_requests)`.
+pub async fn spawn_server_sqlite_with_workers_and_rate_limit(
+    extra_providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+    max_requests: u64,
+    window_secs: u64,
+) -> (String, noti_queue::WorkerHandle, u64) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+    registry.register(Arc::new(MockFailProvider));
+    for p in extra_providers {
+        registry.register(p);
+    }
+
+    let state = sqlite_app_state_with_registry(registry);
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(2)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let rate_config =
+        RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
+    let rate_state = RateLimiterState::new(rate_config);
+
+    let app = noti_server::routes::build_router(state).layer(axum::middleware::from_fn_with_state(
+        rate_state,
+        rate_limit_middleware,
+    ));
+
+    let base = bind_and_serve(app).await;
+    (base, worker_handle, max_requests)
+}
+
 // ───────────────────── Callback server infrastructure ─────────────────────
 
 /// Shared state for the mock callback receiver.

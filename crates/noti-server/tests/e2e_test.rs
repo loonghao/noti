@@ -15,8 +15,9 @@ use std::time::Duration;
 use common::{
     MockFlakyProvider, MockOkProvider, MockSlowProvider, spawn_callback_server, spawn_server,
     spawn_server_sqlite, spawn_server_sqlite_file, spawn_server_sqlite_file_with_workers,
-    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
-    spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
+    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_and_rate_limit,
+    spawn_server_sqlite_with_workers_serial, spawn_server_with_auth,
+    spawn_server_with_body_limit, spawn_server_with_cors_permissive,
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
     spawn_server_with_request_id, spawn_server_with_workers,
@@ -6147,6 +6148,219 @@ async fn e2e_sqlite_batch_async_mixed_retry_policies() {
             4,
             "SQLite: expected 4 callbacks, got {}",
             received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── SQLite concurrent batch async with rate limiting ─────────────────────
+
+/// SQLite mirror of `e2e_concurrent_batch_async_with_rate_limit_partial_reject`.
+/// Send multiple concurrent batch requests with rate limiting enabled on SQLite backend.
+/// Some requests should be accepted and some rejected per rate limit quota.
+#[tokio::test]
+async fn e2e_sqlite_concurrent_batch_async_with_rate_limit_partial_reject() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
+    let (base, worker_handle, _max_requests) =
+        spawn_server_sqlite_with_workers_and_rate_limit(vec![], 3, 60).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let client = client.clone();
+        let base = base.clone();
+        let cb_url = callback_url.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = client
+                .post(format!("{base}/api/v1/send/async/batch"))
+                .json(&json!({
+                    "items": [
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("sqlite rate-limited batch item {i}"),
+                            "callback_url": &cb_url,
+                        }
+                    ]
+                }))
+                .send()
+                .await
+                .unwrap();
+            resp.status()
+        }));
+    }
+
+    let mut accepted = 0u32;
+    let mut rate_limited = 0u32;
+    for handle in handles {
+        let status = handle.await.unwrap();
+        match status {
+            StatusCode::ACCEPTED => accepted += 1,
+            StatusCode::TOO_MANY_REQUESTS => rate_limited += 1,
+            other => panic!("SQLite: unexpected status: {other}"),
+        }
+    }
+
+    // At most 3 should be accepted (rate limit), at least 2 should be rejected
+    assert!(
+        accepted <= 3,
+        "SQLite: at most 3 requests should pass rate limit, got {accepted}"
+    );
+    assert!(
+        rate_limited >= 2,
+        "SQLite: at least 2 requests should be rate limited, got {rate_limited}"
+    );
+
+    // Wait for accepted tasks to complete
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len() as u32,
+            accepted,
+            "SQLite: callbacks should match accepted count: expected {accepted}, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// SQLite mirror of `e2e_batch_async_within_rate_limit_succeeds`.
+/// Rate limited server with SQLite backend: a single batch request within quota should succeed.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_within_rate_limit_succeeds() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle, _max) =
+        spawn_server_sqlite_with_workers_and_rate_limit(vec![], 10, 60).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite rate limited batch 1",
+                    "callback_url": &callback_url,
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite rate limited batch 2",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+    assert_eq!(body["failed"], 0);
+
+    // Verify rate limit headers are present on a separate request
+    let health_resp = client.get(format!("{base}/health")).send().await.unwrap();
+    assert!(health_resp.headers().contains_key("x-ratelimit-limit"));
+
+    let task_ids: Vec<String> = (0..2)
+        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    for tid in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, tid).await;
+        assert_eq!(task["status"], "completed");
+    }
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(received.len(), 2);
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// SQLite mirror of `e2e_sequential_batch_async_rate_limit_exhaustion`.
+/// Rate limit exhausted mid-sequence on SQLite backend: first batch goes through, second batch gets 429.
+#[tokio::test]
+async fn e2e_sqlite_sequential_batch_async_rate_limit_exhaustion() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    // Only 2 requests allowed per 60s
+    let (base, worker_handle, _max) =
+        spawn_server_sqlite_with_workers_and_rate_limit(vec![], 2, 60).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // First batch — should succeed (request 1)
+    let resp1 = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite first batch",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::ACCEPTED);
+
+    // Second batch — should succeed (request 2)
+    let resp2 = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite second batch",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::ACCEPTED);
+
+    // Third batch — should be rate limited (request 3 > quota 2)
+    let resp3 = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite third batch - should be rejected",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp3.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "SQLite: third request should be rate limited"
+    );
+    let body_429: Value = resp3.json().await.unwrap();
+    assert_eq!(body_429["error"], "rate limit exceeded");
+
+    // Wait for the 2 accepted tasks to complete
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "SQLite: only 2 accepted tasks should produce callbacks"
         );
     }
 
