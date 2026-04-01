@@ -6369,3 +6369,219 @@ async fn e2e_sqlite_sequential_batch_async_rate_limit_exhaustion() {
 
     worker_handle.shutdown_and_join().await;
 }
+
+// ───────────────────── Backoff delay timing (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_backoff_delay_timing_flaky_task() {
+    // MockFlakyProvider fails first 2 calls, then succeeds on the 3rd.
+    // With delay_ms=200 (fixed), the queue should hold the task for ~200ms per retry.
+    // Total expected wall-clock time >= 200ms * 2 retries = 400ms.
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "backoff timing test",
+            "retry": {"max_retries": 3, "delay_ms": 200}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        task["status"], "completed",
+        "flaky task should eventually succeed after retries"
+    );
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+    // 2 retries × 200ms delay = 400ms minimum (allow some slack for poll interval)
+    assert!(
+        elapsed >= Duration::from_millis(350),
+        "backoff delay should enforce at least ~400ms total delay, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_backoff_delay_timing_exhausted_retries() {
+    // MockFailProvider always fails. With max_retries=2, delay_ms=150,
+    // the task should fail after 3 attempts with >= 300ms total delay.
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "backoff exhaustion timing test",
+            "retry": {"max_retries": 2, "delay_ms": 150}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "failed");
+    // 2 retries × 150ms = 300ms minimum
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_backoff_delay_zero_delay_is_fast() {
+    // With delay_ms=0, retries should happen immediately (no backoff delay).
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "zero delay test",
+            "retry": {"max_retries": 3, "delay_ms": 0}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "completed");
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "expected at least 3 attempts"
+    );
+    // With zero delay, should complete well under 2 seconds (just poll intervals)
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "zero delay retries should be fast, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_backoff_delay_timing_flaky_task() {
+    // Same as e2e_backoff_delay_timing_flaky_task but with SQLite queue backend.
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "sqlite backoff timing test",
+            "retry": {"max_retries": 3, "delay_ms": 200}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        task["status"], "completed",
+        "SQLite: flaky task should eventually succeed after retries"
+    );
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+    assert!(
+        elapsed >= Duration::from_millis(350),
+        "SQLite: backoff delay should enforce at least ~400ms total, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_backoff_delay_timing_exhausted_retries() {
+    // Same as e2e_backoff_delay_timing_exhausted_retries but with SQLite queue backend.
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "sqlite backoff exhaustion timing test",
+            "retry": {"max_retries": 2, "delay_ms": 150}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "failed");
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "SQLite: backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}

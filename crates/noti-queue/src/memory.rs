@@ -147,7 +147,9 @@ impl QueueBackend for InMemoryQueue {
             let task_id = &entry.task.id;
 
             let tasks = self.tasks.lock().await;
-            let task_info = tasks.get(task_id).map(|t| (t.status.clone(), t.available_at));
+            let task_info = tasks
+                .get(task_id)
+                .map(|t| (t.status.clone(), t.available_at));
             drop(tasks);
 
             match task_info {
