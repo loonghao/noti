@@ -4530,3 +4530,316 @@ async fn e2e_error_structure_invalid_json_response() {
     let body: Value = resp.json().await.unwrap();
     assert_error_shape(&body, "invalid_json", "invalid json body");
 }
+
+// ───────────────────── Batch async: mixed valid/invalid providers + priorities ─────────────────────
+
+/// Batch-enqueue items with a mix of valid and invalid providers at different priorities.
+/// Verify that invalid providers are rejected per-item (not failing the whole batch),
+/// valid items are enqueued and processed in priority order, and the response counts are correct.
+#[tokio::test]
+async fn e2e_batch_async_mixed_providers_and_priorities() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Mix of valid (mock-ok) and invalid (nonexistent) providers at various priorities.
+    // Valid items: urgent, normal, low — invalid items: high, low
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "nonexistent-a",
+                    "text": "invalid-high",
+                    "priority": "high",
+                    "metadata": {"order": "invalid-high"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "valid-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "valid-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-urgent"}
+                },
+                {
+                    "provider": "nonexistent-b",
+                    "text": "invalid-low",
+                    "priority": "low",
+                    "metadata": {"order": "invalid-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "valid-normal",
+                    "priority": "normal",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-normal"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 5);
+    assert_eq!(body["enqueued"], 3);
+    assert_eq!(body["failed"], 2);
+
+    // Verify per-item results
+    let results = body["results"].as_array().unwrap();
+    // index 0: invalid
+    assert!(!results[0]["success"].as_bool().unwrap());
+    assert_eq!(results[0]["provider"], "nonexistent-a");
+    assert!(results[0]["error"].as_str().unwrap().contains("not found"));
+    // index 1: valid
+    assert!(results[1]["success"].as_bool().unwrap());
+    assert!(results[1]["task_id"].is_string());
+    // index 2: valid
+    assert!(results[2]["success"].as_bool().unwrap());
+    // index 3: invalid
+    assert!(!results[3]["success"].as_bool().unwrap());
+    assert_eq!(results[3]["provider"], "nonexistent-b");
+    // index 4: valid
+    assert!(results[4]["success"].as_bool().unwrap());
+
+    // Collect task IDs of successfully enqueued items
+    let task_ids: Vec<String> = results
+        .iter()
+        .filter(|r| r["success"].as_bool().unwrap_or(false))
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(task_ids.len(), 3);
+
+    // Start a single worker AFTER enqueue to ensure strict priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all valid tasks to complete
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callback order: urgent → normal → low (only valid items)
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 3,
+            "expected at least 3 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["valid-urgent", "valid-normal", "valid-low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Same as above but using SQLite queue backend.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
+    let task_notify = queue.notifier();
+    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Same mix: valid (mock-ok) and invalid (nonexistent) at various priorities
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-valid-high",
+                    "priority": "high",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-high"}
+                },
+                {
+                    "provider": "nonexistent-x",
+                    "text": "sqlite-invalid-urgent",
+                    "priority": "urgent",
+                    "metadata": {"order": "invalid-urgent"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-valid-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-valid-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-urgent"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["enqueued"], 3);
+    assert_eq!(body["failed"], 1);
+
+    // Verify the failed item
+    let results = body["results"].as_array().unwrap();
+    assert!(results[0]["success"].as_bool().unwrap()); // valid-high
+    assert!(!results[1]["success"].as_bool().unwrap()); // invalid-urgent
+    assert!(results[2]["success"].as_bool().unwrap()); // valid-low
+    assert!(results[3]["success"].as_bool().unwrap()); // valid-urgent
+
+    // Collect valid task IDs
+    let task_ids: Vec<String> = results
+        .iter()
+        .filter(|r| r["success"].as_bool().unwrap_or(false))
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(task_ids.len(), 3);
+
+    // Start single worker after enqueue for strict priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callback order: urgent → high → low (only valid items, priority-sorted)
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 3,
+            "SQLite: expected at least 3 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["valid-urgent", "valid-high", "valid-low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "SQLite: callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Batch async with ALL invalid providers — verify 202 response with all items failed.
+#[tokio::test]
+async fn e2e_batch_async_all_invalid_providers_returns_202() {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {"provider": "bad-1", "text": "a", "priority": "urgent"},
+                {"provider": "bad-2", "text": "b", "priority": "high"},
+                {"provider": "bad-3", "text": "c", "priority": "low"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Still 202 even though all items failed — partial success model
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["enqueued"], 0);
+    assert_eq!(body["failed"], 3);
+
+    let results = body["results"].as_array().unwrap();
+    for (i, result) in results.iter().enumerate() {
+        assert!(!result["success"].as_bool().unwrap(), "item {i} should fail");
+        assert!(
+            result["error"].as_str().unwrap().contains("not found"),
+            "item {i} error should mention 'not found'"
+        );
+        assert!(result["task_id"].is_null(), "item {i} should have no task_id");
+    }
+}
