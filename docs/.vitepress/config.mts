@@ -46,6 +46,12 @@ export default defineConfig({
           ],
         },
         {
+          text: 'Operations',
+          items: [
+            { text: 'Deployment', link: '/guide/deployment' },
+          ],
+        },
+        {
           text: 'Development',
           items: [
             { text: 'Architecture', link: '/guide/architecture' },

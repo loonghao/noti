@@ -1,0 +1,33 @@
+services:
+  # ── noti-server (production-ready) ─────────────────────────────
+  noti-server:
+    build: .
+    container_name: noti-server
+    restart: unless-stopped
+    ports:
+      - "${NOTI_PORT:-3000}:3000"
+    volumes:
+      - noti-data:/data
+    environment:
+      NOTI_HOST: "0.0.0.0"
+      NOTI_PORT: "3000"
+      NOTI_LOG_FORMAT: "json"
+      NOTI_LOG_LEVEL: "${NOTI_LOG_LEVEL:-info}"
+      NOTI_QUEUE_BACKEND: "sqlite"
+      NOTI_QUEUE_DB_PATH: "/data/noti-queue.db"
+      NOTI_WORKER_COUNT: "${NOTI_WORKER_COUNT:-4}"
+      NOTI_API_KEYS: "${NOTI_API_KEYS:-}"
+      NOTI_RATE_LIMIT_MAX: "${NOTI_RATE_LIMIT_MAX:-100}"
+      NOTI_RATE_LIMIT_WINDOW_SECS: "${NOTI_RATE_LIMIT_WINDOW_SECS:-60}"
+      NOTI_RATE_LIMIT_PER_IP: "${NOTI_RATE_LIMIT_PER_IP:-true}"
+      NOTI_CORS_ALLOWED_ORIGINS: "${NOTI_CORS_ALLOWED_ORIGINS:-*}"
+      NOTI_MAX_BODY_SIZE: "${NOTI_MAX_BODY_SIZE:-2097152}"
+    healthcheck:
+      test: ["CMD", "noti-server", "--version"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  noti-data:
