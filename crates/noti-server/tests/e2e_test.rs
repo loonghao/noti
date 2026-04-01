@@ -3844,3 +3844,501 @@ async fn e2e_purge_idempotent_second_purge_returns_zero() {
     let second: Value = resp.json().await.unwrap();
     assert_eq!(second["purged"].as_u64().unwrap(), 0);
 }
+
+// ───────────────────── Template CRUD depth tests ─────────────────────
+
+/// Multiple templates can be created and listed; list returns sorted names.
+#[tokio::test]
+async fn e2e_template_list_multiple_sorted() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    for name in ["zulu-tpl", "alpha-tpl", "mike-tpl"] {
+        let resp = client
+            .post(format!("{base}/api/v1/templates"))
+            .json(&json!({
+                "name": name,
+                "body": format!("Hello from {name}")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let resp = client
+        .get(format!("{base}/api/v1/templates"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"].as_u64().unwrap(), 3);
+    let names: Vec<&str> = body["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha-tpl", "mike-tpl", "zulu-tpl"]);
+}
+
+/// Update preserves existing defaults that are not overridden.
+#[tokio::test]
+async fn e2e_template_update_preserves_defaults() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Create with two defaults
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "defaults-tpl",
+            "body": "{{greeting}}, {{name}}!",
+            "defaults": {"greeting": "Hi", "name": "World"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Update only the greeting default
+    let resp = client
+        .put(format!("{base}/api/v1/templates/defaults-tpl"))
+        .json(&json!({
+            "defaults": {"greeting": "Hello"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["defaults"]["greeting"], "Hello");
+    assert_eq!(body["defaults"]["name"], "World");
+}
+
+/// Rendering with missing required variables (no defaults) returns 400.
+#[tokio::test]
+async fn e2e_template_render_missing_required_var_returns_400() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "required-vars",
+            "body": "{{a}} and {{b}}"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Provide only one of two required variables
+    let resp = client
+        .post(format!("{base}/api/v1/templates/required-vars/render"))
+        .json(&json!({
+            "variables": {"a": "hello"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    let msg = body["message"].as_str().unwrap_or("");
+    assert!(
+        msg.contains("b"),
+        "error should mention missing variable 'b'"
+    );
+}
+
+/// Rendering with defaults supplying the missing variable succeeds.
+#[tokio::test]
+async fn e2e_template_render_defaults_fill_missing_vars() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "with-default",
+            "body": "{{greeting}}, {{name}}!",
+            "title": "{{greeting}} title",
+            "defaults": {"greeting": "Hey"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{base}/api/v1/templates/with-default/render"))
+        .json(&json!({
+            "variables": {"name": "Alice"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["text"], "Hey, Alice!");
+    assert_eq!(body["title"], "Hey title");
+}
+
+/// Deleting a non-existent template returns 404.
+#[tokio::test]
+async fn e2e_template_delete_nonexistent_returns_404() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .delete(format!("{base}/api/v1/templates/no-such-template"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Getting a non-existent template returns 404.
+#[tokio::test]
+async fn e2e_template_get_nonexistent_returns_404() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Rendering a non-existent template returns 404.
+#[tokio::test]
+async fn e2e_template_render_nonexistent_returns_404() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/templates/ghost/render"))
+        .json(&json!({"variables": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Creating a template with the same name overwrites the previous one.
+#[tokio::test]
+async fn e2e_template_create_same_name_overwrites() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Create v1
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "overwrite-tpl",
+            "body": "version 1"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Create v2 with same name
+    let resp = client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "overwrite-tpl",
+            "body": "version 2 with {{var}}"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Get should show v2
+    let resp = client
+        .get(format!("{base}/api/v1/templates/overwrite-tpl"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["body"].as_str().unwrap().contains("version 2"));
+    assert_eq!(body["variables"].as_array().unwrap().len(), 1);
+
+    // List should still show 1 total
+    let resp = client
+        .get(format!("{base}/api/v1/templates"))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"].as_u64().unwrap(), 1);
+}
+
+/// Update body only; title and defaults remain from original.
+#[tokio::test]
+async fn e2e_template_update_body_only_preserves_title() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({
+            "name": "title-keep",
+            "body": "original body {{x}}",
+            "title": "Original Title"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .put(format!("{base}/api/v1/templates/title-keep"))
+        .json(&json!({
+            "body": "updated body {{y}}"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["body"], "updated body {{y}}");
+    assert_eq!(body["title"], "Original Title");
+}
+
+// ───────────────────── Concurrent task processing tests ─────────────────────
+
+/// Multiple tasks enqueued concurrently are all processed to completion by workers.
+#[tokio::test]
+async fn e2e_concurrent_tasks_all_processed() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let task_count = 10;
+    let mut task_ids = Vec::new();
+
+    // Enqueue many tasks concurrently
+    let mut handles = Vec::new();
+    for i in 0..task_count {
+        let c = client.clone();
+        let b = base.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = c
+                .post(format!("{b}/api/v1/send/async"))
+                .json(&json!({
+                    "provider": "mock-ok",
+                    "text": format!("concurrent task {i}")
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::ACCEPTED);
+            resp.json::<Value>().await.unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }));
+    }
+
+    for h in handles {
+        task_ids.push(h.await.unwrap());
+    }
+
+    assert_eq!(task_ids.len(), task_count);
+
+    // Wait for all to reach terminal state
+    for id in &task_ids {
+        let result = wait_for_terminal_status(&client, &base, id).await;
+        assert_eq!(
+            result["status"].as_str().unwrap(),
+            "completed",
+            "task {id} should be completed"
+        );
+    }
+
+    // Stats should show all completed
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= task_count as u64);
+    assert_eq!(stats["queued"].as_u64().unwrap(), 0);
+    assert_eq!(stats["processing"].as_u64().unwrap(), 0);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Each task is processed exactly once — no duplicates.
+#[tokio::test]
+async fn e2e_concurrent_tasks_no_duplicate_processing() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let (cb_base, payloads) = spawn_callback_server().await;
+    let client = reqwest::Client::new();
+
+    let task_count = 8;
+    let mut task_ids = Vec::new();
+
+    // Enqueue tasks with callback so we can count invocations
+    for i in 0..task_count {
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": format!("dedup task {i}"),
+                "callback_url": format!("{cb_base}/callback")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        task_ids.push(
+            resp.json::<Value>().await.unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+
+    // Wait for all to complete
+    for id in &task_ids {
+        wait_for_terminal_status(&client, &base, id).await;
+    }
+
+    // Give callbacks a moment to arrive
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Each task should have produced exactly one callback
+    let received = payloads.lock().unwrap();
+    assert_eq!(
+        received.len(),
+        task_count,
+        "expected exactly {task_count} callbacks, got {}",
+        received.len()
+    );
+
+    // Verify all task IDs appear exactly once
+    let callback_task_ids: Vec<&str> = received
+        .iter()
+        .map(|p| p["task_id"].as_str().unwrap())
+        .collect();
+    for id in &task_ids {
+        let count = callback_task_ids.iter().filter(|&&cid| cid == id).count();
+        assert_eq!(count, 1, "task {id} should have exactly 1 callback");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Concurrent processing on SQLite backend also works correctly.
+#[tokio::test]
+async fn e2e_sqlite_concurrent_tasks_all_processed() {
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let task_count = 10;
+    let mut task_ids = Vec::new();
+
+    let mut handles = Vec::new();
+    for i in 0..task_count {
+        let c = client.clone();
+        let b = base.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = c
+                .post(format!("{b}/api/v1/send/async"))
+                .json(&json!({
+                    "provider": "mock-ok",
+                    "text": format!("sqlite concurrent {i}")
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::ACCEPTED);
+            resp.json::<Value>().await.unwrap()["task_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }));
+    }
+
+    for h in handles {
+        task_ids.push(h.await.unwrap());
+    }
+
+    for id in &task_ids {
+        let result = wait_for_terminal_status(&client, &base, id).await;
+        assert_eq!(
+            result["status"].as_str().unwrap(),
+            "completed",
+            "SQLite task {id} should be completed"
+        );
+    }
+
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= task_count as u64);
+    assert_eq!(stats["queued"].as_u64().unwrap(), 0);
+    assert_eq!(stats["processing"].as_u64().unwrap(), 0);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Mixed success/failure tasks processed concurrently all reach correct terminal states.
+#[tokio::test]
+async fn e2e_concurrent_mixed_success_failure() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let mut ok_ids = Vec::new();
+    let mut fail_ids = Vec::new();
+
+    // Enqueue 5 success + 5 failure tasks interleaved
+    for i in 0..10 {
+        let provider = if i % 2 == 0 { "mock-ok" } else { "mock-fail" };
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": provider,
+                "text": format!("mixed task {i}")
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let id = resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if i % 2 == 0 {
+            ok_ids.push(id);
+        } else {
+            fail_ids.push(id);
+        }
+    }
+
+    // Wait for all tasks
+    for id in &ok_ids {
+        let result = wait_for_terminal_status(&client, &base, id).await;
+        assert_eq!(result["status"].as_str().unwrap(), "completed");
+    }
+    for id in &fail_ids {
+        let result = wait_for_terminal_status(&client, &base, id).await;
+        assert_eq!(result["status"].as_str().unwrap(), "failed");
+    }
+
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= 5);
+    assert!(stats["failed"].as_u64().unwrap() >= 5);
+
+    worker_handle.shutdown_and_join().await;
+}
