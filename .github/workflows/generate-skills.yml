@@ -84,7 +84,7 @@ jobs:
               continue
             fi
             echo "Publishing skill: ${skill_name}"
-            clawhub skill publish "${skill_dir}" \
+            clawhub publish "${skill_dir}" \
               --slug "${skill_name}" \
               --name "${skill_name}" \
               --no-input
