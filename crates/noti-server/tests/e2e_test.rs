@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    MockFlakyProvider, MockOkProvider, spawn_callback_server, spawn_server, spawn_server_sqlite,
-    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
+    MockFlakyProvider, MockOkProvider, MockSlowProvider, spawn_callback_server, spawn_server,
+    spawn_server_sqlite, spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
     spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
@@ -3076,4 +3076,382 @@ async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
     }
 
     worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Graceful shutdown (e2e) ─────────────────────
+
+/// Verify that `shutdown_and_join()` waits for an in-flight slow task to complete
+/// before the worker pool exits, and the task reaches `completed` status.
+#[tokio::test]
+async fn e2e_graceful_shutdown_waits_for_inflight_task() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    let slow: Arc<dyn noti_core::NotifyProvider> =
+        Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
+    registry.register(slow);
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Start a single worker
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue a task that takes 500ms to process
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-slow",
+            "text": "slow-task",
+            "callback_url": &callback_url,
+            "metadata": {"test": "graceful-shutdown"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait a bit for the worker to pick up the task (but not finish it)
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Issue shutdown while the slow task is still in-flight
+    // shutdown_and_join should block until the worker finishes the current task
+    worker_handle.shutdown_and_join().await;
+
+    // After shutdown completes, the task should be completed (worker waited for it)
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let task: Value = resp.json().await.unwrap();
+    assert_eq!(
+        task["status"], "completed",
+        "in-flight task should complete before worker exits"
+    );
+
+    // Verify the callback was fired
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let received = payloads.lock().unwrap();
+    assert!(
+        !received.is_empty(),
+        "callback should have been fired for the completed slow task"
+    );
+    assert_eq!(received[0]["status"], "completed");
+    assert_eq!(received[0]["metadata"]["test"], "graceful-shutdown");
+}
+
+/// Verify that after shutdown, queued tasks that were not picked up remain in `pending` status.
+/// Uses a slow provider so the single worker can only process one task before shutdown.
+#[tokio::test]
+async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
+    let mut registry = noti_core::ProviderRegistry::new();
+    // Each task takes 200ms to complete
+    let slow: Arc<dyn noti_core::NotifyProvider> =
+        Arc::new(MockSlowProvider::new(Duration::from_millis(200)));
+    registry.register(slow);
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // Enqueue 5 tasks BEFORE starting workers
+    let mut task_ids = Vec::new();
+    for i in 0..5 {
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-slow",
+                "text": format!("task-{i}"),
+                "metadata": {"index": format!("{i}")}
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        task_ids.push(body["task_id"].as_str().unwrap().to_string());
+    }
+
+    // Start a single worker
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for the worker to pick up and start processing the first task (50ms poll + start)
+    // but not long enough for 200ms send to finish
+    tokio::time::sleep(Duration::from_millis(120)).await;
+
+    // Issue shutdown — worker should finish the in-flight task but not start new ones
+    worker_handle.shutdown_and_join().await;
+
+    // Check task statuses
+    let mut completed = 0;
+    let mut pending = 0;
+    for task_id in &task_ids {
+        let resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let body: Value = resp.json().await.unwrap();
+        match body["status"].as_str().unwrap() {
+            "completed" => completed += 1,
+            "pending" | "queued" => pending += 1,
+            _ => {}
+        }
+    }
+
+    // The single worker with 200ms delay can process at most 1 task before shutdown
+    // (picked up at ~50ms, finishes at ~250ms, shutdown at ~120ms waits for it).
+    // Remaining tasks should still be pending.
+    assert!(
+        completed >= 1,
+        "at least one task should have been completed (completed={completed})"
+    );
+    assert!(
+        pending >= 1,
+        "at least one task should remain pending after shutdown (pending={pending}, completed={completed})"
+    );
+    assert!(
+        completed < 5,
+        "not all tasks should be completed after immediate shutdown (completed={completed})"
+    );
+}
+
+/// Verify that the HTTP server remains responsive during and after worker shutdown.
+/// (Workers shutting down should not affect the server's ability to serve requests.)
+#[tokio::test]
+async fn e2e_http_server_responsive_during_worker_shutdown() {
+    let mut registry = noti_core::ProviderRegistry::new();
+    let slow: Arc<dyn noti_core::NotifyProvider> =
+        Arc::new(MockSlowProvider::new(Duration::from_millis(300)));
+    registry.register(slow);
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Start worker
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let client = reqwest::Client::new();
+    let base_clone = base.clone();
+
+    // Enqueue a slow task
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-slow",
+            "text": "slow-during-shutdown"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // Wait for worker to pick it up
+    tokio::time::sleep(Duration::from_millis(80)).await;
+
+    // Spawn shutdown in the background (it will block until the slow task finishes)
+    let shutdown_task = tokio::spawn(async move {
+        worker_handle.shutdown_and_join().await;
+    });
+
+    // While shutdown is in progress, the HTTP server should still respond
+    let resp = client
+        .get(format!("{base_clone}/health"))
+        .send()
+        .await
+        .expect("server should still respond during worker shutdown");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = client
+        .get(format!("{base_clone}/api/v1/providers"))
+        .send()
+        .await
+        .expect("provider listing should still work during worker shutdown");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Wait for shutdown to complete
+    shutdown_task.await.unwrap();
+
+    // Server should still respond after workers are fully stopped
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .expect("server should respond after worker shutdown");
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// Verify graceful shutdown with SQLite backend — in-flight task completes.
+#[tokio::test]
+async fn e2e_sqlite_graceful_shutdown_waits_for_inflight_task() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    let slow: Arc<dyn noti_core::NotifyProvider> =
+        Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
+    registry.register(slow);
+
+    let queue = Arc::new(
+        noti_queue::SqliteQueue::in_memory().expect("failed to create in-memory SQLite queue"),
+    );
+    let task_notify = queue.notifier();
+    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue a slow task
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-slow",
+            "text": "sqlite-slow-task",
+            "callback_url": &callback_url,
+            "metadata": {"test": "sqlite-graceful-shutdown"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Wait for the worker to pick up the task
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Shut down — should wait for in-flight task
+    worker_handle.shutdown_and_join().await;
+
+    // Task should be completed in the SQLite backend
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let task: Value = resp.json().await.unwrap();
+    assert_eq!(
+        task["status"], "completed",
+        "SQLite: in-flight task should complete before worker exits"
+    );
+
+    // Verify callback
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let received = payloads.lock().unwrap();
+    assert!(
+        !received.is_empty(),
+        "SQLite: callback should have been fired for the completed slow task"
+    );
+    assert_eq!(received[0]["status"], "completed");
+    assert_eq!(received[0]["metadata"]["test"], "sqlite-graceful-shutdown");
+}
+
+/// Verify that shutdown_and_join completes within a reasonable time
+/// even when the queue is empty (no tasks to process).
+#[tokio::test]
+async fn e2e_graceful_shutdown_empty_queue_completes_quickly() {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let _base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Start workers with multiple concurrency
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(4)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Let workers run for a bit with empty queue
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Shutdown should complete quickly (not hang waiting for tasks)
+    let start = std::time::Instant::now();
+    worker_handle.shutdown_and_join().await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "shutdown of empty queue should complete quickly, took {:?}",
+        elapsed
+    );
 }

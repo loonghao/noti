@@ -421,6 +421,48 @@ impl noti_core::NotifyProvider for MockFlakyProvider {
     }
 }
 
+/// A mock provider that sleeps for a configurable duration before succeeding.
+/// Useful for simulating in-flight tasks during graceful shutdown.
+pub struct MockSlowProvider {
+    delay: Duration,
+}
+
+impl MockSlowProvider {
+    pub fn new(delay: Duration) -> Self {
+        Self { delay }
+    }
+}
+
+#[async_trait]
+impl noti_core::NotifyProvider for MockSlowProvider {
+    fn name(&self) -> &str {
+        "mock-slow"
+    }
+    fn url_scheme(&self) -> &str {
+        "mock-slow"
+    }
+    fn params(&self) -> Vec<noti_core::ParamDef> {
+        vec![]
+    }
+    fn description(&self) -> &str {
+        "sleeps then succeeds"
+    }
+    fn example_url(&self) -> &str {
+        "mock-slow://test"
+    }
+    async fn send(
+        &self,
+        _message: &noti_core::Message,
+        _config: &noti_core::ProviderConfig,
+    ) -> Result<noti_core::SendResponse, noti_core::NotiError> {
+        tokio::time::sleep(self.delay).await;
+        Ok(noti_core::SendResponse::success(
+            "mock-slow",
+            "ok after delay",
+        ))
+    }
+}
+
 // ───────────────────── Callback server infrastructure ─────────────────────
 
 /// Shared state for the mock callback receiver.
