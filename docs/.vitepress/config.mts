@@ -19,7 +19,7 @@ export default defineConfig({
       { text: 'Providers', link: '/providers/overview' },
       { text: 'Reference', link: '/reference/cli' },
       {
-        text: 'v0.1.2',
+        text: 'v0.1.3',
         items: [
           { text: 'Changelog', link: 'https://github.com/loonghao/noti/blob/main/CHANGELOG.md' },
           { text: 'Releases', link: 'https://github.com/loonghao/noti/releases' },
@@ -40,6 +40,7 @@ export default defineConfig({
           text: 'Usage',
           items: [
             { text: 'Sending Notifications', link: '/guide/sending-notifications' },
+            { text: 'Core Features', link: '/guide/core-features' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
           ],

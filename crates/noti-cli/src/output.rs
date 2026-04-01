@@ -12,7 +12,10 @@ pub fn print_success(mode: OutputMode, message: &str) {
     match mode {
         OutputMode::Json => {
             let out = serde_json::json!({ "status": "success", "message": message });
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
+            );
         }
         OutputMode::Human => {
             println!("✓ {message}");
@@ -25,26 +28,13 @@ pub fn print_error(mode: OutputMode, message: &str) {
     match mode {
         OutputMode::Json => {
             let out = serde_json::json!({ "status": "error", "message": message });
-            eprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
-        }
-        OutputMode::Human => {
-            eprintln!("✗ {message}");
-        }
-    }
-}
-
-/// Print a serializable value as JSON or formatted text.
-#[allow(dead_code)]
-pub fn print_value<T: Serialize + std::fmt::Display>(mode: OutputMode, value: &T) {
-    match mode {
-        OutputMode::Json => {
-            println!(
+            eprintln!(
                 "{}",
-                serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value}"))
+                serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string())
             );
         }
         OutputMode::Human => {
-            println!("{value}");
+            eprintln!("✗ {message}");
         }
     }
 }

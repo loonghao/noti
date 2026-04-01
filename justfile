@@ -34,6 +34,9 @@ ci:
 build-release *args:
     vx cargo build --release -p noti-cli {{args}}
 
+build-server *args:
+    vx cargo build --release -p noti-server {{args}}
+
 build-release-target target:
     vx cargo build --release -p noti-cli --target {{target}}
 

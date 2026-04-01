@@ -7,6 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+openapi = ["utoipa"]
+
 [dependencies]
 async-trait = { workspace = true }
 dirs = { workspace = true }
@@ -18,10 +21,9 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "time", "sync"] }
 toml = { workspace = true }
 url = { workspace = true }
+utoipa = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
-serde_json = { workspace = true }
 tempfile = "3.18"
 tokio = { workspace = true, features = ["fs", "time", "macros", "rt-multi-thread"] }
-
