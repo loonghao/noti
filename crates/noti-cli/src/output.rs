@@ -142,10 +142,7 @@ mod tests {
         ]);
         let fields = vec!["name".into()];
         let filtered = filter_fields(&val, &fields);
-        assert_eq!(
-            filtered,
-            serde_json::json!([{"name": "a"}, {"name": "b"}])
-        );
+        assert_eq!(filtered, serde_json::json!([{"name": "a"}, {"name": "b"}]));
     }
 
     #[test]

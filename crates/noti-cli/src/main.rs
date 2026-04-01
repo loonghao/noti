@@ -62,9 +62,7 @@ async fn main() -> Result<()> {
     noti_providers::register_all_providers(&mut registry);
 
     let result = match &cli.command {
-        Commands::Send(args) => {
-            commands::send::execute(args, &registry, output, &cli.fields).await
-        }
+        Commands::Send(args) => commands::send::execute(args, &registry, output, &cli.fields).await,
         Commands::Config(args) => commands::config::execute(args, &registry, output).await,
         Commands::Providers(args) => commands::providers::execute(args, &registry, output),
         Commands::Schema(args) => commands::schema::execute(args, &registry, output),

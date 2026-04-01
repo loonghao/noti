@@ -15,11 +15,7 @@ pub struct SchemaArgs {
     pub provider: Option<String>,
 }
 
-pub fn execute(
-    args: &SchemaArgs,
-    registry: &ProviderRegistry,
-    output: OutputMode,
-) -> Result<()> {
+pub fn execute(args: &SchemaArgs, registry: &ProviderRegistry, output: OutputMode) -> Result<()> {
     match &args.provider {
         Some(name) => show_provider_schema(name, registry, output),
         None => show_all_schemas(registry, output),
@@ -27,11 +23,7 @@ pub fn execute(
 }
 
 /// Dump the full schema for a single provider.
-fn show_provider_schema(
-    name: &str,
-    registry: &ProviderRegistry,
-    output: OutputMode,
-) -> Result<()> {
+fn show_provider_schema(name: &str, registry: &ProviderRegistry, output: OutputMode) -> Result<()> {
     let provider = registry
         .get_by_name(name)
         .or_else(|| registry.get_by_scheme(name))
@@ -90,11 +82,7 @@ fn show_provider_schema(
             println!();
             println!("  Parameters:");
             for p in provider.params() {
-                let req = if p.required {
-                    "REQUIRED"
-                } else {
-                    "optional"
-                };
+                let req = if p.required { "REQUIRED" } else { "optional" };
                 print!("    {:<24} [{req}] {}", p.name, p.description);
                 if let Some(ref ex) = p.example {
                     print!("  (e.g. \"{ex}\")");
