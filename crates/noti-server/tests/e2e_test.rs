@@ -14,13 +14,15 @@ use std::time::Duration;
 
 use common::{
     MockFlakyProvider, MockOkProvider, MockSlowProvider, spawn_callback_server, spawn_server,
-    spawn_server_sqlite, spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
+    spawn_server_sqlite, spawn_server_sqlite_file, spawn_server_sqlite_file_with_workers,
+    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
     spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
     spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_serial,
     wait_for_terminal_status,
 };
+use noti_queue::QueueBackend;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
@@ -3454,4 +3456,391 @@ async fn e2e_graceful_shutdown_empty_queue_completes_quickly() {
         "shutdown of empty queue should complete quickly, took {:?}",
         elapsed
     );
+}
+
+// ───────────────────── Stale task recovery (SQLite file) ─────────────────────
+
+/// Enqueue tasks, dequeue them (leaving them in "processing" state), drop the
+/// queue (simulating a crash), then start a new server against the same DB file.
+/// `with_queue_backend` should recover the stale tasks back to "queued".
+#[tokio::test]
+async fn e2e_stale_recovery_processing_tasks_become_queued() {
+    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+    let db_path = tmp.path().to_str().unwrap().to_string();
+
+    // Phase 1: open queue, enqueue 2 tasks, dequeue them (→ processing), then drop
+    {
+        let queue = noti_queue::SqliteQueue::open(&db_path).expect("open sqlite queue");
+        let task_a = noti_queue::NotificationTask::new(
+            "slack",
+            noti_core::ProviderConfig::new(),
+            noti_core::Message::text("stale-task-a").with_priority(noti_core::Priority::Normal),
+        );
+        let task_b = noti_queue::NotificationTask::new(
+            "slack",
+            noti_core::ProviderConfig::new(),
+            noti_core::Message::text("stale-task-b").with_priority(noti_core::Priority::Normal),
+        );
+
+        queue.enqueue(task_a).await.unwrap();
+        queue.enqueue(task_b).await.unwrap();
+
+        // Dequeue both → status becomes "processing"
+        queue.dequeue().await.unwrap().expect("dequeue a");
+        queue.dequeue().await.unwrap().expect("dequeue b");
+
+        let stats = queue.stats().await.unwrap();
+        assert_eq!(stats.processing, 2, "both tasks should be processing");
+        // Drop queue — simulates crash
+    }
+
+    // Phase 2: start HTTP server against the same DB — triggers recover_stale_tasks()
+    let base = spawn_server_sqlite_file(&db_path).await;
+    let client = reqwest::Client::new();
+
+    // List tasks — recovered tasks should be "queued"
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=queued"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let tasks = body.as_array().expect("tasks should be an array");
+    assert_eq!(
+        tasks.len(),
+        2,
+        "both stale processing tasks should be recovered as queued"
+    );
+
+    // Stats should show 2 queued, 0 processing
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let stats: Value = resp.json().await.unwrap();
+    assert_eq!(stats["queued"].as_u64().unwrap(), 2);
+    assert_eq!(stats["processing"].as_u64().unwrap(), 0);
+}
+
+/// After recovery, a worker should be able to process the recovered tasks.
+#[tokio::test]
+async fn e2e_stale_recovery_tasks_can_be_processed_by_workers() {
+    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+    let db_path = tmp.path().to_str().unwrap().to_string();
+
+    // Phase 1: enqueue a task via "mock-ok" provider, dequeue it (→ processing), drop
+    {
+        let queue = noti_queue::SqliteQueue::open(&db_path).expect("open sqlite queue");
+        let task = noti_queue::NotificationTask::new(
+            "mock-ok",
+            noti_core::ProviderConfig::new(),
+            noti_core::Message::text("recover-and-process")
+                .with_priority(noti_core::Priority::Normal),
+        );
+
+        let task_id = queue.enqueue(task).await.unwrap();
+
+        // Dequeue → processing
+        let dequeued = queue.dequeue().await.unwrap().expect("dequeue task");
+        assert_eq!(dequeued.id, task_id);
+        // Drop — simulates crash with task stuck in processing
+    }
+
+    // Phase 2: start server with workers — recovery + worker processing
+    let (base, worker_handle) = spawn_server_sqlite_file_with_workers(&db_path).await;
+    let client = reqwest::Client::new();
+
+    // Give workers time to pick up and process the recovered task
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // List all tasks — the task should now be "completed" (processed by mock-ok)
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=completed"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let tasks = body.as_array().expect("tasks array");
+    assert_eq!(
+        tasks.len(),
+        1,
+        "recovered task should be completed by worker"
+    );
+    assert_eq!(tasks[0]["provider"], "mock-ok");
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// When there are no stale tasks, recovery is a no-op and the server starts normally.
+#[tokio::test]
+async fn e2e_stale_recovery_no_stale_tasks_is_noop() {
+    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+    let db_path = tmp.path().to_str().unwrap().to_string();
+
+    // Phase 1: enqueue a task but do NOT dequeue it (stays queued, not processing)
+    {
+        let queue = noti_queue::SqliteQueue::open(&db_path).expect("open sqlite queue");
+        let task = noti_queue::NotificationTask::new(
+            "slack",
+            noti_core::ProviderConfig::new(),
+            noti_core::Message::text("not-stale").with_priority(noti_core::Priority::Normal),
+        );
+        queue.enqueue(task).await.unwrap();
+    }
+
+    // Phase 2: start server — no stale recovery needed
+    let base = spawn_server_sqlite_file(&db_path).await;
+    let client = reqwest::Client::new();
+
+    // Task should still be queued (not touched by recovery)
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=queued"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let tasks = body.as_array().expect("tasks array");
+    assert_eq!(tasks.len(), 1);
+
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert_eq!(stats["queued"].as_u64().unwrap(), 1);
+    assert_eq!(stats["processing"].as_u64().unwrap(), 0);
+}
+
+// ───────────────────── Queue purge dedicated tests ─────────────────────
+
+/// Purging an empty queue returns 0 purged.
+#[tokio::test]
+async fn e2e_purge_empty_queue_returns_zero() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/queue/purge"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["purged"].as_u64().unwrap(), 0);
+    assert!(body["message"].as_str().unwrap().contains("0"));
+}
+
+/// Purge removes completed, failed, and cancelled tasks but not queued ones.
+#[tokio::test]
+async fn e2e_purge_removes_terminal_preserves_nonterminal() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue a task that will complete (mock-ok provider)
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "will complete"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_ok_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Enqueue a task that will fail (mock-fail provider)
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "will fail"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_fail_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Wait for both to reach terminal state
+    wait_for_terminal_status(&client, &base, &task_ok_id).await;
+    wait_for_terminal_status(&client, &base, &task_fail_id).await;
+
+    // Shutdown workers before adding a task that should stay queued
+    worker_handle.shutdown_and_join().await;
+
+    // Enqueue a task after workers are stopped — it stays queued
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "stays queued"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // Stats before purge should show terminal + queued tasks
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats_before: Value = resp.json().await.unwrap();
+    let total_before = stats_before["total"].as_u64().unwrap();
+    assert!(total_before >= 3, "should have at least 3 tasks");
+
+    // Purge terminal tasks
+    let resp = client
+        .post(format!("{base}/api/v1/queue/purge"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let purged = body["purged"].as_u64().unwrap();
+    assert!(
+        purged >= 2,
+        "should purge at least the completed + failed tasks"
+    );
+
+    // Stats after purge — terminal counters should be 0
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats_after: Value = resp.json().await.unwrap();
+    assert_eq!(stats_after["completed"].as_u64().unwrap(), 0);
+    assert_eq!(stats_after["failed"].as_u64().unwrap(), 0);
+    assert_eq!(stats_after["cancelled"].as_u64().unwrap(), 0);
+    // The queued slack task should still be there
+    assert!(stats_after["queued"].as_u64().unwrap() >= 1);
+}
+
+/// Purge on SQLite backend also correctly removes terminal tasks.
+#[tokio::test]
+async fn e2e_sqlite_purge_removes_terminal_tasks() {
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue a task that completes
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "sqlite purge test"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_ok_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Enqueue a task that fails
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "sqlite purge fail"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_fail_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Wait for both to reach terminal state
+    wait_for_terminal_status(&client, &base, &task_ok_id).await;
+    wait_for_terminal_status(&client, &base, &task_fail_id).await;
+
+    // Shutdown workers
+    worker_handle.shutdown_and_join().await;
+
+    // Purge
+    let resp = client
+        .post(format!("{base}/api/v1/queue/purge"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let purged = body["purged"].as_u64().unwrap();
+    assert!(
+        purged >= 2,
+        "should purge completed + failed tasks, got {purged}"
+    );
+
+    // After purge, stats should show 0 terminal tasks
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert_eq!(stats["completed"].as_u64().unwrap(), 0);
+    assert_eq!(stats["failed"].as_u64().unwrap(), 0);
+    assert_eq!(stats["cancelled"].as_u64().unwrap(), 0);
+}
+
+/// Double-purge: second purge returns 0 since all terminal tasks were already removed.
+#[tokio::test]
+async fn e2e_purge_idempotent_second_purge_returns_zero() {
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue and wait for completion
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "double purge test"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    wait_for_terminal_status(&client, &base, &task_id).await;
+    worker_handle.shutdown_and_join().await;
+
+    // First purge
+    let resp = client
+        .post(format!("{base}/api/v1/queue/purge"))
+        .send()
+        .await
+        .unwrap();
+    let first: Value = resp.json().await.unwrap();
+    assert!(first["purged"].as_u64().unwrap() >= 1);
+
+    // Second purge — should be 0
+    let resp = client
+        .post(format!("{base}/api/v1/queue/purge"))
+        .send()
+        .await
+        .unwrap();
+    let second: Value = resp.json().await.unwrap();
+    assert_eq!(second["purged"].as_u64().unwrap(), 0);
 }

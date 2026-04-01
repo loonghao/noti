@@ -309,6 +309,49 @@ pub async fn spawn_server_sqlite_with_workers_serial(
     (base, worker_handle)
 }
 
+/// Start a real HTTP server backed by a file-based SQLite queue.
+/// This uses `AppState::with_queue_backend`, which triggers stale task recovery.
+/// Returns the base URL.
+pub async fn spawn_server_sqlite_file(db_path: &str) -> String {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+    let state = noti_server::state::AppState::with_queue_backend(
+        registry,
+        &noti_server::config::QueueBackendType::Sqlite,
+        db_path,
+    )
+    .await
+    .expect("failed to create AppState with SQLite file");
+    let app = noti_server::routes::build_router(state);
+    bind_and_serve(app).await
+}
+
+/// Start a server with file-based SQLite queue, mock providers, and workers.
+/// Returns `(base_url, worker_handle)`.
+pub async fn spawn_server_sqlite_file_with_workers(
+    db_path: &str,
+) -> (String, noti_queue::WorkerHandle) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+    registry.register(Arc::new(MockFailProvider));
+
+    let state = noti_server::state::AppState::with_queue_backend(
+        registry,
+        &noti_server::config::QueueBackendType::Sqlite,
+        db_path,
+    )
+    .await
+    .expect("failed to create AppState with SQLite file");
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(2)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let app = noti_server::routes::build_router(state);
+    let base = bind_and_serve(app).await;
+    (base, worker_handle)
+}
+
 // ───────────────────── Mock providers ─────────────────────
 
 /// A mock provider that always succeeds.
