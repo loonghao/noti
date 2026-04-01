@@ -2,17 +2,17 @@
 # noti installer — downloads the latest (or a pinned) release binary.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/loonghao/wecom-bot-cli/main/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/loonghao/wecom-bot-cli/main/scripts/install.sh | bash -s -- v0.2.0
+#   curl -fsSL https://raw.githubusercontent.com/loonghao/noti/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/loonghao/noti/main/scripts/install.sh | bash -s -- v0.2.0
 #
 # Environment overrides:
 #   NOTI_INSTALL_DIR        – where to put the binary  (default: ~/.local/bin)
 #   NOTI_INSTALL_VERSION    – version to install       (default: latest)
-#   NOTI_INSTALL_REPOSITORY – GitHub owner/repo        (default: loonghao/wecom-bot-cli)
+#   NOTI_INSTALL_REPOSITORY – GitHub owner/repo        (default: loonghao/noti)
 
 set -euo pipefail
 
-REPO="${NOTI_INSTALL_REPOSITORY:-loonghao/wecom-bot-cli}"
+REPO="${NOTI_INSTALL_REPOSITORY:-loonghao/noti}"
 INSTALL_DIR="${NOTI_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${1:-${NOTI_INSTALL_VERSION:-latest}}"
 
