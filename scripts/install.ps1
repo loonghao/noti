@@ -13,17 +13,17 @@
     Where to place the binary. Default: $env:USERPROFILE\.noti\bin
 
 .PARAMETER Repository
-    GitHub owner/repo. Default: loonghao/wecom-bot-cli
+    GitHub owner/repo. Default: loonghao/noti
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/loonghao/wecom-bot-cli/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/loonghao/noti/main/scripts/install.ps1 | iex
     .\install.ps1 -Version v0.2.0
 #>
 
 param(
     [string]$Version    = ($env:NOTI_INSTALL_VERSION    ?? "latest"),
     [string]$InstallDir = ($env:NOTI_INSTALL_DIR        ?? "$env:USERPROFILE\.noti\bin"),
-    [string]$Repository = ($env:NOTI_INSTALL_REPOSITORY ?? "loonghao/wecom-bot-cli")
+    [string]$Repository = ($env:NOTI_INSTALL_REPOSITORY ?? "loonghao/noti")
 )
 
 $ErrorActionPreference = "Stop"

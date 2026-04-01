@@ -19,7 +19,8 @@ use common::{
     spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
-    spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_serial,
+    spawn_server_with_request_id, spawn_server_with_workers,
+    spawn_server_with_workers_and_rate_limit, spawn_server_with_workers_serial,
     wait_for_terminal_status,
 };
 use noti_queue::QueueBackend;
@@ -4341,6 +4342,1813 @@ async fn e2e_concurrent_mixed_success_failure() {
     let stats: Value = resp.json().await.unwrap();
     assert!(stats["completed"].as_u64().unwrap() >= 5);
     assert!(stats["failed"].as_u64().unwrap() >= 5);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Error response structure consistency (e2e) ─────────────────────
+
+/// Helper: assert that a JSON error response has the standard {error, message} shape.
+fn assert_error_shape(body: &Value, expected_error: &str, context: &str) {
+    assert!(
+        body["error"].is_string(),
+        "{context}: response should have a string 'error' field, got: {body}"
+    );
+    assert!(
+        body["message"].is_string(),
+        "{context}: response should have a string 'message' field, got: {body}"
+    );
+    assert_eq!(
+        body["error"].as_str().unwrap(),
+        expected_error,
+        "{context}: error code mismatch"
+    );
+}
+
+/// All 404 error responses share the same {error: "not_found", message: "..."} shape.
+#[tokio::test]
+async fn e2e_error_structure_not_found_responses() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Provider not found
+    let resp = client
+        .get(format!("{base}/api/v1/providers/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "provider not found");
+
+    // Status not found
+    let resp = client
+        .get(format!("{base}/api/v1/status/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "status not found");
+
+    // Queue task not found
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "queue task not found");
+
+    // Template not found
+    let resp = client
+        .get(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "template not found");
+
+    // Template delete not found
+    let resp = client
+        .delete(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "template delete not found");
+
+    // Send with nonexistent provider
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "nonexistent", "text": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "send provider not found");
+
+    // Async send with nonexistent provider
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({"provider": "nonexistent", "text": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "not_found", "async send provider not found");
+}
+
+/// 400 Bad Request errors share the same {error: "bad_request", message: "..."} shape.
+#[tokio::test]
+async fn e2e_error_structure_bad_request_responses() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    // Send with missing config (provider validation failure)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "slack", "text": "hello", "config": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "bad_request", "send missing config");
+
+    // Invalid status filter
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=bogus"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "bad_request", "invalid status filter");
+
+    // Template render with missing required var
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({"name": "err-struct-tpl", "body": "{{a}} and {{b}}"}))
+        .send()
+        .await
+        .unwrap();
+    let resp = client
+        .post(format!("{base}/api/v1/templates/err-struct-tpl/render"))
+        .json(&json!({"variables": {"a": "hello"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "bad_request", "template render missing var");
+}
+
+/// 422 Unprocessable Entity (validation) errors include {error, message, fields}.
+#[tokio::test]
+async fn e2e_error_structure_validation_responses() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "", "text": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "validation_failed");
+    assert!(
+        body["message"].is_string(),
+        "validation error should have message"
+    );
+    assert!(
+        body["fields"].is_object(),
+        "validation error should have fields object"
+    );
+}
+
+/// Invalid JSON body returns {error: "invalid_json", message: "..."}.
+#[tokio::test]
+async fn e2e_error_structure_invalid_json_response() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("content-type", "application/json")
+        .body("not valid json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_error_shape(&body, "invalid_json", "invalid json body");
+}
+
+// ───────────────────── Batch async: mixed valid/invalid providers + priorities ─────────────────────
+
+/// Batch-enqueue items with a mix of valid and invalid providers at different priorities.
+/// Verify that invalid providers are rejected per-item (not failing the whole batch),
+/// valid items are enqueued and processed in priority order, and the response counts are correct.
+#[tokio::test]
+async fn e2e_batch_async_mixed_providers_and_priorities() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Mix of valid (mock-ok) and invalid (nonexistent) providers at various priorities.
+    // Valid items: urgent, normal, low — invalid items: high, low
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "nonexistent-a",
+                    "text": "invalid-high",
+                    "priority": "high",
+                    "metadata": {"order": "invalid-high"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "valid-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "valid-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-urgent"}
+                },
+                {
+                    "provider": "nonexistent-b",
+                    "text": "invalid-low",
+                    "priority": "low",
+                    "metadata": {"order": "invalid-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "valid-normal",
+                    "priority": "normal",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-normal"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 5);
+    assert_eq!(body["enqueued"], 3);
+    assert_eq!(body["failed"], 2);
+
+    // Verify per-item results
+    let results = body["results"].as_array().unwrap();
+    // index 0: invalid
+    assert!(!results[0]["success"].as_bool().unwrap());
+    assert_eq!(results[0]["provider"], "nonexistent-a");
+    assert!(results[0]["error"].as_str().unwrap().contains("not found"));
+    // index 1: valid
+    assert!(results[1]["success"].as_bool().unwrap());
+    assert!(results[1]["task_id"].is_string());
+    // index 2: valid
+    assert!(results[2]["success"].as_bool().unwrap());
+    // index 3: invalid
+    assert!(!results[3]["success"].as_bool().unwrap());
+    assert_eq!(results[3]["provider"], "nonexistent-b");
+    // index 4: valid
+    assert!(results[4]["success"].as_bool().unwrap());
+
+    // Collect task IDs of successfully enqueued items
+    let task_ids: Vec<String> = results
+        .iter()
+        .filter(|r| r["success"].as_bool().unwrap_or(false))
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(task_ids.len(), 3);
+
+    // Start a single worker AFTER enqueue to ensure strict priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all valid tasks to complete
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callback order: urgent → normal → low (only valid items)
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 3,
+            "expected at least 3 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["valid-urgent", "valid-normal", "valid-low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Same as above but using SQLite queue backend.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
+    let task_notify = queue.notifier();
+    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Same mix: valid (mock-ok) and invalid (nonexistent) at various priorities
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-valid-high",
+                    "priority": "high",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-high"}
+                },
+                {
+                    "provider": "nonexistent-x",
+                    "text": "sqlite-invalid-urgent",
+                    "priority": "urgent",
+                    "metadata": {"order": "invalid-urgent"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-valid-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-valid-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "valid-urgent"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["enqueued"], 3);
+    assert_eq!(body["failed"], 1);
+
+    // Verify the failed item
+    let results = body["results"].as_array().unwrap();
+    assert!(results[0]["success"].as_bool().unwrap()); // valid-high
+    assert!(!results[1]["success"].as_bool().unwrap()); // invalid-urgent
+    assert!(results[2]["success"].as_bool().unwrap()); // valid-low
+    assert!(results[3]["success"].as_bool().unwrap()); // valid-urgent
+
+    // Collect valid task IDs
+    let task_ids: Vec<String> = results
+        .iter()
+        .filter(|r| r["success"].as_bool().unwrap_or(false))
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(task_ids.len(), 3);
+
+    // Start single worker after enqueue for strict priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callback order: urgent → high → low (only valid items, priority-sorted)
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 3,
+            "SQLite: expected at least 3 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["valid-urgent", "valid-high", "valid-low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "SQLite: callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Batch async with ALL invalid providers — verify 202 response with all items failed.
+#[tokio::test]
+async fn e2e_batch_async_all_invalid_providers_returns_202() {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {"provider": "bad-1", "text": "a", "priority": "urgent"},
+                {"provider": "bad-2", "text": "b", "priority": "high"},
+                {"provider": "bad-3", "text": "c", "priority": "low"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Still 202 even though all items failed — partial success model
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["enqueued"], 0);
+    assert_eq!(body["failed"], 3);
+
+    let results = body["results"].as_array().unwrap();
+    for (i, result) in results.iter().enumerate() {
+        assert!(
+            !result["success"].as_bool().unwrap(),
+            "item {i} should fail"
+        );
+        assert!(
+            result["error"].as_str().unwrap().contains("not found"),
+            "item {i} error should mention 'not found'"
+        );
+        assert!(
+            result["task_id"].is_null(),
+            "item {i} should have no task_id"
+        );
+    }
+}
+
+// ───────────────────── Batch async with MockFailProvider (always-failing valid provider) ─────────────────────
+
+/// Batch-enqueue items where some use `mock-fail` (a registered provider that always errors at send time).
+/// Unlike invalid/nonexistent providers which fail at enqueue time, `mock-fail` items are successfully
+/// enqueued but fail during worker processing. Verify that:
+/// 1. All items with registered providers (mock-ok and mock-fail) are enqueued successfully.
+/// 2. Items with nonexistent providers fail at enqueue time (same partial-success model).
+/// 3. mock-fail tasks reach `failed` status after worker processing.
+/// 4. mock-ok tasks reach `completed` status.
+/// 5. Callback order respects priority (urgent before normal before low).
+#[tokio::test]
+async fn e2e_batch_async_mock_fail_provider_with_priorities() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    // Use the serial helper which already registers MockOkProvider + MockFailProvider
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Batch: mix of mock-ok (always succeeds) and mock-fail (always fails at send time)
+    // mock-fail items are valid providers — they should be enqueued successfully but fail during processing.
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-fail",
+                    "text": "fail-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "fail-urgent"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "ok-normal",
+                    "priority": "normal",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "ok-normal"}
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "fail-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "fail-low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "ok-high",
+                    "priority": "high",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "ok-high"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // All 4 items use registered providers — all should be enqueued
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["enqueued"], 4, "all items use registered providers");
+    assert_eq!(body["failed"], 0, "no enqueue-time failures");
+
+    let results = body["results"].as_array().unwrap();
+    let task_ids: Vec<String> = results
+        .iter()
+        .map(|r| {
+            assert!(
+                r["success"].as_bool().unwrap(),
+                "all items should succeed at enqueue"
+            );
+            r["task_id"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(task_ids.len(), 4);
+
+    // Wait for all tasks to reach terminal state
+    let mut statuses = Vec::new();
+    for task_id in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        statuses.push((
+            task["metadata"]["order"].as_str().unwrap().to_string(),
+            task["status"].as_str().unwrap().to_string(),
+        ));
+    }
+
+    // Verify mock-fail tasks failed, mock-ok tasks completed
+    for (order, status) in &statuses {
+        if order.starts_with("fail-") {
+            assert_eq!(status, "failed", "{order} should have failed status");
+        } else {
+            assert_eq!(status, "completed", "{order} should have completed status");
+        }
+    }
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callbacks arrived in priority order: urgent → high → normal → low
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 4,
+            "expected at least 4 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["fail-urgent", "ok-high", "ok-normal", "fail-low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Same test as above but using SQLite queue backend.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_mock_fail_provider_with_priorities() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![]).await;
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-ok-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "ok-low"}
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "sqlite-fail-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "fail-urgent"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-ok-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "ok-urgent"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["enqueued"], 3);
+    assert_eq!(body["failed"], 0);
+
+    let results = body["results"].as_array().unwrap();
+    let task_ids: Vec<String> = results
+        .iter()
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    // Wait for terminal states
+    let mut statuses = Vec::new();
+    for task_id in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        statuses.push((
+            task["metadata"]["order"].as_str().unwrap().to_string(),
+            task["status"].as_str().unwrap().to_string(),
+        ));
+    }
+
+    // mock-fail should fail, mock-ok should complete
+    for (order, status) in &statuses {
+        if order.starts_with("fail-") {
+            assert_eq!(
+                status, "failed",
+                "SQLite: {order} should have failed status"
+            );
+        } else {
+            assert_eq!(
+                status, "completed",
+                "SQLite: {order} should have completed status"
+            );
+        }
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Callback order: urgent tasks first (fail-urgent, ok-urgent in enqueue order), then low
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 3,
+            "SQLite: expected at least 3 callbacks, got {}",
+            received.len()
+        );
+
+        // Both urgent tasks should come before the low task
+        let last_order = received[2]["metadata"]["order"].as_str().unwrap();
+        assert_eq!(
+            last_order, "ok-low",
+            "SQLite: last callback should be the low-priority task"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Batch with mixed mock-ok, mock-fail, and nonexistent providers — verify that
+/// nonexistent providers fail at enqueue time while mock-fail fails at processing time.
+#[tokio::test]
+async fn e2e_batch_async_mock_fail_mixed_with_nonexistent() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-fail",
+                    "text": "fail-at-send",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "fail-at-send"}
+                },
+                {
+                    "provider": "nonexistent",
+                    "text": "fail-at-enqueue",
+                    "priority": "urgent",
+                    "metadata": {"order": "fail-at-enqueue"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "succeeds",
+                    "priority": "normal",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "succeeds"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["enqueued"], 2, "mock-fail + mock-ok enqueued");
+    assert_eq!(body["failed"], 1, "nonexistent fails at enqueue");
+
+    let results = body["results"].as_array().unwrap();
+    // index 0: mock-fail — enqueued
+    assert!(results[0]["success"].as_bool().unwrap());
+    assert!(results[0]["task_id"].is_string());
+    // index 1: nonexistent — failed at enqueue
+    assert!(!results[1]["success"].as_bool().unwrap());
+    assert!(results[1]["error"].as_str().unwrap().contains("not found"));
+    assert!(results[1]["task_id"].is_null());
+    // index 2: mock-ok — enqueued
+    assert!(results[2]["success"].as_bool().unwrap());
+    assert!(results[2]["task_id"].is_string());
+
+    // Collect enqueued task IDs
+    let enqueued_ids: Vec<String> = results
+        .iter()
+        .filter(|r| r["success"].as_bool().unwrap_or(false))
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(enqueued_ids.len(), 2);
+
+    // Wait for terminal states
+    let fail_task = wait_for_terminal_status(&client, &base, &enqueued_ids[0]).await;
+    let ok_task = wait_for_terminal_status(&client, &base, &enqueued_ids[1]).await;
+
+    assert_eq!(fail_task["status"].as_str().unwrap(), "failed");
+    assert_eq!(ok_task["status"].as_str().unwrap(), "completed");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callbacks: urgent (mock-fail) first, then normal (mock-ok)
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 2,
+            "expected at least 2 callbacks, got {}",
+            received.len()
+        );
+        assert_eq!(
+            received[0]["metadata"]["order"].as_str().unwrap(),
+            "fail-at-send"
+        );
+        assert_eq!(
+            received[1]["metadata"]["order"].as_str().unwrap(),
+            "succeeds"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Concurrent batch async requests ─────────────────────
+
+/// Fire multiple batch async requests concurrently and verify all are accepted
+/// and all tasks eventually reach terminal states.
+#[tokio::test]
+async fn e2e_concurrent_batch_async_requests_all_accepted() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Fire 5 concurrent batch requests, each with 2 items
+    let mut handles = Vec::new();
+    for batch_idx in 0..5u32 {
+        let client = client.clone();
+        let base = base.clone();
+        let callback_url = callback_url.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = client
+                .post(format!("{base}/api/v1/send/async/batch"))
+                .json(&json!({
+                    "items": [
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("batch-{batch_idx}-item-0"),
+                            "priority": "normal",
+                            "callback_url": &callback_url,
+                            "metadata": {"batch": format!("{batch_idx}"), "item": "0"}
+                        },
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("batch-{batch_idx}-item-1"),
+                            "priority": "normal",
+                            "callback_url": &callback_url,
+                            "metadata": {"batch": format!("{batch_idx}"), "item": "1"}
+                        }
+                    ]
+                }))
+                .send()
+                .await
+                .unwrap();
+            let status = resp.status();
+            let body: Value = resp.json().await.unwrap();
+            (status, body)
+        }));
+    }
+
+    // Collect all responses
+    let mut all_task_ids = Vec::new();
+    for handle in handles {
+        let (status, body) = handle.await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::ACCEPTED,
+            "all batch requests should return 202"
+        );
+        assert_eq!(body["total"], 2);
+        assert_eq!(body["enqueued"], 2);
+        assert_eq!(body["failed"], 0);
+
+        let results = body["results"].as_array().unwrap();
+        for r in results {
+            all_task_ids.push(r["task_id"].as_str().unwrap().to_string());
+        }
+    }
+
+    assert_eq!(all_task_ids.len(), 10, "5 batches × 2 items = 10 tasks");
+
+    // Wait for all tasks to reach terminal state
+    for task_id in &all_task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        assert_eq!(
+            task["status"].as_str().unwrap(),
+            "completed",
+            "task {task_id} should complete"
+        );
+    }
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify all 10 callbacks arrived
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            10,
+            "expected 10 callbacks, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Concurrent batch requests with a mix of mock-ok and mock-fail providers.
+/// Verify all batches are accepted and tasks end in correct terminal states.
+#[tokio::test]
+async fn e2e_concurrent_batch_async_with_mixed_providers() {
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
+
+    let client = reqwest::Client::new();
+
+    // Fire 3 concurrent batches: each has 1 mock-ok and 1 mock-fail item
+    let mut handles = Vec::new();
+    for batch_idx in 0..3u32 {
+        let client = client.clone();
+        let base = base.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = client
+                .post(format!("{base}/api/v1/send/async/batch"))
+                .json(&json!({
+                    "items": [
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("batch-{batch_idx}-ok"),
+                            "metadata": {"batch": format!("{batch_idx}"), "provider": "ok"}
+                        },
+                        {
+                            "provider": "mock-fail",
+                            "text": format!("batch-{batch_idx}-fail"),
+                            "metadata": {"batch": format!("{batch_idx}"), "provider": "fail"}
+                        }
+                    ]
+                }))
+                .send()
+                .await
+                .unwrap();
+            let status = resp.status();
+            let body: Value = resp.json().await.unwrap();
+            (status, body)
+        }));
+    }
+
+    let mut ok_task_ids = Vec::new();
+    let mut fail_task_ids = Vec::new();
+
+    for handle in handles {
+        let (status, body) = handle.await.unwrap();
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["enqueued"], 2, "both providers are registered");
+
+        let results = body["results"].as_array().unwrap();
+        // First item is mock-ok, second is mock-fail
+        ok_task_ids.push(results[0]["task_id"].as_str().unwrap().to_string());
+        fail_task_ids.push(results[1]["task_id"].as_str().unwrap().to_string());
+    }
+
+    // Wait for all tasks
+    for task_id in &ok_task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        assert_eq!(task["status"].as_str().unwrap(), "completed");
+    }
+    for task_id in &fail_task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        assert_eq!(task["status"].as_str().unwrap(), "failed");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Concurrent batch requests with SQLite backend — ensure no database contention issues.
+#[tokio::test]
+async fn e2e_sqlite_concurrent_batch_async_requests() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![]).await;
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Fire 4 concurrent batch requests, each with 3 items
+    let mut handles = Vec::new();
+    for batch_idx in 0..4u32 {
+        let client = client.clone();
+        let base = base.clone();
+        let callback_url = callback_url.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = client
+                .post(format!("{base}/api/v1/send/async/batch"))
+                .json(&json!({
+                    "items": [
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("sqlite-b{batch_idx}-0"),
+                            "priority": "high",
+                            "callback_url": &callback_url,
+                            "metadata": {"batch": format!("{batch_idx}"), "item": "0"}
+                        },
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("sqlite-b{batch_idx}-1"),
+                            "priority": "normal",
+                            "callback_url": &callback_url,
+                            "metadata": {"batch": format!("{batch_idx}"), "item": "1"}
+                        },
+                        {
+                            "provider": "mock-fail",
+                            "text": format!("sqlite-b{batch_idx}-fail"),
+                            "priority": "low",
+                            "callback_url": &callback_url,
+                            "metadata": {"batch": format!("{batch_idx}"), "item": "fail"}
+                        }
+                    ]
+                }))
+                .send()
+                .await
+                .unwrap();
+            let status = resp.status();
+            let body: Value = resp.json().await.unwrap();
+            (status, body)
+        }));
+    }
+
+    let mut all_task_ids = Vec::new();
+    for handle in handles {
+        let (status, body) = handle.await.unwrap();
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(body["total"], 3);
+        assert_eq!(body["enqueued"], 3, "all providers are registered");
+        assert_eq!(body["failed"], 0);
+
+        let results = body["results"].as_array().unwrap();
+        for r in results {
+            all_task_ids.push(r["task_id"].as_str().unwrap().to_string());
+        }
+    }
+
+    assert_eq!(all_task_ids.len(), 12, "4 batches × 3 items = 12 tasks");
+
+    // Wait for all tasks to reach terminal state
+    let mut completed = 0;
+    let mut failed = 0;
+    for task_id in &all_task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        match task["status"].as_str().unwrap() {
+            "completed" => completed += 1,
+            "failed" => failed += 1,
+            other => panic!("unexpected status: {other}"),
+        }
+    }
+
+    // 4 batches × 2 mock-ok = 8 completed, 4 batches × 1 mock-fail = 4 failed
+    assert_eq!(completed, 8, "expected 8 completed tasks");
+    assert_eq!(failed, 4, "expected 4 failed tasks");
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // All 12 tasks should have generated callbacks
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            12,
+            "SQLite: expected 12 callbacks, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Batch async with retry policies (mock-flaky + retry config) ─────────────────────
+
+/// Batch-enqueue items where some use `mock-flaky` (fails first N calls then succeeds).
+/// With retry policy configured, flaky tasks should eventually succeed.
+#[tokio::test]
+async fn e2e_batch_async_flaky_with_retry_succeeds() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "flaky retry batch item 1",
+                    "retry": {"max_retries": 3, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "high"
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "reliable batch item",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "normal"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+    assert_eq!(body["failed"], 0);
+
+    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
+    assert_eq!(
+        task_flaky["status"], "completed",
+        "flaky task should succeed after retries"
+    );
+    assert!(
+        task_flaky["attempts"].as_u64().unwrap() >= 3,
+        "flaky task should have taken multiple attempts"
+    );
+
+    assert_eq!(task_ok["status"], "completed");
+    assert_eq!(task_ok["attempts"].as_u64().unwrap(), 1);
+
+    // Both callbacks should arrive
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "expected 2 callbacks, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Batch-enqueue items where flaky provider has too few retries configured —
+/// the task should fail after exhausting retries, while mock-ok still succeeds.
+#[tokio::test]
+async fn e2e_batch_async_flaky_retry_exhausted_fails() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    // MockFlakyProvider fails first 5 calls — with max_retries=1, only 2 total attempts → fails
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "flaky exhaustion batch",
+                    "retry": {"max_retries": 1, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "urgent"
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "reliable batch item",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "low"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+
+    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
+    assert_eq!(
+        task_flaky["status"], "failed",
+        "flaky task should fail after exhausting retries"
+    );
+    assert!(
+        task_flaky["attempts"].as_u64().unwrap() >= 2,
+        "flaky task should have attempted at least 2 times"
+    );
+
+    assert_eq!(task_ok["status"], "completed");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "expected 2 callbacks, got {}",
+            received.len()
+        );
+
+        // Verify the flaky callback reports failure
+        let flaky_cb = received
+            .iter()
+            .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
+            .expect("should find flaky task callback");
+        assert_eq!(flaky_cb["status"], "failed");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Batch with mixed retry policies: flaky with sufficient retries, mock-fail with zero retries,
+/// mock-ok with no retries, mock-fail with retries. Verifies each task gets its own retry behavior.
+#[tokio::test]
+async fn e2e_batch_async_mixed_retry_policies() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "flaky with enough retries",
+                    "retry": {"max_retries": 5, "delay_ms": 10},
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "always fails with zero retries",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "always succeeds",
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "always fails with retries",
+                    "retry": {"max_retries": 2, "delay_ms": 10},
+                    "callback_url": &callback_url
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 4);
+    assert_eq!(body["failed"], 0);
+
+    let task_ids: Vec<String> = (0..4)
+        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    // Wait for all tasks to reach terminal state
+    let mut terminal_statuses = Vec::new();
+    for tid in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, tid).await;
+        terminal_statuses.push(task);
+    }
+
+    // Item 0: mock-flaky with 5 retries → should succeed (fails 2, succeeds on 3rd)
+    assert_eq!(
+        terminal_statuses[0]["status"], "completed",
+        "flaky with enough retries should complete"
+    );
+
+    // Item 1: mock-fail with 0 retries → should fail immediately (1 attempt only)
+    assert_eq!(
+        terminal_statuses[1]["status"], "failed",
+        "mock-fail with zero retries should fail"
+    );
+    assert_eq!(
+        terminal_statuses[1]["attempts"].as_u64().unwrap(),
+        1,
+        "zero-retry mock-fail should only try once"
+    );
+
+    // Item 2: mock-ok → always succeeds on first try
+    assert_eq!(terminal_statuses[2]["status"], "completed");
+    assert_eq!(terminal_statuses[2]["attempts"].as_u64().unwrap(), 1);
+
+    // Item 3: mock-fail with 2 retries → should fail after 3 attempts (1 + 2 retries)
+    assert_eq!(
+        terminal_statuses[3]["status"], "failed",
+        "mock-fail with retries should still fail"
+    );
+    assert!(
+        terminal_statuses[3]["attempts"].as_u64().unwrap() >= 3,
+        "mock-fail should exhaust all retries"
+    );
+
+    // All 4 callbacks should arrive
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            4,
+            "expected 4 callbacks, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Concurrent batch async with rate limiting ─────────────────────
+
+/// Send multiple concurrent batch requests with rate limiting enabled.
+/// Some requests should be accepted and some rejected per rate limit quota.
+#[tokio::test]
+async fn e2e_concurrent_batch_async_with_rate_limit_partial_reject() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
+    let (base, worker_handle, _max_requests) =
+        spawn_server_with_workers_and_rate_limit(vec![], 3, 60).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let client = client.clone();
+        let base = base.clone();
+        let cb_url = callback_url.clone();
+        handles.push(tokio::spawn(async move {
+            let resp = client
+                .post(format!("{base}/api/v1/send/async/batch"))
+                .json(&json!({
+                    "items": [
+                        {
+                            "provider": "mock-ok",
+                            "text": format!("rate-limited batch item {i}"),
+                            "callback_url": &cb_url,
+                        }
+                    ]
+                }))
+                .send()
+                .await
+                .unwrap();
+            resp.status()
+        }));
+    }
+
+    let mut accepted = 0u32;
+    let mut rate_limited = 0u32;
+    for handle in handles {
+        let status = handle.await.unwrap();
+        match status {
+            StatusCode::ACCEPTED => accepted += 1,
+            StatusCode::TOO_MANY_REQUESTS => rate_limited += 1,
+            other => panic!("unexpected status: {other}"),
+        }
+    }
+
+    // At most 3 should be accepted (rate limit), at least 2 should be rejected
+    assert!(
+        accepted <= 3,
+        "at most 3 requests should pass rate limit, got {accepted}"
+    );
+    assert!(
+        rate_limited >= 2,
+        "at least 2 requests should be rate limited, got {rate_limited}"
+    );
+
+    // Wait for accepted tasks to complete
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len() as u32,
+            accepted,
+            "callbacks should match accepted count: expected {accepted}, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Rate limited server: a single batch request within quota should succeed normally.
+#[tokio::test]
+async fn e2e_batch_async_within_rate_limit_succeeds() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle, _max) =
+        spawn_server_with_workers_and_rate_limit(vec![], 10, 60).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "rate limited batch 1",
+                    "callback_url": &callback_url,
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "rate limited batch 2",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+    assert_eq!(body["failed"], 0);
+
+    // Verify rate limit headers are present on a separate request
+    let health_resp = client.get(format!("{base}/health")).send().await.unwrap();
+    assert!(health_resp.headers().contains_key("x-ratelimit-limit"));
+
+    let task_ids: Vec<String> = (0..2)
+        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    for tid in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, tid).await;
+        assert_eq!(task["status"], "completed");
+    }
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(received.len(), 2);
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// Rate limit exhausted mid-sequence: first batch goes through, second batch gets 429.
+#[tokio::test]
+async fn e2e_sequential_batch_async_rate_limit_exhaustion() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    // Only 2 requests allowed per 60s
+    let (base, worker_handle, _max) = spawn_server_with_workers_and_rate_limit(vec![], 2, 60).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // First batch — should succeed (request 1)
+    let resp1 = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "first batch",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::ACCEPTED);
+
+    // Second batch — should succeed (request 2)
+    let resp2 = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "second batch",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::ACCEPTED);
+
+    // Third batch — should be rate limited (request 3 > quota 2)
+    let resp3 = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "third batch - should be rejected",
+                    "callback_url": &callback_url,
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp3.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "third request should be rate limited"
+    );
+    let body_429: Value = resp3.json().await.unwrap();
+    assert_eq!(body_429["error"], "rate limit exceeded");
+
+    // Wait for the 2 accepted tasks to complete
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "only 2 accepted tasks should produce callbacks"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── SQLite batch async retry policy tests ─────────────────────
+
+/// SQLite mirror of `e2e_batch_async_flaky_with_retry_succeeds`.
+/// Batch-enqueue items where some use `mock-flaky` on SQLite queue backend.
+/// With retry policy configured, flaky tasks should eventually succeed.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_flaky_with_retry_succeeds() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "sqlite flaky retry batch item 1",
+                    "retry": {"max_retries": 3, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "high"
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite reliable batch item",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "normal"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+    assert_eq!(body["failed"], 0);
+
+    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
+    assert_eq!(
+        task_flaky["status"], "completed",
+        "SQLite: flaky task should succeed after retries"
+    );
+    assert!(
+        task_flaky["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: flaky task should have taken multiple attempts"
+    );
+
+    assert_eq!(task_ok["status"], "completed");
+    assert_eq!(task_ok["attempts"].as_u64().unwrap(), 1);
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "SQLite: expected 2 callbacks, got {}",
+            received.len()
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// SQLite mirror of `e2e_batch_async_flaky_retry_exhausted_fails`.
+/// Batch-enqueue items where flaky provider has too few retries configured on SQLite backend —
+/// the task should fail after exhausting retries, while mock-ok still succeeds.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_flaky_retry_exhausted_fails() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "sqlite flaky exhaustion batch",
+                    "retry": {"max_retries": 1, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "urgent"
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite reliable batch item",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url,
+                    "priority": "low"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 2);
+
+    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
+    assert_eq!(
+        task_flaky["status"], "failed",
+        "SQLite: flaky task should fail after exhausting retries"
+    );
+    assert!(
+        task_flaky["attempts"].as_u64().unwrap() >= 2,
+        "SQLite: flaky task should have attempted at least 2 times"
+    );
+
+    assert_eq!(task_ok["status"], "completed");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "SQLite: expected 2 callbacks, got {}",
+            received.len()
+        );
+
+        let flaky_cb = received
+            .iter()
+            .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
+            .expect("SQLite: should find flaky task callback");
+        assert_eq!(flaky_cb["status"], "failed");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+/// SQLite mirror of `e2e_batch_async_mixed_retry_policies`.
+/// Batch with mixed retry policies on SQLite backend: flaky with sufficient retries,
+/// mock-fail with zero retries, mock-ok with no retries, mock-fail with retries.
+#[tokio::test]
+async fn e2e_sqlite_batch_async_mixed_retry_policies() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-flaky",
+                    "text": "sqlite flaky with enough retries",
+                    "retry": {"max_retries": 5, "delay_ms": 10},
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "sqlite always fails with zero retries",
+                    "retry": {"max_retries": 0, "delay_ms": 10},
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite always succeeds",
+                    "callback_url": &callback_url
+                },
+                {
+                    "provider": "mock-fail",
+                    "text": "sqlite always fails with retries",
+                    "retry": {"max_retries": 2, "delay_ms": 10},
+                    "callback_url": &callback_url
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["enqueued"], 4);
+    assert_eq!(body["failed"], 0);
+
+    let task_ids: Vec<String> = (0..4)
+        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    let mut terminal_statuses = Vec::new();
+    for tid in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, tid).await;
+        terminal_statuses.push(task);
+    }
+
+    assert_eq!(
+        terminal_statuses[0]["status"], "completed",
+        "SQLite: flaky with enough retries should complete"
+    );
+
+    assert_eq!(
+        terminal_statuses[1]["status"], "failed",
+        "SQLite: mock-fail with zero retries should fail"
+    );
+    assert_eq!(
+        terminal_statuses[1]["attempts"].as_u64().unwrap(),
+        1,
+        "SQLite: zero-retry mock-fail should only try once"
+    );
+
+    assert_eq!(terminal_statuses[2]["status"], "completed");
+    assert_eq!(terminal_statuses[2]["attempts"].as_u64().unwrap(), 1);
+
+    assert_eq!(
+        terminal_statuses[3]["status"], "failed",
+        "SQLite: mock-fail with retries should still fail"
+    );
+    assert!(
+        terminal_statuses[3]["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: mock-fail should exhaust all retries"
+    );
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    {
+        let received = payloads.lock().unwrap();
+        assert_eq!(
+            received.len(),
+            4,
+            "SQLite: expected 4 callbacks, got {}",
+            received.len()
+        );
+    }
 
     worker_handle.shutdown_and_join().await;
 }
