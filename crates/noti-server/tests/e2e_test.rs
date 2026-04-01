@@ -2845,3 +2845,235 @@ async fn e2e_sqlite_task_metadata_preserved() {
 
     worker_handle.shutdown_and_join().await;
 }
+
+// ───────────────────── Batch async with mixed priorities (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_batch_async_mixed_priorities_processed_in_order() {
+    // Batch-enqueue 4 tasks with different priorities via the async batch endpoint.
+    // Use a single worker to ensure strict priority-ordered processing.
+    // Verify via callback order that urgent is processed first, then high, normal, low.
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Batch-enqueue: low, normal, high, urgent — all in one request
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "batch-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "batch-normal",
+                    "priority": "normal",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "normal"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "batch-high",
+                    "priority": "high",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "high"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "batch-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "urgent"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["enqueued"], 4);
+    assert_eq!(body["failed"], 0);
+
+    // Collect all task IDs
+    let results = body["results"].as_array().unwrap();
+    let task_ids: Vec<String> = results
+        .iter()
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    // NOW start a single worker so tasks are processed in strict priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all tasks to complete
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callback order: urgent → high → normal → low
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 4,
+            "expected at least 4 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["urgent", "high", "normal", "low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
+    // Same as above but using SQLite queue backend.
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
+    let task_notify = queue.notifier();
+    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Batch-enqueue: low, normal, high, urgent — all in one request
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-batch-low",
+                    "priority": "low",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "low"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-batch-normal",
+                    "priority": "normal",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "normal"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-batch-high",
+                    "priority": "high",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "high"}
+                },
+                {
+                    "provider": "mock-ok",
+                    "text": "sqlite-batch-urgent",
+                    "priority": "urgent",
+                    "callback_url": &callback_url,
+                    "metadata": {"order": "urgent"}
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["enqueued"], 4);
+    assert_eq!(body["failed"], 0);
+
+    // Collect all task IDs
+    let results = body["results"].as_array().unwrap();
+    let task_ids: Vec<String> = results
+        .iter()
+        .map(|r| r["task_id"].as_str().unwrap().to_string())
+        .collect();
+
+    // NOW start a single worker so tasks are processed in strict priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all tasks to complete
+    for task_id in &task_ids {
+        wait_for_terminal_status(&client, &base, task_id).await;
+    }
+
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Verify callback order: urgent → high → normal → low
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 4,
+            "SQLite: expected at least 4 callbacks, got {}",
+            received.len()
+        );
+
+        let expected_order = ["urgent", "high", "normal", "low"];
+        for (i, expected) in expected_order.iter().enumerate() {
+            assert_eq!(
+                received[i]["metadata"]["order"].as_str().unwrap(),
+                *expected,
+                "SQLite: callback #{i} should be '{expected}', got '{}'",
+                received[i]["metadata"]["order"]
+            );
+        }
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
