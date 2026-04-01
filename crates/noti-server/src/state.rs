@@ -79,6 +79,25 @@ impl AppState {
         })
     }
 
+    /// Create state with a caller-provided queue backend and notifier.
+    ///
+    /// Useful in tests where you want full control over the queue implementation
+    /// (e.g. an in-memory SQLite queue for isolation without file I/O).
+    pub fn with_custom_queue(
+        registry: ProviderRegistry,
+        queue: Arc<dyn QueueBackend>,
+        task_notify: Arc<Notify>,
+    ) -> Self {
+        Self {
+            registry: Arc::new(registry),
+            status_tracker: StatusTracker::new(),
+            template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
+            queue,
+            task_notify,
+            started_at: SystemTime::now(),
+        }
+    }
+
     /// Start background worker pool for async task processing.
     ///
     /// Returns a handle that must be kept alive; dropping it does not shut down

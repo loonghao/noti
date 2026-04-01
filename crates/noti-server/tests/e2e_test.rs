@@ -13,8 +13,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    MockFlakyProvider, MockOkProvider, spawn_callback_server, spawn_server, spawn_server_with_auth,
-    spawn_server_with_body_limit, spawn_server_with_cors_permissive,
+    MockFlakyProvider, MockOkProvider, spawn_callback_server, spawn_server, spawn_server_sqlite,
+    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
+    spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
     spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_serial,
@@ -2364,4 +2365,483 @@ async fn e2e_per_ip_rate_limit_multiple_ips_in_x_forwarded_for() {
         StatusCode::OK,
         "different first IP in chain should have its own bucket"
     );
+}
+
+// ───────────────────── SQLite queue backend (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_sqlite_health_check() {
+    let base = spawn_server_sqlite().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn e2e_sqlite_async_send_query_cancel_purge() {
+    let base = spawn_server_sqlite().await;
+    let client = reqwest::Client::new();
+
+    // Enqueue
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "slack",
+            "text": "sqlite e2e test",
+            "config": {
+                "webhook_url": "https://hooks.slack.com/services/T00/B00/sqlite"
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "queued");
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    // Get task
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["id"], task_id);
+    assert_eq!(body["provider"], "slack");
+
+    // Queue stats
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["total"].as_u64().unwrap() >= 1);
+
+    // Cancel task
+    let resp = client
+        .post(format!("{base}/api/v1/queue/tasks/{task_id}/cancel"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["cancelled"].as_bool().unwrap());
+
+    // Purge
+    let resp = client
+        .post(format!("{base}/api/v1/queue/purge"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["purged"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn e2e_sqlite_worker_processes_task_to_completion() {
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "sqlite worker e2e test"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(
+        task["status"], "completed",
+        "task should be completed by worker (SQLite backend)"
+    );
+    assert_eq!(task["provider"], "mock-ok");
+
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= 1);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_worker_handles_failed_task() {
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "sqlite worker failure test",
+            "retry": {"max_retries": 0, "delay_ms": 10}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(
+        task["status"], "failed",
+        "task should be failed by worker (SQLite backend)"
+    );
+    assert!(
+        task["last_error"].is_string(),
+        "failed task should have an error message"
+    );
+
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["failed"].as_u64().unwrap() >= 1);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_webhook_callback_on_success() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "sqlite callback success test",
+            "callback_url": callback_url,
+            "metadata": {"trace_id": "sqlite-callback-ok"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "completed");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "callback server should have received at least one payload (SQLite backend)"
+        );
+
+        let cb = &received[0];
+        assert_eq!(cb["task_id"], task_id);
+        assert_eq!(cb["provider"], "mock-ok");
+        assert_eq!(cb["status"], "completed");
+        assert_eq!(cb["metadata"]["trace_id"], "sqlite-callback-ok");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_priority_ordering_urgent_before_low() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+
+    // Create AppState with SQLite queue but NO workers yet
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
+    let task_notify = queue.notifier();
+    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue: low first, then urgent — SQLite should dequeue urgent first
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "low-priority-task",
+            "priority": "low",
+            "callback_url": &callback_url,
+            "metadata": {"order": "low"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let low_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "urgent-priority-task",
+            "priority": "urgent",
+            "callback_url": &callback_url,
+            "metadata": {"order": "urgent"}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let urgent_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // NOW start a single worker so tasks are processed in priority order
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for both tasks
+    wait_for_terminal_status(&client, &base, &low_id).await;
+    wait_for_terminal_status(&client, &base, &urgent_id).await;
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 2,
+            "expected at least 2 callbacks (SQLite), got {}",
+            received.len()
+        );
+
+        assert_eq!(
+            received[0]["metadata"]["order"], "urgent",
+            "SQLite: urgent task should be processed first, but got: {:?}",
+            received[0]["metadata"]["order"]
+        );
+        assert_eq!(
+            received[1]["metadata"]["order"], "low",
+            "SQLite: low task should be processed second"
+        );
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_retry_task_eventually_succeeds() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "sqlite retry success test",
+            "retry": {"max_retries": 3, "delay_ms": 10},
+            "callback_url": &callback_url,
+            "metadata": {"test": "sqlite-retry-success"}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(
+        task["status"], "completed",
+        "SQLite: flaky task should eventually succeed after retries"
+    );
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "callback should be received for completed task (SQLite)"
+        );
+        assert_eq!(received[0]["status"], "completed");
+        assert_eq!(received[0]["metadata"]["test"], "sqlite-retry-success");
+    }
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_multiple_tasks_processed() {
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let mut task_ids = Vec::new();
+
+    for i in 0..5 {
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": format!("sqlite batch test {i}")
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        task_ids.push(body["task_id"].as_str().unwrap().to_string());
+    }
+
+    for task_id in &task_ids {
+        let task = wait_for_terminal_status(&client, &base, task_id).await;
+        assert_eq!(
+            task["status"], "completed",
+            "SQLite: task {task_id} should be completed"
+        );
+    }
+
+    let resp = client
+        .get(format!("{base}/api/v1/queue/stats"))
+        .send()
+        .await
+        .unwrap();
+    let stats: Value = resp.json().await.unwrap();
+    assert!(stats["completed"].as_u64().unwrap() >= 5);
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_batch_async_send() {
+    let base = spawn_server_sqlite().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async/batch"))
+        .json(&json!({
+            "items": [
+                {
+                    "provider": "slack",
+                    "text": "sqlite batch item 1",
+                    "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/sbatch1"}
+                },
+                {
+                    "provider": "nonexistent",
+                    "text": "sqlite batch item 2"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 2);
+    assert_eq!(body["enqueued"], 1);
+    assert_eq!(body["failed"], 1);
+}
+
+#[tokio::test]
+async fn e2e_sqlite_task_metadata_preserved() {
+    let (callback_base, payloads) = spawn_callback_server().await;
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = reqwest::Client::new();
+
+    let callback_url = format!("{callback_base}/callback");
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-ok",
+            "text": "sqlite metadata test",
+            "callback_url": callback_url,
+            "metadata": {
+                "request_id": "sqlite-req-123",
+                "source": "sqlite-e2e",
+                "env": "test"
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let body: Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    assert_eq!(task["status"], "completed");
+
+    // Verify metadata is preserved through SQLite serialization roundtrip
+    assert_eq!(task["metadata"]["request_id"], "sqlite-req-123");
+    assert_eq!(task["metadata"]["source"], "sqlite-e2e");
+    assert_eq!(task["metadata"]["env"], "test");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    {
+        let received = payloads.lock().unwrap();
+        assert!(!received.is_empty());
+        let cb = &received[0];
+        assert_eq!(cb["metadata"]["request_id"], "sqlite-req-123");
+        assert_eq!(cb["metadata"]["source"], "sqlite-e2e");
+    }
+
+    worker_handle.shutdown_and_join().await;
 }

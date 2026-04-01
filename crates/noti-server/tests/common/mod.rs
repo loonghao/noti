@@ -247,6 +247,68 @@ pub async fn spawn_server_with_workers_serial(
     (base, worker_handle)
 }
 
+// ───────────────────── SQLite queue backend helpers ─────────────────────
+
+/// Create an `AppState` backed by an in-memory SQLite queue (no file I/O).
+fn sqlite_app_state_with_registry(registry: ProviderRegistry) -> noti_server::state::AppState {
+    let queue = Arc::new(
+        noti_queue::SqliteQueue::in_memory().expect("failed to create in-memory SQLite queue"),
+    );
+    let task_notify = queue.notifier();
+    noti_server::state::AppState::with_custom_queue(registry, queue, task_notify)
+}
+
+/// Start a real HTTP server backed by an in-memory SQLite queue.
+/// Returns the base URL.
+pub async fn spawn_server_sqlite() -> String {
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+    let state = sqlite_app_state_with_registry(registry);
+    let app = noti_server::routes::build_router(state);
+    bind_and_serve(app).await
+}
+
+/// Start a server with in-memory SQLite queue and mock providers + workers.
+/// Returns `(base_url, worker_handle)`.
+pub async fn spawn_server_sqlite_with_workers() -> (String, noti_queue::WorkerHandle) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+    registry.register(Arc::new(MockFailProvider));
+
+    let state = sqlite_app_state_with_registry(registry);
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(2)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let app = noti_server::routes::build_router(state);
+    let base = bind_and_serve(app).await;
+    (base, worker_handle)
+}
+
+/// Start a server with in-memory SQLite queue, mock providers, single worker (serial).
+/// Returns `(base_url, worker_handle)`.
+pub async fn spawn_server_sqlite_with_workers_serial(
+    extra_providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+) -> (String, noti_queue::WorkerHandle) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+    registry.register(Arc::new(MockFailProvider));
+    for p in extra_providers {
+        registry.register(p);
+    }
+
+    let state = sqlite_app_state_with_registry(registry);
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    let app = noti_server::routes::build_router(state);
+    let base = bind_and_serve(app).await;
+    (base, worker_handle)
+}
+
 // ───────────────────── Mock providers ─────────────────────
 
 /// A mock provider that always succeeds.
