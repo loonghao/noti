@@ -25,8 +25,8 @@ noti send [OPTIONS] --message <MESSAGE>
 
 | Option | Description |
 |:-------|:------------|
-| `--to <URL>` | Target URL (e.g., `wecom://<key>`) |
-| `--profile <NAME>` | Use a saved profile |
+| `--to <URL>`, `-t` | Target URL (e.g., `wecom://<key>`) |
+| `--profile <NAME>`, `-p` | Use a saved profile |
 | `--provider <NAME>` | Provider name (with `--param`) |
 | `--param <KEY=VALUE>` | Provider parameter (repeatable) |
 | `--message <TEXT>` | **Required** (unless `--json-payload`). Message body |
@@ -106,8 +106,12 @@ noti --json config list
 #### `config remove`
 
 ```bash
-noti config remove <NAME>
+noti config remove <NAME> [--dry-run]
 ```
+
+| Option | Description |
+|:-------|:------------|
+| `--dry-run` | Show what would be removed without actually removing |
 
 #### `config test`
 
