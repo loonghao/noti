@@ -4881,6 +4881,7 @@ async fn e2e_batch_async_mock_fail_provider_with_priorities() {
                     "provider": "mock-fail",
                     "text": "fail-urgent",
                     "priority": "urgent",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-urgent"}
                 },
@@ -4895,6 +4896,7 @@ async fn e2e_batch_async_mock_fail_provider_with_priorities() {
                     "provider": "mock-fail",
                     "text": "fail-low",
                     "priority": "low",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-low"}
                 },
@@ -5001,6 +5003,7 @@ async fn e2e_sqlite_batch_async_mock_fail_provider_with_priorities() {
                     "provider": "mock-fail",
                     "text": "sqlite-fail-urgent",
                     "priority": "urgent",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-urgent"}
                 },
@@ -5095,6 +5098,7 @@ async fn e2e_batch_async_mock_fail_mixed_with_nonexistent() {
                     "provider": "mock-fail",
                     "text": "fail-at-send",
                     "priority": "urgent",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-at-send"}
                 },

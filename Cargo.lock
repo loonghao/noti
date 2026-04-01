@@ -1433,7 +1433,7 @@ checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
 
 [[package]]
 name = "noti-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1450,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "noti-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "noti-providers"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "base64",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "noti-queue"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "noti-core",
@@ -1507,7 +1507,7 @@ dependencies = [
 
 [[package]]
 name = "noti-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "axum",

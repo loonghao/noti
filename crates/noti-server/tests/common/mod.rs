@@ -610,14 +610,15 @@ pub async fn spawn_callback_server() -> (String, Arc<Mutex<Vec<Value>>>) {
 // ───────────────────── Polling utilities ─────────────────────
 
 /// Poll a task until it reaches a terminal state (`completed`, `failed`, or `cancelled`).
-/// Panics if the task does not reach a terminal state within 5 seconds.
+/// Panics if the task does not reach a terminal state within 15 seconds.
+/// The generous timeout accommodates retry backoff delays (default policy: 1s + 2s + 4s = 7s).
 pub async fn wait_for_terminal_status(
     client: &reqwest::Client,
     base: &str,
     task_id: &str,
 ) -> Value {
     let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(15);
 
     loop {
         let resp = client

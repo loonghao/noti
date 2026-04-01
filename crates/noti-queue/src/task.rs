@@ -82,6 +82,11 @@ pub struct NotificationTask {
     /// Optional webhook URL to call when the task reaches a terminal state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback_url: Option<String>,
+
+    /// Earliest time this task can be dequeued (used for retry backoff delays).
+    /// When `None`, the task is immediately available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_at: Option<SystemTime>,
 }
 
 impl NotificationTask {
@@ -101,6 +106,7 @@ impl NotificationTask {
             updated_at: now,
             metadata: HashMap::new(),
             callback_url: None,
+            available_at: None,
         }
     }
 
@@ -165,6 +171,13 @@ impl NotificationTask {
     pub fn should_retry(&self) -> bool {
         self.retry_policy
             .should_retry(self.attempts.saturating_sub(1))
+    }
+
+    /// Compute the backoff delay for the next retry based on the current attempt count.
+    ///
+    /// Returns `Duration::ZERO` when the task has no delay configured or for the first attempt.
+    pub fn retry_delay(&self) -> std::time::Duration {
+        self.retry_policy.delay_for_attempt(self.attempts)
     }
 }
 
