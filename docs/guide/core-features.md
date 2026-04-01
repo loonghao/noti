@@ -117,6 +117,41 @@ let outcome = execute_with_retry(&policy, || async {
 }).await;
 ```
 
+### REST API Retry Configuration
+
+When sending notifications via the REST API, you can configure retry behavior
+in the `retry` object of the request body:
+
+| Field | Type | Default | Description |
+|:------|:-----|:--------|:------------|
+| `max_retries` | `u32` | `3` | Maximum retry attempts |
+| `delay_ms` | `u64` | `1000` | Base delay in milliseconds |
+| `backoff_multiplier` | `f64` | `1.0` | Multiplier for exponential backoff (> 1.0 enables exponential) |
+| `max_delay_ms` | `u64` | `30000` | Maximum delay cap for exponential backoff |
+
+**Fixed delay** (default when `backoff_multiplier` is absent or ≤ 1.0):
+
+```json
+{
+  "retry": { "max_retries": 3, "delay_ms": 500 }
+}
+```
+
+**Exponential backoff** (set `backoff_multiplier` > 1.0):
+
+```json
+{
+  "retry": {
+    "max_retries": 5,
+    "delay_ms": 100,
+    "backoff_multiplier": 2.0,
+    "max_delay_ms": 10000
+  }
+}
+```
+
+With the above config, retry delays are: 100 ms → 200 ms → 400 ms → 800 ms → 1600 ms.
+
 ## Batch & Failover Sending
 
 Send notifications to multiple providers simultaneously or with automatic failover.
