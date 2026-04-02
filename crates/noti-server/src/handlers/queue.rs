@@ -46,6 +46,13 @@ pub struct AsyncSendRequest {
     pub metadata: HashMap<String, String>,
     /// Optional webhook URL to call when the task completes or fails.
     pub callback_url: Option<String>,
+    /// Delay in seconds before the notification is sent.
+    /// Mutually exclusive with `scheduled_at`.
+    pub delay_seconds: Option<u64>,
+    /// ISO 8601 timestamp (RFC 3339) for when the notification should be sent.
+    /// Mutually exclusive with `delay_seconds`.
+    /// Example: `"2025-08-15T10:30:00Z"`.
+    pub scheduled_at: Option<String>,
 }
 
 /// Query parameters for listing tasks.
@@ -79,6 +86,10 @@ pub struct TaskInfo {
     pub priority: String,
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub metadata: HashMap<String, String>,
+    /// When the task is scheduled to be sent (ISO 8601 / RFC 3339).
+    /// Present only for delayed/scheduled tasks.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scheduled_at: Option<String>,
 }
 
 /// Response for queue statistics.
@@ -165,6 +176,10 @@ pub struct BatchEnqueueResponse {
 // ───────────────────── Helpers ─────────────────────
 
 fn task_to_info(task: &NotificationTask) -> TaskInfo {
+    let scheduled_at = task.available_at.map(|at| {
+        humantime::format_rfc3339(at).to_string()
+    });
+
     TaskInfo {
         id: task.id.clone(),
         provider: task.provider.clone(),
@@ -173,6 +188,44 @@ fn task_to_info(task: &NotificationTask) -> TaskInfo {
         last_error: task.last_error.clone(),
         priority: format!("{:?}", task.priority()),
         metadata: task.metadata.clone(),
+        scheduled_at,
+    }
+}
+
+/// Parse a schedule specification from the API request into a `SystemTime`.
+///
+/// Supports two mutually exclusive options:
+/// - `delay_seconds`: relative delay from now
+/// - `scheduled_at`: absolute RFC 3339 timestamp
+///
+/// Returns `None` if neither is provided.
+fn parse_scheduled_time(
+    delay_seconds: Option<u64>,
+    scheduled_at: Option<&str>,
+) -> Result<Option<std::time::SystemTime>, ApiError> {
+    match (delay_seconds, scheduled_at) {
+        (Some(_), Some(_)) => Err(ApiError::bad_request(
+            "delay_seconds and scheduled_at are mutually exclusive; provide only one".to_string(),
+        )
+        .with_code(codes::INVALID_PARAMETER)),
+        (Some(secs), None) => {
+            if secs == 0 {
+                Ok(None)
+            } else {
+                let at = std::time::SystemTime::now() + std::time::Duration::from_secs(secs);
+                Ok(Some(at))
+            }
+        }
+        (None, Some(ts)) => {
+            let dt = humantime::parse_rfc3339(ts).map_err(|e| {
+                ApiError::bad_request(format!(
+                    "invalid scheduled_at timestamp (expected RFC 3339 / ISO 8601): {e}"
+                ))
+                .with_code(codes::INVALID_PARAMETER)
+            })?;
+            Ok(Some(dt))
+        }
+        (None, None) => Ok(None),
     }
 }
 
@@ -247,7 +300,14 @@ pub async fn send_async(
 
     let policy = common::build_retry_policy(req.retry.as_ref(), RetryPolicy::default());
 
+    // Parse schedule/delay
+    let available_at = parse_scheduled_time(req.delay_seconds, req.scheduled_at.as_deref())?;
+
     let mut task = NotificationTask::new(&req.provider, config, msg).with_retry_policy(policy);
+
+    if let Some(at) = available_at {
+        task = task.with_available_at(at);
+    }
 
     if let Some(url) = &req.callback_url {
         task = task.with_callback_url(url);
@@ -257,14 +317,21 @@ pub async fn send_async(
         task = task.with_metadata(k, v);
     }
 
+    let scheduled = available_at.is_some();
     let task_id = state.queue.enqueue(task).await.map_err(queue_error)?;
+
+    let message = if scheduled {
+        "Notification scheduled for delayed processing".to_string()
+    } else {
+        "Notification enqueued for async processing".to_string()
+    };
 
     Ok((
         StatusCode::ACCEPTED,
         Json(EnqueueResponse {
             task_id,
             status: "queued".to_string(),
-            message: "Notification enqueued for async processing".to_string(),
+            message,
         }),
     ))
 }
@@ -333,7 +400,27 @@ pub async fn send_async_batch(
 
         let policy = common::build_retry_policy(item.retry.as_ref(), RetryPolicy::default());
 
+        // Parse schedule/delay for this item
+        let available_at = match parse_scheduled_time(item.delay_seconds, item.scheduled_at.as_deref()) {
+            Ok(at) => at,
+            Err(e) => {
+                results.push(BatchEnqueueItemResult {
+                    index,
+                    provider: item.provider,
+                    success: false,
+                    task_id: None,
+                    error: Some(e.message),
+                });
+                failed += 1;
+                continue;
+            }
+        };
+
         let mut task = NotificationTask::new(&item.provider, config, msg).with_retry_policy(policy);
+
+        if let Some(at) = available_at {
+            task = task.with_available_at(at);
+        }
 
         if let Some(url) = &item.callback_url {
             task = task.with_callback_url(url);
@@ -678,5 +765,50 @@ mod tests {
         assert_eq!(result.results.len(), 1);
         assert_eq!(result.results[0].index, 0);
         assert_eq!(result.results[0].provider, "unknown");
+    }
+
+    // ───────── parse_scheduled_time unit tests ─────────
+
+    #[test]
+    fn test_parse_scheduled_time_none() {
+        let result = parse_scheduled_time(None, None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_scheduled_time_delay_seconds() {
+        let result = parse_scheduled_time(Some(60), None).unwrap();
+        assert!(result.is_some());
+        let at = result.unwrap();
+        let now = std::time::SystemTime::now();
+        let diff = at.duration_since(now).unwrap();
+        // Should be roughly 60 seconds from now (within 2s tolerance)
+        assert!(diff.as_secs() >= 58 && diff.as_secs() <= 62);
+    }
+
+    #[test]
+    fn test_parse_scheduled_time_delay_zero() {
+        let result = parse_scheduled_time(Some(0), None).unwrap();
+        assert!(result.is_none(), "delay_seconds=0 should be treated as immediate");
+    }
+
+    #[test]
+    fn test_parse_scheduled_time_rfc3339() {
+        let result = parse_scheduled_time(None, Some("2030-01-15T10:30:00Z")).unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_scheduled_time_invalid_rfc3339() {
+        let result = parse_scheduled_time(None, Some("not-a-timestamp"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_scheduled_time_mutually_exclusive() {
+        let result = parse_scheduled_time(Some(60), Some("2030-01-15T10:30:00Z"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("mutually exclusive"));
     }
 }

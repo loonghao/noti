@@ -128,6 +128,15 @@ impl NotificationTask {
         self
     }
 
+    /// Set the earliest time this task can be dequeued.
+    ///
+    /// Used for scheduled/delayed notifications. The queue will not deliver
+    /// this task to a worker until the specified time has been reached.
+    pub fn with_available_at(mut self, at: SystemTime) -> Self {
+        self.available_at = Some(at);
+        self
+    }
+
     /// Get the priority of the underlying message (used for queue ordering).
     pub fn priority(&self) -> Priority {
         self.message.priority
@@ -308,5 +317,36 @@ mod tests {
         assert_eq!(parsed.provider, "webhook");
         assert_eq!(parsed.priority(), Priority::High);
         assert_eq!(parsed.metadata.get("key").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_task_with_available_at() {
+        let msg = Message::text("scheduled");
+        let config = ProviderConfig::new();
+        let future = SystemTime::now() + Duration::from_secs(60);
+        let task = NotificationTask::new("slack", config, msg).with_available_at(future);
+
+        assert!(task.available_at.is_some());
+        assert_eq!(task.available_at.unwrap(), future);
+    }
+
+    #[test]
+    fn test_task_available_at_serde_roundtrip() {
+        let msg = Message::text("test");
+        let config = ProviderConfig::new();
+        let future = SystemTime::now() + Duration::from_secs(300);
+        let task = NotificationTask::new("email", config, msg).with_available_at(future);
+
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: NotificationTask = serde_json::from_str(&json).unwrap();
+
+        assert!(parsed.available_at.is_some());
+        // SystemTime serde precision may differ slightly, check within 1 second
+        let diff = parsed
+            .available_at
+            .unwrap()
+            .duration_since(future)
+            .unwrap_or_default();
+        assert!(diff < Duration::from_secs(1));
     }
 }
