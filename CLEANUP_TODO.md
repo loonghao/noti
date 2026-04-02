@@ -87,7 +87,7 @@ rounds or require coordination with the iteration agent.
 
 - [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
 - [x] ~~`e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper~~ — extracted to `tests/common/mod.rs` with `bind_and_serve()` core helper (e9846ee)
-- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 153 times (was 150 before b4b1eaa) — low-impact boilerplate; each test independently creates a client
+- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 167 times (was 153 before 9bdd527) — low-impact boilerplate; each test independently creates a client
 - [x] ~~`e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top~~ — all spawn helpers extracted to `tests/common/mod.rs` (e9846ee)
 - [x] ~~`e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top~~ — all `use` statements now at file top (lines 10-24); no mid-file imports (e9846ee)
 
@@ -107,6 +107,12 @@ rounds or require coordination with the iteration agent.
 - [ ] `e2e_backoff_delay_timing_flaky_task` (line 6376) ≈ `e2e_sqlite_backoff_delay_timing_flaky_task` (line 6507) — ~95% identical, same InMemory vs SQLite pattern (added 251aca6)
 - [ ] `e2e_backoff_delay_timing_exhausted_retries` (line 6425) ≈ `e2e_sqlite_backoff_delay_timing_exhausted_retries` (line 6553) — ~95% identical, same pattern (added 251aca6)
 - [ ] `e2e_exponential_backoff_api_flaky_task` (line 6592) ≈ `e2e_sqlite_exponential_backoff_api_flaky_task` (line 6742) — ~95% identical, same pattern (added 481e7cf)
+- [ ] `e2e_scheduled_send_delay_seconds_holds_task` (line 7217) ≈ `e2e_sqlite_scheduled_send_delay_seconds_holds_task` (line 7472) — ~95% identical, same InMemory vs SQLite pattern (added 9bdd527)
+- [ ] `e2e_scheduled_send_delay_zero_is_immediate` (line 7271) ≈ `e2e_sqlite_scheduled_send_delay_zero_is_immediate` (line 7526) — ~95% identical, same pattern (added 9bdd527)
+- [ ] `e2e_scheduled_send_rfc3339_timestamp` (line 7312) ≈ `e2e_sqlite_scheduled_send_rfc3339_timestamp` (line 7567) — ~95% identical, same pattern (added 9bdd527)
+- [ ] `e2e_scheduled_send_mutually_exclusive_error` (line 7351) ≈ `e2e_sqlite_scheduled_send_mutually_exclusive_error` (line 7606) — ~95% identical, same pattern (added 9bdd527)
+- [ ] `e2e_scheduled_send_invalid_timestamp_format` (line 7378) ≈ `e2e_sqlite_scheduled_send_invalid_timestamp_format` (line 7633) — ~95% identical, same pattern (added 9bdd527)
+- [ ] `e2e_scheduled_send_no_scheduled_at_for_immediate` (line 7404) ≈ `e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate` (line 7659) — ~95% identical, same pattern (added 9bdd527)
 - [x] ~~`spawn_server_with_workers_serial` — near-duplicate of `spawn_server_with_workers`~~ — both extracted to `common/mod.rs` with distinct parameters: `spawn_server_with_workers()` (concurrency=2) and `spawn_server_with_workers_serial(extra_providers)` (concurrency=1) (e9846ee)
 
 ## Tests — Cross-Module Deduplication (noti-queue)
