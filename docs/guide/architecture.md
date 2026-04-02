@@ -62,6 +62,7 @@ Async message queue for background notification processing:
 - **Stale task recovery** — automatically recovers tasks left in `Processing` state after an unclean shutdown via `QueueBackend::recover_stale_tasks()`
 - **Worker pool** — concurrent workers dequeue and deliver notifications
 - **Webhook callbacks** — HTTP POST on task completion or failure
+- **Scheduled/delayed delivery** — defer notifications via `delay_seconds` or `scheduled_at`
 - **Task lifecycle** — queued → processing → completed/failed/cancelled
 
 ### `noti-server`

@@ -532,9 +532,15 @@ Configure via:
   "priority": "high",
   "retry": {"max_retries": 3, "delay_ms": 1000},
   "metadata": {"deploy_id": "d-123", "env": "production"},
-  "callback_url": "https://your-server.com/webhook/noti-callback"
+  "callback_url": "https://your-server.com/webhook/noti-callback",
+  "delay_seconds": 60,
+  "scheduled_at": "2025-08-15T09:00:00Z"
 }
 ```
+
+::: warning
+`delay_seconds` and `scheduled_at` are **mutually exclusive** — provide at most one. See [Scheduled & Delayed Send](/guide/scheduled-send) for details.
+:::
 
 ### Task Lifecycle
 
