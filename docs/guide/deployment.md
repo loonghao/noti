@@ -22,7 +22,7 @@ curl http://localhost:3000/health
 docker build -t noti-server .
 ```
 
-The multi-stage Dockerfile produces a minimal Debian-slim image containing both `noti-server` and the `noti` CLI.
+The multi-stage Dockerfile produces a minimal Debian-slim image containing both `noti-server` and the `noti` CLI. The image includes `curl` for HTTP-based health checks against the `/health` endpoint.
 
 ### Run with Docker
 

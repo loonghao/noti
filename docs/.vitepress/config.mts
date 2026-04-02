@@ -49,6 +49,7 @@ export default defineConfig({
           text: 'Operations',
           items: [
             { text: 'Deployment', link: '/guide/deployment' },
+            { text: 'CI/CD Pipeline', link: '/guide/ci-cd' },
           ],
         },
         {

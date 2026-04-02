@@ -31,6 +31,7 @@ FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 1000 noti && useradd --uid 1000 --gid noti --create-home noti
@@ -55,6 +56,6 @@ ENV NOTI_HOST=0.0.0.0 \
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/usr/local/bin/noti-server", "--version"]
+    CMD ["curl", "-sf", "http://localhost:3000/health"]
 
 ENTRYPOINT ["noti-server"]
