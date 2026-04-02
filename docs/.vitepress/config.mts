@@ -56,6 +56,7 @@ export default defineConfig({
           text: 'Operations',
           items: [
             { text: 'Deployment', link: '/guide/deployment' },
+            { text: 'Logging & Observability', link: '/guide/logging' },
             { text: 'Metrics & Monitoring', link: '/guide/metrics-monitoring' },
             { text: 'CI/CD Pipeline', link: '/guide/ci-cd' },
           ],
