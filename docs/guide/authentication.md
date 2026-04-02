@@ -133,15 +133,6 @@ const resp = await fetch(`${BASE_URL}/api/v1/providers`, {
 const data = await resp.json();
 ```
 
-### noti CLI
-
-When using the `noti` CLI to interact with a noti-server that has authentication enabled, provide the API key via environment variable:
-
-```bash
-export NOTI_SERVER_API_KEY="my-api-key"
-noti send --provider slack --param webhook=https://hooks.slack.com/... --message "hello"
-```
-
 ## Middleware Order
 
 Authentication runs **before** rate limiting in the middleware stack:
