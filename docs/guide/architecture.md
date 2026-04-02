@@ -79,6 +79,7 @@ REST API server for the noti notification service:
 - **Structured logging** — text or JSON log format with automatic request ID correlation
 - **Metrics endpoint** — operational metrics for monitoring
 - **Health check** — dependency-aware `/health` endpoint (queue + providers status, uptime)
+- **API versioning** — URL path versioning (`/api/v1/`) with version discovery at `/api/versions`
 - **Configurable CORS** — `NOTI_CORS_ALLOWED_ORIGINS` for cross-origin control
 - **OpenAPI / Swagger UI** — auto-generated API docs at `/swagger-ui`
 
