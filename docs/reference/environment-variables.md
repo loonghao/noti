@@ -5,6 +5,7 @@
 | Variable | Description | Default |
 |:---------|:------------|:--------|
 | `NOTI_CONFIG` | Override config file path | `~/.config/noti/config.toml` |
+| `NOTI_OUTPUT` | Output format: `json` for structured machine-readable output | *(human)* |
 
 ## Server (`noti-server`)
 
