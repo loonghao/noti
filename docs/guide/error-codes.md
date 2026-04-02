@@ -312,7 +312,7 @@ Some error responses intentionally omit the `code` field for backward compatibil
 |:------------|:---------------|:---------|
 | 400 | `invalid_json` | Malformed JSON request body (not parseable) |
 | 401 | `unauthorized` | Missing or invalid API key |
-| 413 | `payload_too_large` | Request body exceeds `NOTI_MAX_BODY_SIZE` |
+| 413 | *(framework rejection)* | Request body exceeds `NOTI_MAX_BODY_SIZE` before the request reaches the handler |
 | 422 | `validation_failed` | Field-level validation errors (from `ValidatedJson`) |
 | 429 | `rate limit exceeded` | Rate limit exceeded |
 

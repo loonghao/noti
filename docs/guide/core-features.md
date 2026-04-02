@@ -481,9 +481,10 @@ When validation fails, the server returns `422 Unprocessable Entity` with struct
 ```json
 {
   "error": "validation_failed",
+  "message": "Request body validation failed",
   "fields": {
-    "provider": [{"code": "length", "message": "provider must not be empty"}],
-    "text": [{"code": "length", "message": "text must not be empty"}]
+    "provider": ["provider must not be empty"],
+    "text": ["text must not be empty"]
   }
 }
 ```
