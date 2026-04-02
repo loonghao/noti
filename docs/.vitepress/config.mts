@@ -41,6 +41,7 @@ export default defineConfig({
           items: [
             { text: 'Sending Notifications', link: '/guide/sending-notifications' },
             { text: 'Core Features', link: '/guide/core-features' },
+            { text: 'Queue Management', link: '/guide/queue-management' },
             { text: 'Scheduled & Delayed Send', link: '/guide/scheduled-send' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
             { text: 'Authentication', link: '/guide/authentication' },
