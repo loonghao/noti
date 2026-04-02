@@ -41,6 +41,7 @@ export default defineConfig({
           items: [
             { text: 'Sending Notifications', link: '/guide/sending-notifications' },
             { text: 'Core Features', link: '/guide/core-features' },
+            { text: 'Scheduled & Delayed Send', link: '/guide/scheduled-send' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
           ],
