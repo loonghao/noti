@@ -67,6 +67,7 @@ fn build_v1_routes() -> Router<AppState> {
             get(handlers::status::get_status),
         )
         .route("/status", get(handlers::status::get_all_statuses))
+        .route("/status/purge", post(handlers::status::purge_statuses))
         // Template endpoints
         .route("/templates", post(handlers::templates::create_template))
         .route("/templates", get(handlers::templates::list_templates))

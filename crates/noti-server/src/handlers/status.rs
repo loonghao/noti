@@ -1,7 +1,7 @@
 use axum::Json;
-use axum::extract::{Path, State};
-use serde::Serialize;
-use utoipa::ToSchema;
+use axum::extract::{Path, Query, State};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use noti_core::{DeliveryRecord, StatusSummary};
 
@@ -21,6 +21,23 @@ pub struct AllStatusesResponse {
     pub summary: StatusSummary,
     pub notification_ids: Vec<String>,
     pub total: usize,
+}
+
+/// Query parameters for status purge.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct PurgeStatusQuery {
+    /// Maximum age in seconds. Only terminal records older than this are purged.
+    /// When omitted, all terminal records are purged regardless of age.
+    pub max_age_secs: Option<u64>,
+}
+
+/// Response for status purge operation.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PurgeStatusResponse {
+    /// Number of notifications purged.
+    pub purged: usize,
+    /// Descriptive message.
+    pub message: String,
 }
 
 /// Get delivery status for a specific notification.
@@ -73,5 +90,41 @@ pub async fn get_all_statuses(State(state): State<AppState>) -> Json<AllStatuses
         summary,
         notification_ids: ids,
         total,
+    })
+}
+
+/// Purge terminal delivery status records to reclaim memory.
+///
+/// When `max_age_secs` is provided, only terminal records whose last update
+/// is older than the specified age are removed. When omitted, all terminal
+/// records are purged regardless of age.
+///
+/// Non-terminal records (Pending, Sending) are never purged.
+#[utoipa::path(
+    post,
+    path = "/api/v1/status/purge",
+    tag = "Status",
+    params(PurgeStatusQuery),
+    responses(
+        (status = 200, description = "Purge result", body = PurgeStatusResponse)
+    )
+)]
+pub async fn purge_statuses(
+    State(state): State<AppState>,
+    Query(query): Query<PurgeStatusQuery>,
+) -> Json<PurgeStatusResponse> {
+    let purged = match query.max_age_secs {
+        Some(secs) => {
+            state
+                .status_tracker
+                .purge_older_than(std::time::Duration::from_secs(secs))
+                .await
+        }
+        None => state.status_tracker.purge_terminal().await,
+    };
+
+    Json(PurgeStatusResponse {
+        purged,
+        message: format!("Purged {} terminal status records", purged),
     })
 }

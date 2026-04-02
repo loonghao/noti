@@ -181,6 +181,28 @@ async fn test_all_statuses_empty() {
 }
 
 #[tokio::test]
+async fn test_purge_statuses_empty() {
+    let server = build_test_server();
+    let response = server.post("/api/v1/status/purge").await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["purged"], 0);
+}
+
+#[tokio::test]
+async fn test_purge_statuses_with_max_age() {
+    let server = build_test_server();
+    let response = server
+        .post("/api/v1/status/purge?max_age_secs=3600")
+        .await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["purged"], 0);
+}
+
+#[tokio::test]
 async fn test_batch_send_provider_not_found() {
     let server = build_test_server();
     let response = server

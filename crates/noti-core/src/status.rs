@@ -240,6 +240,42 @@ impl StatusTracker {
         store.len()
     }
 
+    /// Remove all notifications where **every** delivery record has reached a
+    /// terminal state (Delivered, Failed, Cancelled, or Read).
+    ///
+    /// Returns the number of notifications purged.
+    pub async fn purge_terminal(&self) -> usize {
+        let mut store = self.records.write().await;
+        let before = store.len();
+        store.retain(|_, records| !records.iter().all(|r| r.is_terminal()));
+        before - store.len()
+    }
+
+    /// Remove all notifications whose **most recent update** is older than
+    /// `max_age`, but only if every delivery record in that notification has
+    /// reached a terminal state.
+    ///
+    /// This prevents unbounded memory growth in long-running servers while
+    /// preserving records that are still in-flight or recently updated.
+    ///
+    /// Returns the number of notifications purged.
+    pub async fn purge_older_than(&self, max_age: Duration) -> usize {
+        let cutoff = SystemTime::now()
+            .checked_sub(max_age)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut store = self.records.write().await;
+        let before = store.len();
+        store.retain(|_, records| {
+            // Keep if any record is non-terminal
+            if !records.iter().all(|r| r.is_terminal()) {
+                return true;
+            }
+            // Keep if any record was updated after the cutoff
+            records.iter().any(|r| r.updated_at > cutoff)
+        });
+        before - store.len()
+    }
+
     /// Get a summary of all delivery statuses across all tracked notifications.
     pub async fn summary(&self) -> StatusSummary {
         let store = self.records.read().await;
@@ -483,6 +519,103 @@ mod tests {
 
         let missing = tracker.get_record("n1", "teams").await;
         assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_purge_terminal() {
+        let tracker = StatusTracker::new();
+        // n1: terminal (all records delivered/failed)
+        tracker.track("n1", "slack").await;
+        tracker.track("n1", "email").await;
+        tracker
+            .update_status("n1", "slack", DeliveryStatus::Delivered, None)
+            .await;
+        tracker
+            .update_status("n1", "email", DeliveryStatus::Failed, Some("err".into()))
+            .await;
+
+        // n2: non-terminal (still pending)
+        tracker.track("n2", "teams").await;
+
+        // n3: partially terminal (one delivered, one pending)
+        tracker.track("n3", "slack").await;
+        tracker.track("n3", "email").await;
+        tracker
+            .update_status("n3", "slack", DeliveryStatus::Delivered, None)
+            .await;
+
+        assert_eq!(tracker.count().await, 3);
+        let purged = tracker.purge_terminal().await;
+        assert_eq!(purged, 1); // only n1 (fully terminal)
+        assert_eq!(tracker.count().await, 2);
+
+        // n2 and n3 should remain
+        assert!(!tracker.get_records("n2").await.is_empty());
+        assert!(!tracker.get_records("n3").await.is_empty());
+        assert!(tracker.get_records("n1").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_purge_terminal_empty() {
+        let tracker = StatusTracker::new();
+        assert_eq!(tracker.purge_terminal().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_purge_older_than() {
+        let tracker = StatusTracker::new();
+
+        // Create a record and manually backdate it
+        {
+            let mut store = tracker.records.write().await;
+            let old_time = SystemTime::now() - Duration::from_secs(3600);
+            let mut record = DeliveryRecord::new("old-1", "slack");
+            record.current_status = DeliveryStatus::Delivered;
+            record.updated_at = old_time;
+            store.entry("old-1".to_string()).or_default().push(record);
+        }
+
+        // Create a recent terminal record
+        tracker.track("new-1", "slack").await;
+        tracker
+            .update_status("new-1", "slack", DeliveryStatus::Delivered, None)
+            .await;
+
+        // Create a non-terminal record
+        tracker.track("pending-1", "email").await;
+
+        assert_eq!(tracker.count().await, 3);
+
+        // Purge records older than 30 minutes
+        let purged = tracker.purge_older_than(Duration::from_secs(1800)).await;
+        assert_eq!(purged, 1); // only old-1
+        assert_eq!(tracker.count().await, 2);
+
+        // new-1 and pending-1 remain
+        assert!(!tracker.get_records("new-1").await.is_empty());
+        assert!(!tracker.get_records("pending-1").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_purge_older_than_keeps_non_terminal() {
+        let tracker = StatusTracker::new();
+
+        // Create an old non-terminal record — should NOT be purged
+        {
+            let mut store = tracker.records.write().await;
+            let old_time = SystemTime::now() - Duration::from_secs(7200);
+            let mut record = DeliveryRecord::new("old-pending", "slack");
+            record.updated_at = old_time;
+            // status remains Pending (non-terminal)
+            store
+                .entry("old-pending".to_string())
+                .or_default()
+                .push(record);
+        }
+
+        let purged = tracker.purge_older_than(Duration::from_secs(60)).await;
+        assert_eq!(purged, 0);
+        assert_eq!(tracker.count().await, 1);
     }
 
     #[test]

@@ -19,7 +19,7 @@ use crate::handlers::{
         self, BatchSendApiResponse, BatchSendRequest, BatchTarget, SendApiResponse, SendRequest,
         TargetApiResult,
     },
-    status::{self, AllStatusesResponse, StatusResponse},
+    status::{self, AllStatusesResponse, PurgeStatusResponse, StatusResponse},
     templates::{
         self, CreateTemplateRequest, DeleteTemplateResponse, RenderTemplateRequest,
         RenderedTemplateResponse, TemplateListResponse, TemplateResponse, UpdateTemplateRequest,
@@ -67,6 +67,7 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         // Status
         status::get_status,
         status::get_all_statuses,
+        status::purge_statuses,
         // Templates
         templates::create_template,
         templates::list_templates,
@@ -97,7 +98,7 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         BatchAsyncRequest, BatchEnqueueResponse, BatchEnqueueItemResult,
         TaskInfo, StatsResponse, CancelResponse, PurgeResponse,
         // Status
-        StatusResponse, AllStatusesResponse,
+        StatusResponse, AllStatusesResponse, PurgeStatusResponse,
         // Templates
         CreateTemplateRequest, TemplateResponse, TemplateListResponse,
         UpdateTemplateRequest, DeleteTemplateResponse,

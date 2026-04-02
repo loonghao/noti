@@ -589,6 +589,7 @@ async fn e2e_openapi_schema_all_api_paths_exist() {
         "/api/v1/send/async/batch",
         "/api/v1/status/{notification_id}",
         "/api/v1/status",
+        "/api/v1/status/purge",
         "/api/v1/templates",
         "/api/v1/templates/{name}",
         "/api/v1/templates/{name}/render",
@@ -640,6 +641,39 @@ async fn e2e_all_statuses_empty() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn e2e_purge_statuses_empty() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/status/purge"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["purged"], 0);
+    assert!(body["message"].as_str().unwrap().contains("Purged 0"));
+}
+
+#[tokio::test]
+async fn e2e_purge_statuses_with_max_age() {
+    let base = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{base}/api/v1/status/purge?max_age_secs=60"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["purged"], 0);
 }
 
 // ───────────────────── Queue edge cases ─────────────────────
