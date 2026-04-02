@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use utoipa::{IntoParams, ToSchema};
 
 use noti_core::{DeliveryRecord, StatusSummary};
@@ -122,6 +123,12 @@ pub async fn purge_statuses(
         }
         None => state.status_tracker.purge_terminal().await,
     };
+
+    info!(
+        purged,
+        max_age_secs = ?query.max_age_secs,
+        "status records purged"
+    );
 
     Json(PurgeStatusResponse {
         purged,

@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
@@ -326,6 +327,13 @@ pub async fn send_async(
         "Notification enqueued for async processing".to_string()
     };
 
+    info!(
+        task_id = %task_id,
+        provider = %req.provider,
+        scheduled,
+        "task enqueued"
+    );
+
     Ok((
         StatusCode::ACCEPTED,
         Json(EnqueueResponse {
@@ -454,6 +462,13 @@ pub async fn send_async_batch(
         }
     }
 
+    info!(
+        total,
+        enqueued,
+        failed,
+        "batch async enqueue completed"
+    );
+
     Ok((
         StatusCode::ACCEPTED,
         Json(BatchEnqueueResponse {
@@ -559,6 +574,12 @@ pub async fn cancel_task(
 ) -> Result<Json<CancelResponse>, ApiError> {
     let cancelled = state.queue.cancel(&task_id).await.map_err(queue_error)?;
 
+    if cancelled {
+        info!(task_id = %task_id, "task cancelled");
+    } else {
+        warn!(task_id = %task_id, "task cancel failed (already processing or completed)");
+    }
+
     let message = if cancelled {
         "Task cancelled successfully".to_string()
     } else {
@@ -583,6 +604,8 @@ pub async fn cancel_task(
 )]
 pub async fn purge_tasks(State(state): State<AppState>) -> Result<Json<PurgeResponse>, ApiError> {
     let purged = state.queue.purge_completed().await.map_err(queue_error)?;
+
+    info!(purged, "queue purge completed");
 
     Ok(Json(PurgeResponse {
         purged,

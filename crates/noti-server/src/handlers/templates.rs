@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -289,11 +290,14 @@ pub async fn delete_template(
     let mut registry = state.template_registry.write().await;
 
     match registry.remove(&name) {
-        Some(_) => Ok(Json(DeleteTemplateResponse {
-            name,
-            deleted: true,
-            message: "Template deleted successfully".to_string(),
-        })),
+        Some(_) => {
+            info!(template_name = %name, "template deleted");
+            Ok(Json(DeleteTemplateResponse {
+                name,
+                deleted: true,
+                message: "Template deleted successfully".to_string(),
+            }))
+        }
         None => Err(
             ApiError::not_found(format!("template '{}' not found", name))
                 .with_code(codes::TEMPLATE_NOT_FOUND),
