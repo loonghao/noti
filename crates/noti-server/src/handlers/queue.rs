@@ -190,7 +190,7 @@ fn parse_task_status(s: &str) -> Option<TaskStatus> {
 fn queue_error(e: noti_queue::QueueError) -> ApiError {
     match &e {
         noti_queue::QueueError::QueueFull { .. } => {
-            ApiError::service_unavailable("queue_full", e.to_string()).with_code(codes::QUEUE_FULL)
+            ApiError::service_unavailable(e.to_string()).with_code(codes::QUEUE_FULL)
         }
         noti_queue::QueueError::NotFound(_) => {
             ApiError::not_found(e.to_string()).with_code(codes::TASK_NOT_FOUND)

@@ -138,9 +138,9 @@ impl ApiError {
     }
 
     /// Create a 503 Service Unavailable error.
-    pub fn service_unavailable(error_code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn service_unavailable(message: impl Into<String>) -> Self {
         Self {
-            error: error_code.into(),
+            error: "service_unavailable".to_string(),
             message: message.into(),
             code: None,
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -158,20 +158,6 @@ impl IntoResponse for ApiError {
             body["code"] = serde_json::Value::String(code.clone());
         }
         (self.status, Json(body)).into_response()
-    }
-}
-
-// Allow using ApiError as the error type in Result<T, ApiError>
-impl From<ApiError> for (StatusCode, Json<serde_json::Value>) {
-    fn from(err: ApiError) -> Self {
-        let mut body = serde_json::json!({
-            "error": err.error,
-            "message": err.message,
-        });
-        if let Some(code) = &err.code {
-            body["code"] = serde_json::Value::String(code.clone());
-        }
-        (err.status, Json(body))
     }
 }
 
@@ -221,8 +207,8 @@ mod tests {
 
     #[test]
     fn test_service_unavailable() {
-        let err = ApiError::service_unavailable("queue_full", "queue is full");
-        assert_eq!(err.error, "queue_full");
+        let err = ApiError::service_unavailable("queue is full");
+        assert_eq!(err.error, "service_unavailable");
         assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(err.message, "queue is full");
     }

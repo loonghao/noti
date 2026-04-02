@@ -22,7 +22,7 @@ curl http://localhost:3000/health
 docker build -t noti-server .
 ```
 
-The multi-stage Dockerfile produces a minimal Debian-slim image (~30 MB compressed) containing both `noti-server` and the `noti` CLI.
+The multi-stage Dockerfile produces a minimal Debian-slim image containing both `noti-server` and the `noti` CLI.
 
 ### Run with Docker
 
@@ -177,6 +177,7 @@ All configuration is done via environment variables. See the full list in [Envir
 | `NOTI_LOG_LEVEL` | `info` | Log level filter |
 | `NOTI_RATE_LIMIT_MAX` | `100` | Max requests per window |
 | `NOTI_RATE_LIMIT_WINDOW_SECS` | `60` | Rate-limit window (seconds) |
+| `NOTI_RATE_LIMIT_PER_IP` | `true` | Per-IP (`true`) or global (`false`) rate limiting |
 | `NOTI_CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins |
 | `NOTI_MAX_BODY_SIZE` | `2097152` | Max request body (bytes) |
 
