@@ -48,6 +48,7 @@ export default defineConfig({
             { text: 'Webhook Callbacks', link: '/guide/webhook-callbacks' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
             { text: 'API Versioning', link: '/guide/api-versioning' },
+            { text: 'OpenAPI & Swagger UI', link: '/guide/openapi' },
           ],
         },
         {
