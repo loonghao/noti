@@ -7,68 +7,109 @@ use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
 
-/// Build the application router with all API routes and Swagger UI.
-pub fn build_router(state: AppState) -> Router {
+/// Available API versions.
+pub const API_VERSIONS: &[ApiVersion] = &[ApiVersion {
+    version: "v1",
+    status: "stable",
+    deprecated: false,
+}];
+
+/// Metadata describing a single API version.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ApiVersion {
+    /// Version identifier (e.g. "v1").
+    pub version: &'static str,
+    /// Lifecycle status: "stable", "beta", or "deprecated".
+    pub status: &'static str,
+    /// Whether this version is deprecated and scheduled for removal.
+    pub deprecated: bool,
+}
+
+/// Response for `GET /api/versions`.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ApiVersionsResponse {
+    /// List of available API versions.
+    pub versions: Vec<ApiVersion>,
+    /// The recommended version for new integrations.
+    pub latest: String,
+}
+
+/// List available API versions.
+#[utoipa::path(
+    get,
+    path = "/api/versions",
+    tag = "Meta",
+    responses(
+        (status = 200, description = "Available API versions", body = ApiVersionsResponse),
+    )
+)]
+pub async fn list_api_versions() -> axum::Json<ApiVersionsResponse> {
+    axum::Json(ApiVersionsResponse {
+        versions: API_VERSIONS.to_vec(),
+        latest: "v1".to_string(),
+    })
+}
+
+/// Build the v1 API routes (without the `/api/v1` prefix — that is applied via `nest`).
+fn build_v1_routes() -> Router<AppState> {
     Router::new()
-        // Health check
-        .route("/health", get(handlers::health::health_check))
         // Metrics endpoint
-        .route("/api/v1/metrics", get(handlers::metrics::get_metrics))
+        .route("/metrics", get(handlers::metrics::get_metrics))
         // Synchronous notification endpoints
-        .route("/api/v1/send", post(handlers::send::send_notification))
-        .route("/api/v1/send/batch", post(handlers::send::send_batch))
+        .route("/send", post(handlers::send::send_notification))
+        .route("/send/batch", post(handlers::send::send_batch))
         // Async queue-based notification
-        .route("/api/v1/send/async", post(handlers::queue::send_async))
-        .route(
-            "/api/v1/send/async/batch",
-            post(handlers::queue::send_async_batch),
-        )
+        .route("/send/async", post(handlers::queue::send_async))
+        .route("/send/async/batch", post(handlers::queue::send_async_batch))
         // Status endpoints
         .route(
-            "/api/v1/status/{notification_id}",
+            "/status/{notification_id}",
             get(handlers::status::get_status),
         )
-        .route("/api/v1/status", get(handlers::status::get_all_statuses))
+        .route("/status", get(handlers::status::get_all_statuses))
         // Template endpoints
+        .route("/templates", post(handlers::templates::create_template))
+        .route("/templates", get(handlers::templates::list_templates))
         .route(
-            "/api/v1/templates",
-            post(handlers::templates::create_template),
-        )
-        .route(
-            "/api/v1/templates",
-            get(handlers::templates::list_templates),
-        )
-        .route(
-            "/api/v1/templates/{name}",
+            "/templates/{name}",
             get(handlers::templates::get_template)
                 .put(handlers::templates::update_template)
                 .delete(handlers::templates::delete_template),
         )
         .route(
-            "/api/v1/templates/{name}/render",
+            "/templates/{name}/render",
             post(handlers::templates::render_template),
         )
         // Provider info endpoints
+        .route("/providers", get(handlers::providers::list_providers))
         .route(
-            "/api/v1/providers",
-            get(handlers::providers::list_providers),
-        )
-        .route(
-            "/api/v1/providers/{name}",
+            "/providers/{name}",
             get(handlers::providers::get_provider),
         )
         // Queue management endpoints
-        .route("/api/v1/queue/stats", get(handlers::queue::get_stats))
-        .route("/api/v1/queue/tasks", get(handlers::queue::list_tasks))
+        .route("/queue/stats", get(handlers::queue::get_stats))
+        .route("/queue/tasks", get(handlers::queue::list_tasks))
+        .route("/queue/tasks/{task_id}", get(handlers::queue::get_task))
         .route(
-            "/api/v1/queue/tasks/{task_id}",
-            get(handlers::queue::get_task),
-        )
-        .route(
-            "/api/v1/queue/tasks/{task_id}/cancel",
+            "/queue/tasks/{task_id}/cancel",
             post(handlers::queue::cancel_task),
         )
-        .route("/api/v1/queue/purge", post(handlers::queue::purge_tasks))
+        .route("/queue/purge", post(handlers::queue::purge_tasks))
+}
+
+/// Build the application router with all API routes and Swagger UI.
+///
+/// The versioned API is mounted under `/api/v1` using [`Router::nest`],
+/// making it straightforward to add `/api/v2` in the future without
+/// touching existing v1 handlers.
+pub fn build_router(state: AppState) -> Router {
+    Router::new()
+        // Health check (version-independent)
+        .route("/health", get(handlers::health::health_check))
+        // API version discovery (version-independent)
+        .route("/api/versions", get(list_api_versions))
+        // Mount v1 API under /api/v1
+        .nest("/api/v1", build_v1_routes())
         .with_state(state)
         // Swagger UI and OpenAPI spec (stateless, merged after with_state)
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))

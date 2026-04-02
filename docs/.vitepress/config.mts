@@ -44,6 +44,7 @@ export default defineConfig({
             { text: 'Scheduled & Delayed Send', link: '/guide/scheduled-send' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
+            { text: 'API Versioning', link: '/guide/api-versioning' },
           ],
         },
         {

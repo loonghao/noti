@@ -25,6 +25,7 @@ use crate::handlers::{
         RenderedTemplateResponse, TemplateListResponse, TemplateResponse, UpdateTemplateRequest,
     },
 };
+use crate::routes::{self, ApiVersion, ApiVersionsResponse};
 
 /// Auto-generated OpenAPI documentation for the noti notification service.
 #[derive(OpenApi)]
@@ -39,6 +40,7 @@ use crate::handlers::{
     ),
     tags(
         (name = "Health", description = "Health check endpoints"),
+        (name = "Meta", description = "API version discovery and metadata"),
         (name = "Notifications", description = "Synchronous notification sending"),
         (name = "Async Queue", description = "Asynchronous queue-based notification processing"),
         (name = "Status", description = "Delivery status tracking"),
@@ -49,6 +51,8 @@ use crate::handlers::{
     paths(
         // Health
         health::health_check,
+        // Meta
+        routes::list_api_versions,
         // Notifications
         send::send_notification,
         send::send_batch,
@@ -83,6 +87,8 @@ use crate::handlers::{
         HealthResponse, DependencyHealth, ComponentHealth,
         // Common
         RetryConfig,
+        // Meta
+        ApiVersion, ApiVersionsResponse,
         // Send
         SendRequest, SendApiResponse,
         BatchSendRequest, BatchTarget, BatchSendApiResponse, TargetApiResult,

@@ -24,6 +24,22 @@ async fn test_health_check() {
 }
 
 #[tokio::test]
+async fn test_api_versions() {
+    let server = build_test_server();
+    let response = server.get("/api/versions").await;
+
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["latest"], "v1");
+    let versions = body["versions"].as_array().unwrap();
+    assert!(!versions.is_empty());
+    let v1 = &versions[0];
+    assert_eq!(v1["version"], "v1");
+    assert_eq!(v1["status"], "stable");
+    assert_eq!(v1["deprecated"], false);
+}
+
+#[tokio::test]
 async fn test_list_providers() {
     let server = build_test_server();
     let response = server.get("/api/v1/providers").await;
