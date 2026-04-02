@@ -43,6 +43,7 @@ export default defineConfig({
             { text: 'Core Features', link: '/guide/core-features' },
             { text: 'Scheduled & Delayed Send', link: '/guide/scheduled-send' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
+            { text: 'Webhook Callbacks', link: '/guide/webhook-callbacks' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
             { text: 'API Versioning', link: '/guide/api-versioning' },
           ],

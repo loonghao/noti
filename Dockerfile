@@ -1,5 +1,22 @@
 # ── Stage 1: Build ──────────────────────────────────────────────
-FROM rust:1.85-bookworm AS builder
+# Multi-arch support: build with `docker buildx build --platform linux/amd64,linux/arm64`
+FROM --platform=$BUILDPLATFORM rust:1.85-bookworm AS builder
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Install cross-compilation toolchain for arm64 when building on amd64
+RUN case "$TARGETPLATFORM" in \
+      "linux/arm64") \
+        apt-get update && apt-get install -y --no-install-recommends \
+          gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+        && rm -rf /var/lib/apt/lists/* \
+        && rustup target add aarch64-unknown-linux-gnu \
+        ;; \
+    esac
+
+# Set the correct Cargo target and linker for cross-compilation
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 
 WORKDIR /build
 
@@ -19,12 +36,29 @@ RUN mkdir -p crates/noti-cli/src && echo "fn main(){}" > crates/noti-cli/src/mai
  && mkdir -p crates/noti-server/src && echo "fn main(){}" > crates/noti-server/src/main.rs
 
 # Build dependencies only (cached unless Cargo.toml/Cargo.lock change)
-RUN cargo build --release --workspace 2>/dev/null || true
+RUN case "$TARGETPLATFORM" in \
+      "linux/arm64") CARGO_TARGET="--target aarch64-unknown-linux-gnu" ;; \
+      *) CARGO_TARGET="" ;; \
+    esac && cargo build --release --workspace $CARGO_TARGET 2>/dev/null || true
 
 # Copy real source and rebuild
 COPY crates/ crates/
 RUN touch crates/*/src/main.rs crates/*/src/lib.rs 2>/dev/null || true
-RUN cargo build --release --bin noti-server --bin noti
+RUN case "$TARGETPLATFORM" in \
+      "linux/arm64") CARGO_TARGET="--target aarch64-unknown-linux-gnu" ;; \
+      *) CARGO_TARGET="" ;; \
+    esac && cargo build --release --bin noti-server --bin noti $CARGO_TARGET
+
+# Copy binaries to a known location regardless of target triple
+RUN mkdir -p /build/out && \
+    case "$TARGETPLATFORM" in \
+      "linux/arm64") \
+        cp /build/target/aarch64-unknown-linux-gnu/release/noti-server /build/out/ && \
+        cp /build/target/aarch64-unknown-linux-gnu/release/noti /build/out/ ;; \
+      *) \
+        cp /build/target/release/noti-server /build/out/ && \
+        cp /build/target/release/noti /build/out/ ;; \
+    esac
 
 # ── Stage 2: Runtime ────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
@@ -36,8 +70,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN groupadd --gid 1000 noti && useradd --uid 1000 --gid noti --create-home noti
 
-COPY --from=builder /build/target/release/noti-server /usr/local/bin/noti-server
-COPY --from=builder /build/target/release/noti /usr/local/bin/noti
+COPY --from=builder /build/out/noti-server /usr/local/bin/noti-server
+COPY --from=builder /build/out/noti /usr/local/bin/noti
 
 # Default data directory for SQLite queue
 RUN mkdir -p /data && chown noti:noti /data

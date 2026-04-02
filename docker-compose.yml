@@ -4,6 +4,7 @@ services:
     build: .
     container_name: noti-server
     restart: unless-stopped
+    profiles: ["prod", "default"]
     ports:
       - "${NOTI_PORT:-3000}:3000"
     volumes:
@@ -28,6 +29,32 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  # ── noti-server (development) ──────────────────────────────────
+  # Usage: docker compose --profile dev up
+  # - In-memory queue (faster, no persistence)
+  # - Human-readable text logs
+  # - No authentication
+  # - Verbose debug logging
+  noti-dev:
+    build: .
+    container_name: noti-dev
+    profiles: ["dev"]
+    ports:
+      - "${NOTI_PORT:-3000}:3000"
+    environment:
+      NOTI_HOST: "0.0.0.0"
+      NOTI_PORT: "3000"
+      NOTI_LOG_FORMAT: "text"
+      NOTI_LOG_LEVEL: "debug"
+      NOTI_QUEUE_BACKEND: "memory"
+      NOTI_WORKER_COUNT: "2"
+      NOTI_API_KEYS: ""
+      NOTI_RATE_LIMIT_MAX: "1000"
+      NOTI_RATE_LIMIT_WINDOW_SECS: "60"
+      NOTI_RATE_LIMIT_PER_IP: "false"
+      NOTI_CORS_ALLOWED_ORIGINS: "*"
+      NOTI_MAX_BODY_SIZE: "10485760"
 
 volumes:
   noti-data:

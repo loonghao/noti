@@ -19,10 +19,14 @@ curl http://localhost:3000/health
 ### Build the image
 
 ```bash
+# Single-platform build (default: current architecture)
 docker build -t noti-server .
+
+# Multi-arch build (requires Docker Buildx)
+docker buildx build --platform linux/amd64,linux/arm64 -t noti-server .
 ```
 
-The multi-stage Dockerfile produces a minimal Debian-slim image containing both `noti-server` and the `noti` CLI. The image includes `curl` for HTTP-based health checks against the `/health` endpoint.
+The multi-stage Dockerfile produces a minimal Debian-slim image containing both `noti-server` and the `noti` CLI. The image includes `curl` for HTTP-based health checks against the `/health` endpoint. Multi-arch builds support both `linux/amd64` and `linux/arm64` (Apple Silicon, AWS Graviton, etc.).
 
 ### Run with Docker
 
@@ -44,13 +48,16 @@ docker run -d --name noti \
 
 ### Docker Compose
 
-The included `docker-compose.yml` provides a production-ready configuration:
+The included `docker-compose.yml` supports **profiles** for different environments:
 
 ```bash
-# Start with default settings
+# Start production server (default profile)
 docker compose up -d
 
-# Start with custom API keys
+# Start development server (in-memory queue, debug logs, no auth)
+docker compose --profile dev up
+
+# Start with custom API keys (production)
 NOTI_API_KEYS="my-secret-key" docker compose up -d
 
 # View logs
@@ -59,6 +66,10 @@ docker compose logs -f noti-server
 # Stop
 docker compose down
 ```
+
+::: tip Development vs Production
+The `dev` profile uses in-memory queue, text logging at debug level, no API key authentication, and relaxed rate limits — ideal for local testing. The default/`prod` profile uses SQLite persistence, JSON logging, and secure defaults.
+:::
 
 Override any setting via environment variables or a `.env` file:
 
