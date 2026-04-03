@@ -365,21 +365,54 @@ mod tests {
     #[test]
     fn test_queue_backend_type_from_str_lossy() {
         // Explicit memory variants
-        assert_eq!(QueueBackendType::from_str_lossy("memory"), QueueBackendType::Memory);
-        assert_eq!(QueueBackendType::from_str_lossy("mem"), QueueBackendType::Memory);
-        assert_eq!(QueueBackendType::from_str_lossy("in-memory"), QueueBackendType::Memory);
-        assert_eq!(QueueBackendType::from_str_lossy("MEMORY"), QueueBackendType::Memory);
-        assert_eq!(QueueBackendType::from_str_lossy("In-Memory"), QueueBackendType::Memory);
+        assert_eq!(
+            QueueBackendType::from_str_lossy("memory"),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("mem"),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("in-memory"),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("MEMORY"),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("In-Memory"),
+            QueueBackendType::Memory
+        );
 
         // SQLite variants
-        assert_eq!(QueueBackendType::from_str_lossy("sqlite"), QueueBackendType::Sqlite);
-        assert_eq!(QueueBackendType::from_str_lossy("sql"), QueueBackendType::Sqlite);
-        assert_eq!(QueueBackendType::from_str_lossy("db"), QueueBackendType::Sqlite);
-        assert_eq!(QueueBackendType::from_str_lossy("SQLITE"), QueueBackendType::Sqlite);
+        assert_eq!(
+            QueueBackendType::from_str_lossy("sqlite"),
+            QueueBackendType::Sqlite
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("sql"),
+            QueueBackendType::Sqlite
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("db"),
+            QueueBackendType::Sqlite
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy("SQLITE"),
+            QueueBackendType::Sqlite
+        );
 
         // Unknown values default to Memory (with warning)
-        assert_eq!(QueueBackendType::from_str_lossy("redis"), QueueBackendType::Memory);
-        assert_eq!(QueueBackendType::from_str_lossy(""), QueueBackendType::Memory);
+        assert_eq!(
+            QueueBackendType::from_str_lossy("redis"),
+            QueueBackendType::Memory
+        );
+        assert_eq!(
+            QueueBackendType::from_str_lossy(""),
+            QueueBackendType::Memory
+        );
     }
 
     #[test]
