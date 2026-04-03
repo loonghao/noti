@@ -1676,6 +1676,12 @@ async fn e2e_worker_handles_failed_task() {
         task["last_error"].is_string(),
         "failed task should have an error message"
     );
+    // With max_retries=0, only 1 attempt should have been made
+    assert_eq!(
+        task["attempts"].as_u64().unwrap(),
+        1,
+        "with max_retries=0, should have exactly 1 attempt"
+    );
 
     // Verify stats reflect the failed task
     let resp = client
@@ -2232,41 +2238,6 @@ async fn e2e_retry_exhausted_task_fails() {
         assert!(received[0]["last_error"].is_string());
         assert_eq!(received[0]["metadata"]["test"], "retry-fail");
     }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_retry_zero_retries_fails_immediately() {
-    // With max_retries=0, a failing task should fail on the first attempt.
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "no retry test",
-            "retry": {"max_retries": 0, "delay_ms": 10}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "failed");
-    // With 0 retries, only 1 attempt should have been made
-    assert_eq!(
-        task["attempts"].as_u64().unwrap(),
-        1,
-        "with max_retries=0, should have exactly 1 attempt"
-    );
 
     worker_handle.shutdown_and_join().await;
 }
