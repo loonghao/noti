@@ -95,6 +95,6 @@ jobs:
               --slug "${skill_name}" \
               --name "${skill_name}" \
               --version "${SKILL_VERSION}" \
-              --no-input
+              --tags latest
             echo "Published: ${skill_name}"
           done

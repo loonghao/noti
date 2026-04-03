@@ -16,9 +16,17 @@ RUN case "$TARGETPLATFORM" in \
     esac
 
 # Set the correct Cargo target and linker for cross-compilation
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+    PKG_CONFIG_ALLOW_CROSS=1
 
 WORKDIR /build
+
+# Configure cargo for better CI robustness
+ENV CARGO_NET_RETRY=10 \
+    CARGO_HTTP_TIMEOUT=600
 
 # Copy manifests first for layer caching
 COPY Cargo.toml Cargo.lock ./
@@ -36,6 +44,7 @@ RUN mkdir -p crates/noti-cli/src && echo "fn main(){}" > crates/noti-cli/src/mai
  && mkdir -p crates/noti-server/src && echo "fn main(){}" > crates/noti-server/src/main.rs
 
 # Build dependencies only (cached unless Cargo.toml/Cargo.lock change)
+# Use || true to allow partial dependency caching; real build will fail explicitly if needed
 RUN case "$TARGETPLATFORM" in \
       "linux/arm64") CARGO_TARGET="--target aarch64-unknown-linux-gnu" ;; \
       *) CARGO_TARGET="" ;; \

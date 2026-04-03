@@ -1987,7 +1987,10 @@ common::dual_backend_test!(
         assert_eq!(task["status"], "completed");
 
         // Verify metadata is preserved in task info (SQLite roundtrip)
-        assert_eq!(task["metadata"]["request_id"], format!("{label}req-abc-123"));
+        assert_eq!(
+            task["metadata"]["request_id"],
+            format!("{label}req-abc-123")
+        );
         assert_eq!(task["metadata"]["source"], format!("{label}e2e-test"));
         assert_eq!(task["metadata"]["env"], "test");
 
@@ -2206,7 +2209,10 @@ common::dual_backend_test!(
                 "{label}callback should be received for completed task"
             );
             assert_eq!(received[0]["status"], "completed");
-            assert_eq!(received[0]["metadata"]["test"], format!("{label}retry-success"));
+            assert_eq!(
+                received[0]["metadata"]["test"],
+                format!("{label}retry-success")
+            );
         }
 
         worker_handle.shutdown_and_join().await;

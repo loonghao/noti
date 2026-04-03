@@ -83,10 +83,7 @@ fn build_v1_routes() -> Router<AppState> {
         )
         // Provider info endpoints
         .route("/providers", get(handlers::providers::list_providers))
-        .route(
-            "/providers/{name}",
-            get(handlers::providers::get_provider),
-        )
+        .route("/providers/{name}", get(handlers::providers::get_provider))
         // Queue management endpoints
         .route("/queue/stats", get(handlers::queue::get_stats))
         .route("/queue/tasks", get(handlers::queue::list_tasks))
