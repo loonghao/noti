@@ -2292,25 +2292,48 @@ async fn e2e_retry_zero_retries_fails_immediately() {
 
 #[tokio::test]
 async fn e2e_priority_high_tasks_processed_before_normal() {
-    // Enqueue 3 normal + 1 high, verify all complete (high processed first)
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
-    let client = reqwest::Client::new();
+    // Enqueue 3 normal tasks, then 1 high-priority task on a server with NO
+    // workers.  Start a single worker afterwards so dequeue order reflects
+    // priority.  Verify via callback arrival order that the high-priority task
+    // is processed before all normal tasks.
+    let (callback_base, payloads) = spawn_callback_server().await;
 
-    // Enqueue 3 normal tasks
-    let mut normal_ids = Vec::new();
+    let mut registry = noti_core::ProviderRegistry::new();
+    registry.register(Arc::new(MockOkProvider));
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue 3 normal tasks first
+    let mut all_ids = Vec::new();
     for i in 0..3 {
         let resp = client
             .post(format!("{base}/api/v1/send/async"))
             .json(&json!({
                 "provider": "mock-ok",
                 "text": format!("normal-{i}"),
-                "priority": "normal"
+                "priority": "normal",
+                "callback_url": &callback_url,
+                "metadata": {"order": format!("normal-{i}")}
             }))
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
-        normal_ids.push(
+        all_ids.push(
             resp.json::<Value>().await.unwrap()["task_id"]
                 .as_str()
                 .unwrap()
@@ -2318,37 +2341,64 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
         );
     }
 
-    // Enqueue 1 high-priority task
+    // Enqueue 1 high-priority task (after the normals)
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
         .json(&json!({
             "provider": "mock-ok",
             "text": "high-priority",
-            "priority": "high"
+            "priority": "high",
+            "callback_url": &callback_url,
+            "metadata": {"order": "high"}
         }))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let high_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    all_ids.push(
+        resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
 
-    // Wait for all to complete
-    wait_for_terminal_status(&client, &base, &high_id).await;
-    for nid in &normal_ids {
-        wait_for_terminal_status(&client, &base, nid).await;
+    // Start a single worker — enforces serial processing in priority order.
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all tasks to reach terminal state
+    for id in &all_ids {
+        wait_for_terminal_status(&client, &base, id).await;
     }
 
-    // All should be completed
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 4);
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Verify callback order: high-priority task should arrive first
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 4,
+            "expected at least 4 callbacks, got {}",
+            received.len()
+        );
+        // First callback must be from the high-priority task
+        assert_eq!(
+            received[0]["metadata"]["order"], "high",
+            "high-priority task should be processed first, but first callback was: {:?}",
+            received[0]["metadata"]["order"]
+        );
+        // Remaining callbacks should all be normal tasks
+        for i in 1..4 {
+            let order = received[i]["metadata"]["order"].as_str().unwrap_or("");
+            assert!(
+                order.starts_with("normal"),
+                "callback {i} should be a normal task, got: {order}"
+            );
+        }
+    }
 
     worker_handle.shutdown_and_join().await;
 }

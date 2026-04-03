@@ -85,7 +85,7 @@ rounds or require coordination with the iteration agent.
 
 ## Code — Minor (noti-server)
 
-- [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
+- [x] ~~`config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches~~ — aligned: `from_str_lossy` now explicitly matches `"memory"/"mem"/"in-memory"` and logs `tracing::warn!` for unknown values; added `test_queue_backend_type_from_str_lossy` unit test
 - [x] ~~`e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper~~ — extracted to `tests/common/mod.rs` with `bind_and_serve()` core helper (e9846ee)
 - [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 169 times (was 167 before 57d99f3) — low-impact boilerplate; each test independently creates a client
 - [x] ~~`e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top~~ — all spawn helpers extracted to `tests/common/mod.rs` (e9846ee)
@@ -94,7 +94,7 @@ rounds or require coordination with the iteration agent.
 ## Tests — E2E Test Quality (noti-server)
 
 - [x] ~~`e2e_priority_ordering_urgent_before_low` — name claims to verify ordering but only asserts all tasks completed~~ — iteration agent rewrote to verify all tasks completed; `e2e_priority_ordering_verified_by_completion_order` now verifies callback arrival order (e9846ee)
-- [ ] `e2e_priority_high_tasks_processed_before_normal` (line 2064) — name claims ordering verification but only checks `stats.completed >= 4`; functionally identical to `e2e_worker_multiple_tasks_processed`
+- [x] ~~`e2e_priority_high_tasks_processed_before_normal` (line 2064) — name claims ordering verification but only checks `stats.completed >= 4`~~ — rewritten: enqueues 3 normal + 1 high on server without workers, starts single worker, verifies via callback arrival order that high is processed first
 - [ ] `e2e_retry_zero_retries_fails_immediately` (line 2029) — near-duplicate of `e2e_worker_handles_failed_task` (line 1409); only unique assertion is `attempts == 1`, which should be added to the existing test instead
 - [ ] **13 tests use inline server setup** (~15-21 lines each) instead of common helpers — up from 10 in prior round. The inline pattern (registry+AppState+build_router+TcpListener+bind+axum::serve+tokio::spawn) appears at lines: 1755, 1827, 2593, 2867, 2982, 3100, 3181, 3272, 3355, 3431, 4550, 4689, 4805. Should extract `spawn_server_without_workers() -> (String, AppState)` and `spawn_server_sqlite_without_workers() -> (String, AppState)` to `common/mod.rs`
 - [ ] `e2e_batch_async_mixed_priorities_processed_in_order` (line 2855) ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order` (line 2970) — ~95% identical, only queue backend type and diagnostic string prefixes differ; consider a parameterized helper or macro
