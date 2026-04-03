@@ -324,13 +324,9 @@ impl QueueBackend for InMemoryQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use noti_core::{Message, Priority, ProviderConfig, RetryPolicy};
+    use crate::test_utils::make_task;
+    use noti_core::{Priority, RetryPolicy};
     use std::time::Duration;
-
-    fn make_task(provider: &str, priority: Priority) -> NotificationTask {
-        let msg = Message::text("test").with_priority(priority);
-        NotificationTask::new(provider, ProviderConfig::new(), msg)
-    }
 
     #[tokio::test]
     async fn test_enqueue_dequeue() {

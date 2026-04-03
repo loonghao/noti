@@ -117,4 +117,4 @@ rounds or require coordination with the iteration agent.
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
-- [ ] `make_task()` helper defined identically in both `sqlite.rs:506` and `memory.rs:330` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module
+- [x] ~~`make_task()` helper defined identically in both `sqlite.rs:506` and `memory.rs:330` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module~~ — extracted to `crates/noti-queue/src/test_utils.rs` with `#[cfg(test)] pub(crate) mod test_utils` in lib.rs; both `memory.rs` and `sqlite.rs` now import via `crate::test_utils::make_task`

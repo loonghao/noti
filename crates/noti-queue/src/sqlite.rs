@@ -500,13 +500,9 @@ impl QueueBackend for SqliteQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::make_task;
     use noti_core::{Message, Priority, ProviderConfig, RetryPolicy};
     use std::time::Duration;
-
-    fn make_task(provider: &str, priority: Priority) -> NotificationTask {
-        let msg = Message::text("test").with_priority(priority);
-        NotificationTask::new(provider, ProviderConfig::new(), msg)
-    }
 
     #[tokio::test]
     async fn test_sqlite_enqueue_dequeue() {
