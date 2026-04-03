@@ -47,6 +47,12 @@ impl TelegramProvider {
         if config.get("disable_web_page_preview") == Some("true") {
             payload["disable_web_page_preview"] = json!(true);
         }
+        if let Some(thread_id) = config.get("thread_id") {
+            payload["message_thread_id"] = json!(thread_id);
+        }
+        if config.get("protect") == Some("true") {
+            payload["protect_content"] = json!(true);
+        }
 
         let resp = self
             .client
@@ -110,6 +116,12 @@ impl TelegramProvider {
 
             if config.get("disable_notification") == Some("true") {
                 form = form.text("disable_notification", "true".to_string());
+            }
+            if let Some(thread_id) = config.get("thread_id") {
+                form = form.text("message_thread_id", thread_id.to_string());
+            }
+            if config.get("protect") == Some("true") {
+                form = form.text("protect_content", "true".to_string());
             }
 
             let resp = self
@@ -186,6 +198,14 @@ impl NotifyProvider for TelegramProvider {
             ParamDef::optional(
                 "disable_web_page_preview",
                 "Disable link previews (true/false)",
+            ),
+            ParamDef::optional(
+                "thread_id",
+                "Message thread ID for supergroup topics",
+            ),
+            ParamDef::optional(
+                "protect",
+                "Protect content from forwarding/saving (true/false)",
             ),
         ]
     }

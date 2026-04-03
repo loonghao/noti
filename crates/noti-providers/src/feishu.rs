@@ -59,6 +59,16 @@ impl NotifyProvider for FeishuProvider {
                 "app_secret",
                 "Feishu App Secret (required with app_id for uploads)",
             ),
+            ParamDef::optional(
+                "mention_user",
+                "User ID to @mention (ou_xxxxx format)",
+            ),
+            ParamDef::optional("mention_all", "Mention all users (true/false)"),
+            ParamDef::optional("type", "Message type: text, post, interactive").with_example("interactive"),
+            ParamDef::optional("card_title", "Interactive card title"),
+            ParamDef::optional("card_text", "Interactive card content text"),
+            ParamDef::optional("card_btn", "Card button (format: label:url, can be repeated)"),
+            ParamDef::optional("card_json", "Raw card JSON for full control"),
         ]
     }
 
@@ -74,6 +84,25 @@ impl NotifyProvider for FeishuProvider {
         self.validate_config(config)?;
         let hook_id = config.require("hook_id", "feishu")?;
         let url = Self::build_webhook_url(hook_id);
+
+        // Check for interactive card with raw JSON
+        if let Some(card_json) = config.get("card_json") {
+            let parsed: serde_json::Value = serde_json::from_str(card_json)
+                .map_err(|e| NotiError::Validation(format!("invalid card JSON: {e}")))?;
+            let body = json!({
+                "msg_type": "interactive",
+                "card": parsed
+            });
+
+            let mut request = self.client.post(&url);
+            request = Self::maybe_sign(request, &body, config);
+
+            let resp = request
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+            return Self::parse_response(resp).await;
+        }
 
         // If there's an image attachment, upload via Open API if credentials available
         if let Some(img) = message.first_image() {
@@ -179,29 +208,45 @@ impl NotifyProvider for FeishuProvider {
 
         let body = match message.format {
             MessageFormat::Markdown => {
-                json!({
-                    "msg_type": "interactive",
-                    "card": {
-                        "header": {
-                            "title": {
-                                "tag": "plain_text",
-                                "content": message.title.as_deref().unwrap_or("Notification")
-                            }
-                        },
-                        "elements": [{
-                            "tag": "markdown",
-                            "content": message.text
-                        }]
-                    }
-                })
+                // Check for interactive card with structured params
+                if config.get("type") == Some("interactive")
+                    || config.get("card_title").is_some()
+                    || config.get("card_text").is_some()
+                    || config.get("card_btn").is_some()
+                {
+                    Self::build_interactive_card(message, config)
+                } else {
+                    json!({
+                        "msg_type": "interactive",
+                        "card": {
+                            "header": {
+                                "title": {
+                                    "tag": "plain_text",
+                                    "content": message.title.as_deref().unwrap_or("Notification")
+                                }
+                            },
+                            "elements": [{
+                                "tag": "markdown",
+                                "content": message.text
+                            }]
+                        }
+                    })
+                }
             }
             _ => {
-                json!({
-                    "msg_type": "text",
-                    "content": {
-                        "text": message.text
-                    }
-                })
+                // Check for @mention first
+                if config.get("mention_user").is_some()
+                    || config.get("mention_all") == Some("true")
+                {
+                    Self::build_post_with_mention(message, config)
+                } else {
+                    json!({
+                        "msg_type": "text",
+                        "content": {
+                            "text": message.text
+                        }
+                    })
+                }
             }
         };
 
@@ -238,6 +283,111 @@ impl FeishuProvider {
             request = request.json(body);
         }
         request
+    }
+
+    /// Build interactive card payload from structured params.
+    fn build_interactive_card(message: &Message, config: &ProviderConfig) -> serde_json::Value {
+        let title = config
+            .get("card_title")
+            .or(message.title.as_deref())
+            .unwrap_or("Notification");
+        let text = config.get("card_text").unwrap_or(&message.text);
+        let msg_type = config.get("type").unwrap_or("interactive");
+
+        if msg_type != "interactive" {
+            // Fall back to simple text/post
+            return json!({
+                "msg_type": msg_type,
+                "content": {
+                    "text": text
+                }
+            });
+        }
+
+        let mut elements = Vec::new();
+
+        // Add markdown or text content
+        elements.push(json!({
+            "tag": "markdown",
+            "content": text
+        }));
+
+        // Add buttons if specified
+        if let Some(btns) = config.get("card_btn") {
+            let mut btns_array = Vec::new();
+            for btn in btns.split(',') {
+                let btn = btn.trim();
+                if let Some((label, url)) = btn.split_once(':') {
+                    btns_array.push(json!({
+                        "tag": "action",
+                        "actions": [{
+                            "tag": "button",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": label.trim()
+                            },
+                            "type": "primary",
+                            "url": url.trim()
+                        }]
+                    }));
+                }
+            }
+            if !btns_array.is_empty() {
+                elements.push(json!({
+                    "tag": "div"
+                }));
+                elements.extend(btns_array);
+            }
+        }
+
+        json!({
+            "msg_type": "interactive",
+            "card": {
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": title
+                    }
+                },
+                "elements": elements
+            }
+        })
+    }
+
+    /// Build a post message with optional @mention.
+    fn build_post_with_mention(
+        message: &Message,
+        config: &ProviderConfig,
+    ) -> serde_json::Value {
+        let title = message.title.as_deref().unwrap_or("Notification");
+        let mut content: Vec<Vec<serde_json::Value>> = Vec::new();
+
+        // Add @mention if specified
+        if let Some(user_id) = config.get("mention_user") {
+            content.push(vec![json!({
+                "tag": "at",
+                "user_id": user_id
+            })]);
+        } else if config.get("mention_all") == Some("true") {
+            content.push(vec![json!({
+                "tag": "at",
+                "user_id": "all"
+            })]);
+        }
+
+        content.push(vec![json!({ "tag": "text", "text": &message.text })]);
+
+        json!({
+            "msg_type": "post",
+            "content": {
+                "post": {
+                    "zh_cn": {
+                        "title": title,
+                        "content": content
+                    }
+                }
+            }
+        })
     }
 
     /// Obtain a tenant_access_token from Feishu Open API.

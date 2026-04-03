@@ -45,6 +45,12 @@ impl NotifyProvider for SlackProvider {
                 "bot_token",
                 "Slack Bot token (required for file uploads, xoxb-...)",
             ),
+            ParamDef::optional(
+                "thread_ts",
+                "Thread reply ts (timestamp) to reply in a thread",
+            ),
+            ParamDef::optional("ephemeral_user", "User ID for ephemeral message (visible only to that user)"),
+            ParamDef::optional("send_at", "Unix timestamp for scheduled message"),
         ]
     }
 
@@ -59,6 +65,20 @@ impl NotifyProvider for SlackProvider {
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
         let webhook_url = config.require("webhook_url", "slack")?;
+
+        // Use chat.postMessage API for thread_ts, ephemeral, or scheduled messages
+        let thread_ts = config.get("thread_ts");
+        let ephemeral_user = config.get("ephemeral_user");
+        let send_at = config.get("send_at");
+
+        if thread_ts.is_some() || ephemeral_user.is_some() || send_at.is_some() {
+            if let Some(bot_token) = config.get("bot_token") {
+                return self.send_via_api(message, config, bot_token).await;
+            }
+            return Err(NotiError::Validation(
+                "bot_token required for thread_ts, ephemeral_user, or send_at".to_string(),
+            ));
+        }
 
         // If attachments are present and a bot_token is provided, use file upload API
         if message.has_attachments() {
@@ -183,5 +203,95 @@ impl SlackProvider {
             "slack",
             "message and file(s) sent successfully",
         ))
+    }
+
+    /// Send message via Slack API (chat.postMessage/chat.postEphemeral/schat.scheduleMessage).
+    async fn send_via_api(
+        &self,
+        message: &Message,
+        config: &ProviderConfig,
+        bot_token: &str,
+    ) -> Result<SendResponse, NotiError> {
+        let channel = config.require("channel", "slack")?;
+        let thread_ts = config.get("thread_ts");
+        let ephemeral_user = config.get("ephemeral_user");
+        let send_at = config.get("send_at");
+
+        let mut payload = match message.format {
+            MessageFormat::Markdown => {
+                json!({
+                    "channel": channel,
+                    "text": message.text,
+                    "blocks": [{
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": message.text
+                        }
+                    }]
+                })
+            }
+            _ => {
+                json!({
+                    "channel": channel,
+                    "text": message.text
+                })
+            }
+        };
+
+        if let Some(ts) = thread_ts {
+            payload["thread_ts"] = json!(ts);
+        }
+        if let Some(icon) = config.get("icon_emoji") {
+            payload["icon_emoji"] = json!(icon);
+        }
+        if let Some(username) = config.get("username") {
+            payload["username"] = json!(username);
+        }
+
+        let api_method = if ephemeral_user.is_some() {
+            "chat.postEphemeral"
+        } else if send_at.is_some() {
+            "chat.scheduleMessage"
+        } else {
+            "chat.postMessage"
+        };
+
+        if let Some(user) = ephemeral_user {
+            payload["user"] = json!(user);
+        }
+        if let Some(ts) = send_at {
+            payload["post_at"] = json!(ts);
+        }
+
+        let resp = self
+            .client
+            .post(format!("https://slack.com/api/{api_method}"))
+            .bearer_auth(bot_token)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        let status = resp.status().as_u16();
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| NotiError::Network(format!("failed to parse response: {e}")))?;
+
+        let ok = raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        if ok {
+            Ok(SendResponse::success("slack", "message sent successfully")
+                .with_status_code(status)
+                .with_raw_response(raw))
+        } else {
+            let err = raw
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            Ok(SendResponse::failure("slack", format!("API error: {err}"))
+                .with_status_code(status)
+                .with_raw_response(raw))
+        }
     }
 }
