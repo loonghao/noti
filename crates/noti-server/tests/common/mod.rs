@@ -193,12 +193,7 @@ pub async fn spawn_server_with_cors_restricted(allowed_origins: Vec<String>) -> 
     let state = default_app_state();
     let origins: Vec<axum::http::HeaderValue> = allowed_origins
         .iter()
-        .filter_map(|o| {
-            o.parse::<axum::http::HeaderValue>().ok().or_else(|| {
-                eprintln!("test: dropping invalid CORS origin: {o}");
-                None
-            })
-        })
+        .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
         .collect();
     let cors_layer = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
