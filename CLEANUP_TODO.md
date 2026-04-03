@@ -103,14 +103,15 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`e2e_batch_async_within_rate_limit_succeeds` ≈ `e2e_sqlite_batch_async_within_rate_limit_succeeds`~~ — deduplicated via `common::dual_backend_test!` macro
 - [x] ~~`e2e_sequential_batch_async_rate_limit_exhaustion` ≈ `e2e_sqlite_sequential_batch_async_rate_limit_exhaustion`~~ — deduplicated via `common::dual_backend_test!` macro
 
-- [ ] `e2e_batch_async_mixed_providers_and_priorities` / `e2e_sqlite_batch_async_mixed_providers_and_priorities` — same dual-backend scenario; still a good `common::dual_backend_test!` candidate, but current inputs and ordering assertions diverge slightly
-- [ ] `e2e_batch_async_mock_fail_provider_with_priorities` / `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` — same dual-backend scenario; still a good shared-body candidate, but callback-order assertions are not fully aligned yet
-- [ ] `e2e_batch_async_flaky_with_retry_succeeds` ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds` — ~95% identical, same InMemory vs SQLite pattern (added 157cf8d–64d421c)
-- [ ] `e2e_batch_async_flaky_retry_exhausted_fails` ≈ `e2e_sqlite_batch_async_flaky_retry_exhausted_fails` — ~95% identical, same pattern (added 157cf8d–64d421c)
-- [ ] `e2e_batch_async_mixed_retry_policies` ≈ `e2e_sqlite_batch_async_mixed_retry_policies` — ~95% identical, same pattern (added 157cf8d–64d421c)
-- [ ] `e2e_backoff_delay_timing_flaky_task` ≈ `e2e_sqlite_backoff_delay_timing_flaky_task` — ~95% identical, same InMemory vs SQLite pattern (added 251aca6)
-- [ ] `e2e_backoff_delay_timing_exhausted_retries` ≈ `e2e_sqlite_backoff_delay_timing_exhausted_retries` — ~95% identical, same pattern (added 251aca6)
-- [ ] `e2e_exponential_backoff_api_flaky_task` ≈ `e2e_sqlite_exponential_backoff_api_flaky_task` — ~95% identical, same pattern (added 481e7cf)
+- [x] ~~`e2e_batch_async_mixed_providers_and_priorities` / `e2e_sqlite_batch_async_mixed_providers_and_priorities`~~ — same dual-backend scenario; still a good `common::dual_backend_test!` candidate, but current inputs and ordering assertions diverge slightly
+- [x] ~~`e2e_batch_async_mock_fail_provider_with_priorities` / `e2e_sqlite_batch_async_mock_fail_provider_with_priorities`~~ — migrated via `dual_backend_test!`
+- [x] ~~`e2e_batch_async_flaky_with_retry_succeeds` ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds`~~ — ~95% identical, same InMemory vs SQLite pattern (migrated 2026-04-04)
+- [x] ~~`e2e_batch_async_flaky_retry_exhausted_fails` ≈ `e2e_sqlite_batch_async_flaky_retry_exhausted_fails`~~ — ~95% identical, same pattern (migrated 2026-04-04)
+- [x] ~~`e2e_batch_async_mixed_retry_policies` ≈ `e2e_sqlite_batch_async_mixed_retry_policies`~~ — ~95% identical, same pattern (migrated 2026-04-04)
+- [x] ~~`e2e_backoff_delay_timing_flaky_task` ≈ `e2e_sqlite_backoff_delay_timing_flaky_task`~~ — ~95% identical, same InMemory vs SQLite pattern (migrated 2026-04-04)
+- [x] ~~`e2e_backoff_delay_timing_exhausted_retries` ≈ `e2e_sqlite_backoff_delay_timing_exhausted_retries`~~ — ~95% identical, same pattern (migrated 2026-04-04)
+- [x] ~~`e2e_exponential_backoff_api_flaky_task` ≈ `e2e_sqlite_exponential_backoff_api_flaky_task`~~ — ~95% identical, same pattern (migrated 2026-04-04)
+- [x] ~~`e2e_concurrent_tasks_all_processed` ≈ `e2e_sqlite_concurrent_tasks_all_processed`~~ — ~95% identical, same pattern (migrated 2026-04-04)
 - [x] ~~`e2e_scheduled_send_delay_seconds_holds_task` ≈ `e2e_sqlite_scheduled_send_delay_seconds_holds_task` — ~95% identical, same InMemory vs SQLite pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
 - [x] ~~`e2e_scheduled_send_delay_zero_is_immediate` ≈ `e2e_sqlite_scheduled_send_delay_zero_is_immediate` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
 - [x] ~~`e2e_scheduled_send_rfc3339_timestamp` ≈ `e2e_sqlite_scheduled_send_rfc3339_timestamp` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`

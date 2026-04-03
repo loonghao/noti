@@ -3705,67 +3705,70 @@ async fn e2e_template_update_body_only_preserves_title() {
 
 // ───────────────────── Concurrent task processing tests ─────────────────────
 
-/// Multiple tasks enqueued concurrently are all processed to completion by workers.
-#[tokio::test]
-async fn e2e_concurrent_tasks_all_processed() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+common::dual_backend_test!(
+    with_workers,
+    e2e_concurrent_tasks_all_processed,
+    e2e_sqlite_concurrent_tasks_all_processed,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    let task_count = 10;
-    let mut task_ids = Vec::new();
+        let task_count = 10;
+        let mut task_ids = Vec::new();
 
-    // Enqueue many tasks concurrently
-    let mut handles = Vec::new();
-    for i in 0..task_count {
-        let c = client.clone();
-        let b = base.clone();
-        handles.push(tokio::spawn(async move {
-            let resp = c
-                .post(format!("{b}/api/v1/send/async"))
-                .json(&json!({
-                    "provider": "mock-ok",
-                    "text": format!("concurrent task {i}")
-                }))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(resp.status(), StatusCode::ACCEPTED);
-            resp.json::<Value>().await.unwrap()["task_id"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        }));
+        // Enqueue many tasks concurrently
+        let mut handles = Vec::new();
+        for i in 0..task_count {
+            let c = client.clone();
+            let b = base.clone();
+            handles.push(tokio::spawn(async move {
+                let resp = c
+                    .post(format!("{b}/api/v1/send/async"))
+                    .json(&json!({
+                        "provider": "mock-ok",
+                        "text": format!("{label}concurrent task {i}")
+                    }))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), StatusCode::ACCEPTED);
+                resp.json::<Value>().await.unwrap()["task_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }));
+        }
+
+        for h in handles {
+            task_ids.push(h.await.unwrap());
+        }
+
+        assert_eq!(task_ids.len(), task_count);
+
+        // Wait for all to reach terminal state
+        for id in &task_ids {
+            let result = wait_for_terminal_status(&client, &base, id).await;
+            assert_eq!(
+                result["status"].as_str().unwrap(),
+                "completed",
+                "{label}task {id} should be completed"
+            );
+        }
+
+        // Stats should show all completed
+        let resp = client
+            .get(format!("{base}/api/v1/queue/stats"))
+            .send()
+            .await
+            .unwrap();
+        let stats: Value = resp.json().await.unwrap();
+        assert!(stats["completed"].as_u64().unwrap() >= task_count as u64);
+        assert_eq!(stats["queued"].as_u64().unwrap(), 0);
+        assert_eq!(stats["processing"].as_u64().unwrap(), 0);
+
+        worker_handle.shutdown_and_join().await;
     }
-
-    for h in handles {
-        task_ids.push(h.await.unwrap());
-    }
-
-    assert_eq!(task_ids.len(), task_count);
-
-    // Wait for all to reach terminal state
-    for id in &task_ids {
-        let result = wait_for_terminal_status(&client, &base, id).await;
-        assert_eq!(
-            result["status"].as_str().unwrap(),
-            "completed",
-            "task {id} should be completed"
-        );
-    }
-
-    // Stats should show all completed
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= task_count as u64);
-    assert_eq!(stats["queued"].as_u64().unwrap(), 0);
-    assert_eq!(stats["processing"].as_u64().unwrap(), 0);
-
-    worker_handle.shutdown_and_join().await;
-}
+);
 
 /// Each task is processed exactly once — no duplicates.
 #[tokio::test]
@@ -3826,63 +3829,6 @@ async fn e2e_concurrent_tasks_no_duplicate_processing() {
             assert_eq!(count, 1, "task {id} should have exactly 1 callback");
         }
     } // MutexGuard dropped before await
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// Concurrent processing on SQLite backend also works correctly.
-#[tokio::test]
-async fn e2e_sqlite_concurrent_tasks_all_processed() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let task_count = 10;
-    let mut task_ids = Vec::new();
-
-    let mut handles = Vec::new();
-    for i in 0..task_count {
-        let c = client.clone();
-        let b = base.clone();
-        handles.push(tokio::spawn(async move {
-            let resp = c
-                .post(format!("{b}/api/v1/send/async"))
-                .json(&json!({
-                    "provider": "mock-ok",
-                    "text": format!("sqlite concurrent {i}")
-                }))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(resp.status(), StatusCode::ACCEPTED);
-            resp.json::<Value>().await.unwrap()["task_id"]
-                .as_str()
-                .unwrap()
-                .to_string()
-        }));
-    }
-
-    for h in handles {
-        task_ids.push(h.await.unwrap());
-    }
-
-    for id in &task_ids {
-        let result = wait_for_terminal_status(&client, &base, id).await;
-        assert_eq!(
-            result["status"].as_str().unwrap(),
-            "completed",
-            "SQLite task {id} should be completed"
-        );
-    }
-
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= task_count as u64);
-    assert_eq!(stats["queued"].as_u64().unwrap(), 0);
-    assert_eq!(stats["processing"].as_u64().unwrap(), 0);
 
     worker_handle.shutdown_and_join().await;
 }
@@ -5120,154 +5066,156 @@ async fn e2e_sqlite_concurrent_batch_async_requests() {
 
 // ───────────────────── Batch async with retry policies (mock-flaky + retry config) ─────────────────────
 
-/// Batch-enqueue items where some use `mock-flaky` (fails first N calls then succeeds).
-/// With retry policy configured, flaky tasks should eventually succeed.
-#[tokio::test]
-async fn e2e_batch_async_flaky_with_retry_succeeds() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
+common::dual_backend_test!(
+    with_workers_serial,
+    e2e_batch_async_flaky_with_retry_succeeds,
+    e2e_sqlite_batch_async_flaky_with_retry_succeeds,
+    |spawn_fn, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+        let (base, worker_handle) = spawn_fn(vec![flaky]).await;
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-flaky",
-                    "text": "flaky retry batch item 1",
-                    "retry": {"max_retries": 3, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "high"
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "reliable batch item",
-                    "retry": {"max_retries": 0, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "normal"
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-flaky",
+                        "text": "{label}flaky retry batch item 1",
+                        "retry": {"max_retries": 3, "delay_ms": 10},
+                        "callback_url": &callback_url,
+                        "priority": "high"
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "{label}reliable batch item",
+                        "retry": {"max_retries": 0, "delay_ms": 10},
+                        "callback_url": &callback_url,
+                        "priority": "normal"
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["enqueued"], 2);
-    assert_eq!(body["failed"], 0);
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["enqueued"], 2);
+        assert_eq!(body["failed"], 0);
 
-    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
-    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+        let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+        let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
 
-    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
-    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+        let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+        let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
 
-    assert_eq!(
-        task_flaky["status"], "completed",
-        "flaky task should succeed after retries"
-    );
-    assert!(
-        task_flaky["attempts"].as_u64().unwrap() >= 3,
-        "flaky task should have taken multiple attempts"
-    );
-
-    assert_eq!(task_ok["status"], "completed");
-    assert_eq!(task_ok["attempts"].as_u64().unwrap(), 1);
-
-    // Both callbacks should arrive
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    {
-        let received = payloads.lock().unwrap();
         assert_eq!(
-            received.len(),
-            2,
-            "expected 2 callbacks, got {}",
-            received.len()
+            task_flaky["status"], "completed",
+            "{label}flaky task should succeed after retries"
         );
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// Batch-enqueue items where flaky provider has too few retries configured —
-/// the task should fail after exhausting retries, while mock-ok still succeeds.
-#[tokio::test]
-async fn e2e_batch_async_flaky_retry_exhausted_fails() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    // MockFlakyProvider fails first 5 calls — with max_retries=1, only 2 total attempts → fails
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-flaky",
-                    "text": "flaky exhaustion batch",
-                    "retry": {"max_retries": 1, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "urgent"
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "reliable batch item",
-                    "retry": {"max_retries": 0, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "low"
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["enqueued"], 2);
-
-    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
-    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
-
-    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
-    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
-
-    assert_eq!(
-        task_flaky["status"], "failed",
-        "flaky task should fail after exhausting retries"
-    );
-    assert!(
-        task_flaky["attempts"].as_u64().unwrap() >= 2,
-        "flaky task should have attempted at least 2 times"
-    );
-
-    assert_eq!(task_ok["status"], "completed");
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len(),
-            2,
-            "expected 2 callbacks, got {}",
-            received.len()
+        assert!(
+            task_flaky["attempts"].as_u64().unwrap() >= 3,
+            "{label}flaky task should have taken multiple attempts"
         );
 
-        // Verify the flaky callback reports failure
-        let flaky_cb = received
-            .iter()
-            .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
-            .expect("should find flaky task callback");
-        assert_eq!(flaky_cb["status"], "failed");
-    }
+        assert_eq!(task_ok["status"], "completed");
+        assert_eq!(task_ok["attempts"].as_u64().unwrap(), 1);
 
-    worker_handle.shutdown_and_join().await;
-}
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        {
+            let received = payloads.lock().unwrap();
+            assert_eq!(
+                received.len(),
+                2,
+                "{label}expected 2 callbacks, got {}",
+                received.len()
+            );
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+common::dual_backend_test!(
+    with_workers_serial,
+    e2e_batch_async_flaky_retry_exhausted_fails,
+    e2e_sqlite_batch_async_flaky_retry_exhausted_fails,
+    |spawn_fn, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        // MockFlakyProvider fails first 5 calls — with max_retries=1, only 2 total attempts → fails
+        let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
+        let (base, worker_handle) = spawn_fn(vec![flaky]).await;
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-flaky",
+                        "text": "{label}flaky exhaustion batch",
+                        "retry": {"max_retries": 1, "delay_ms": 10},
+                        "callback_url": &callback_url,
+                        "priority": "urgent"
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "{label}reliable batch item",
+                        "retry": {"max_retries": 0, "delay_ms": 10},
+                        "callback_url": &callback_url,
+                        "priority": "low"
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["enqueued"], 2);
+
+        let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
+        let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
+
+        let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
+        let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
+
+        assert_eq!(
+            task_flaky["status"], "failed",
+            "{label}flaky task should fail after exhausting retries"
+        );
+        assert!(
+            task_flaky["attempts"].as_u64().unwrap() >= 2,
+            "{label}flaky task should have attempted at least 2 times"
+        );
+
+        assert_eq!(task_ok["status"], "completed");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        {
+            let received = payloads.lock().unwrap();
+            assert_eq!(
+                received.len(),
+                2,
+                "{label}expected 2 callbacks, got {}",
+                received.len()
+            );
+
+            let flaky_cb = received
+                .iter()
+                .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
+                .expect("{label}should find flaky task callback");
+            assert_eq!(flaky_cb["status"], "failed");
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 /// Batch with mixed retry policies: flaky with sufficient retries, mock-fail with zero retries,
 /// mock-ok with no retries, mock-fail with retries. Verifies each task gets its own retry behavior.
@@ -5602,154 +5550,6 @@ common::dual_backend_test!(
 
 // ───────────────────── SQLite batch async retry policy tests ─────────────────────
 
-/// SQLite mirror of `e2e_batch_async_flaky_with_retry_succeeds`.
-/// Batch-enqueue items where some use `mock-flaky` on SQLite queue backend.
-/// With retry policy configured, flaky tasks should eventually succeed.
-#[tokio::test]
-async fn e2e_sqlite_batch_async_flaky_with_retry_succeeds() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-flaky",
-                    "text": "sqlite flaky retry batch item 1",
-                    "retry": {"max_retries": 3, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "high"
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite reliable batch item",
-                    "retry": {"max_retries": 0, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "normal"
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["enqueued"], 2);
-    assert_eq!(body["failed"], 0);
-
-    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
-    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
-
-    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
-    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
-
-    assert_eq!(
-        task_flaky["status"], "completed",
-        "SQLite: flaky task should succeed after retries"
-    );
-    assert!(
-        task_flaky["attempts"].as_u64().unwrap() >= 3,
-        "SQLite: flaky task should have taken multiple attempts"
-    );
-
-    assert_eq!(task_ok["status"], "completed");
-    assert_eq!(task_ok["attempts"].as_u64().unwrap(), 1);
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len(),
-            2,
-            "SQLite: expected 2 callbacks, got {}",
-            received.len()
-        );
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// SQLite mirror of `e2e_batch_async_flaky_retry_exhausted_fails`.
-/// Batch-enqueue items where flaky provider has too few retries configured on SQLite backend —
-/// the task should fail after exhausting retries, while mock-ok still succeeds.
-#[tokio::test]
-async fn e2e_sqlite_batch_async_flaky_retry_exhausted_fails() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
-    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-flaky",
-                    "text": "sqlite flaky exhaustion batch",
-                    "retry": {"max_retries": 1, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "urgent"
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite reliable batch item",
-                    "retry": {"max_retries": 0, "delay_ms": 10},
-                    "callback_url": &callback_url,
-                    "priority": "low"
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["enqueued"], 2);
-
-    let task_id_flaky = body["results"][0]["task_id"].as_str().unwrap().to_string();
-    let task_id_ok = body["results"][1]["task_id"].as_str().unwrap().to_string();
-
-    let task_flaky = wait_for_terminal_status(&client, &base, &task_id_flaky).await;
-    let task_ok = wait_for_terminal_status(&client, &base, &task_id_ok).await;
-
-    assert_eq!(
-        task_flaky["status"], "failed",
-        "SQLite: flaky task should fail after exhausting retries"
-    );
-    assert!(
-        task_flaky["attempts"].as_u64().unwrap() >= 2,
-        "SQLite: flaky task should have attempted at least 2 times"
-    );
-
-    assert_eq!(task_ok["status"], "completed");
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len(),
-            2,
-            "SQLite: expected 2 callbacks, got {}",
-            received.len()
-        );
-
-        let flaky_cb = received
-            .iter()
-            .find(|p| p["task_id"].as_str() == Some(task_id_flaky.as_str()))
-            .expect("SQLite: should find flaky task callback");
-        assert_eq!(flaky_cb["status"], "failed");
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
 /// SQLite mirror of `e2e_batch_async_mixed_retry_policies`.
 /// Batch with mixed retry policies on SQLite backend: flaky with sufficient retries,
 /// mock-fail with zero retries, mock-ok with no retries, mock-fail with retries.
@@ -5854,93 +5654,101 @@ async fn e2e_sqlite_batch_async_mixed_retry_policies() {
 
 // ───────────────────── Backoff delay timing (e2e) ─────────────────────
 
-#[tokio::test]
-async fn e2e_backoff_delay_timing_flaky_task() {
-    // MockFlakyProvider fails first 2 calls, then succeeds on the 3rd.
-    // With delay_ms=200 (fixed), the queue should hold the task for ~200ms per retry.
-    // Total expected wall-clock time >= 200ms * 2 retries = 400ms.
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
+common::dual_backend_test!(
+    with_workers_serial,
+    e2e_backoff_delay_timing_flaky_task,
+    e2e_sqlite_backoff_delay_timing_flaky_task,
+    |spawn_fn, label| {
+        // MockFlakyProvider fails first 2 calls, then succeeds on the 3rd.
+        // With delay_ms=200 (fixed), the queue should hold the task for ~200ms per retry.
+        // Total expected wall-clock time >= 200ms * 2 retries = 400ms.
+        let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+        let (base, worker_handle) = spawn_fn(vec![flaky]).await;
+        let client = test_client();
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-flaky",
-            "text": "backoff timing test",
-            "retry": {"max_retries": 3, "delay_ms": 200}
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-flaky",
+                "text": "{label}backoff timing test",
+                "retry": {"max_retries": 3, "delay_ms": 200}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
 
-    assert_eq!(
-        task["status"], "completed",
-        "flaky task should eventually succeed after retries"
-    );
-    assert!(
-        task["attempts"].as_u64().unwrap() >= 3,
-        "expected at least 3 attempts, got {}",
-        task["attempts"]
-    );
-    // 2 retries × 200ms delay = 400ms minimum (allow some slack for poll interval)
-    assert!(
-        elapsed >= Duration::from_millis(350),
-        "backoff delay should enforce at least ~400ms total delay, but elapsed was {elapsed:?}"
-    );
+        assert_eq!(
+            task["status"], "completed",
+            "{label}flaky task should eventually succeed after retries"
+        );
+        assert!(
+            task["attempts"].as_u64().unwrap() >= 3,
+            "{label}expected at least 3 attempts, got {}",
+            task["attempts"]
+        );
+        // 2 retries × 200ms delay = 400ms minimum (allow some slack for poll interval)
+        assert!(
+            elapsed >= Duration::from_millis(350),
+            "{label}backoff delay should enforce at least ~400ms total delay, but elapsed was {elapsed:?}"
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
-#[tokio::test]
-async fn e2e_backoff_delay_timing_exhausted_retries() {
-    // MockFailProvider always fails. With max_retries=2, delay_ms=150,
-    // the task should fail after 3 attempts with >= 300ms total delay.
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+common::dual_backend_test!(
+    with_workers,
+    e2e_backoff_delay_timing_exhausted_retries,
+    e2e_sqlite_backoff_delay_timing_exhausted_retries,
+    |spawn_fn, label| {
+        // MockFailProvider always fails. With max_retries=2, delay_ms=150,
+        // the task should fail after 3 attempts with >= 300ms total delay.
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "backoff exhaustion timing test",
-            "retry": {"max_retries": 2, "delay_ms": 150}
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-fail",
+                "text": "{label}backoff exhaustion timing test",
+                "retry": {"max_retries": 2, "delay_ms": 150}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
 
-    assert_eq!(task["status"], "failed");
-    // 2 retries × 150ms = 300ms minimum
-    assert!(
-        elapsed >= Duration::from_millis(250),
-        "backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
-    );
+        assert_eq!(task["status"], "failed");
+        // 2 retries × 150ms = 300ms minimum
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "{label}backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 #[tokio::test]
 async fn e2e_backoff_delay_zero_delay_is_fast() {
@@ -5985,147 +5793,68 @@ async fn e2e_backoff_delay_zero_delay_is_fast() {
     worker_handle.shutdown_and_join().await;
 }
 
-#[tokio::test]
-async fn e2e_sqlite_backoff_delay_timing_flaky_task() {
-    // Same as e2e_backoff_delay_timing_flaky_task but with SQLite queue backend.
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
-
-    let start = std::time::Instant::now();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-flaky",
-            "text": "sqlite backoff timing test",
-            "retry": {"max_retries": 3, "delay_ms": 200}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
-
-    assert_eq!(
-        task["status"], "completed",
-        "SQLite: flaky task should eventually succeed after retries"
-    );
-    assert!(
-        task["attempts"].as_u64().unwrap() >= 3,
-        "SQLite: expected at least 3 attempts, got {}",
-        task["attempts"]
-    );
-    assert!(
-        elapsed >= Duration::from_millis(350),
-        "SQLite: backoff delay should enforce at least ~400ms total, but elapsed was {elapsed:?}"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_backoff_delay_timing_exhausted_retries() {
-    // Same as e2e_backoff_delay_timing_exhausted_retries but with SQLite queue backend.
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let start = std::time::Instant::now();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "sqlite backoff exhaustion timing test",
-            "retry": {"max_retries": 2, "delay_ms": 150}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
-
-    assert_eq!(task["status"], "failed");
-    assert!(
-        elapsed >= Duration::from_millis(250),
-        "SQLite: backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
 // ───────────────────── Exponential backoff via API (e2e) ─────────────────────
 
-#[tokio::test]
-async fn e2e_exponential_backoff_api_flaky_task() {
-    // Test that backoff_multiplier in the API request produces exponential delays.
-    // MockFlakyProvider fails first 2 calls, succeeds on 3rd.
-    // With delay_ms=100 and backoff_multiplier=2.0:
-    //   attempt 1 fails → wait 100ms
-    //   attempt 2 fails → wait 200ms
-    //   attempt 3 succeeds
-    // Total backoff ≥ 250ms (100 + 200 = 300, minus timing slack)
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
+common::dual_backend_test!(
+    with_workers_serial,
+    e2e_exponential_backoff_api_flaky_task,
+    e2e_sqlite_exponential_backoff_api_flaky_task,
+    |spawn_fn, label| {
+        // Test that backoff_multiplier in the API request produces exponential delays.
+        // MockFlakyProvider fails first 2 calls, succeeds on 3rd.
+        // With delay_ms=100 and backoff_multiplier=2.0:
+        //   attempt 1 fails → wait 100ms
+        //   attempt 2 fails → wait 200ms
+        //   attempt 3 succeeds
+        // Total backoff ≥ 250ms (100 + 200 = 300, minus timing slack)
+        let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+        let (base, worker_handle) = spawn_fn(vec![flaky]).await;
+        let client = test_client();
 
-    let start = std::time::Instant::now();
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-flaky",
-            "text": "exponential backoff test",
-            "retry": {
-                "max_retries": 3,
-                "delay_ms": 100,
-                "backoff_multiplier": 2.0,
-                "max_delay_ms": 5000
-            }
-        }))
-        .send()
-        .await
-        .unwrap();
+        let start = std::time::Instant::now();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-flaky",
+                "text": "{label}exponential backoff test",
+                "retry": {
+                    "max_retries": 3,
+                    "delay_ms": 100,
+                    "backoff_multiplier": 2.0,
+                    "max_delay_ms": 5000
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
 
-    assert_eq!(
-        task["status"], "completed",
-        "flaky task with exponential backoff should eventually succeed"
-    );
-    assert!(
-        task["attempts"].as_u64().unwrap() >= 3,
-        "expected at least 3 attempts, got {}",
-        task["attempts"]
-    );
-    // 100ms + 200ms = 300ms minimum backoff
-    assert!(
-        elapsed >= Duration::from_millis(250),
-        "exponential backoff should take at least ~300ms, but elapsed was {elapsed:?}"
-    );
+        assert_eq!(
+            task["status"], "completed",
+            "{label}flaky task with exponential backoff should eventually succeed"
+        );
+        assert!(
+            task["attempts"].as_u64().unwrap() >= 3,
+            "{label}expected at least 3 attempts, got {}",
+            task["attempts"]
+        );
+        // 100ms + 200ms = 300ms minimum backoff
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "{label}exponential backoff should take at least ~300ms, but elapsed was {elapsed:?}"
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 #[tokio::test]
 async fn e2e_exponential_backoff_api_exhausted() {
@@ -6215,56 +5944,6 @@ async fn e2e_exponential_backoff_api_max_delay_caps() {
     assert!(
         elapsed < Duration::from_millis(2000),
         "max_delay_ms cap should prevent 2s+ delays, elapsed was {elapsed:?}"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_exponential_backoff_api_flaky_task() {
-    // Same as e2e_exponential_backoff_api_flaky_task but with SQLite queue backend.
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = test_client();
-
-    let start = std::time::Instant::now();
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-flaky",
-            "text": "sqlite exponential backoff test",
-            "retry": {
-                "max_retries": 3,
-                "delay_ms": 100,
-                "backoff_multiplier": 2.0,
-                "max_delay_ms": 5000
-            }
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
-
-    assert_eq!(
-        task["status"], "completed",
-        "SQLite: flaky task with exponential backoff should succeed"
-    );
-    assert!(
-        task["attempts"].as_u64().unwrap() >= 3,
-        "SQLite: expected at least 3 attempts, got {}",
-        task["attempts"]
-    );
-    assert!(
-        elapsed >= Duration::from_millis(250),
-        "SQLite: exponential backoff should take at least ~300ms, elapsed was {elapsed:?}"
     );
 
     worker_handle.shutdown_and_join().await;
