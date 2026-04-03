@@ -666,7 +666,7 @@ pub fn test_client() -> reqwest::Client {
 ///
 /// ## `basic` — spawn returns `String` (no providers, no workers)
 /// ```ignore
-/// dual_backend_test!(
+/// common::dual_backend_test!(
 ///     basic,
 ///     e2e_my_test,
 ///     e2e_sqlite_my_test,
@@ -676,7 +676,7 @@ pub fn test_client() -> reqwest::Client {
 ///
 /// ## `without_workers` — spawn returns `(String, AppState)`
 /// ```ignore
-/// dual_backend_test!(
+/// common::dual_backend_test!(
 ///     without_workers,
 ///     e2e_my_test,
 ///     e2e_sqlite_my_test,
@@ -686,7 +686,7 @@ pub fn test_client() -> reqwest::Client {
 ///
 /// ## `with_workers` — spawn returns `(String, WorkerHandle)`
 /// ```ignore
-/// dual_backend_test!(
+/// common::dual_backend_test!(
 ///     with_workers,
 ///     e2e_my_test,
 ///     e2e_sqlite_my_test,
@@ -696,7 +696,7 @@ pub fn test_client() -> reqwest::Client {
 ///
 /// ## `with_workers_serial` — spawn returns `(String, WorkerHandle)`
 /// ```ignore
-/// dual_backend_test!(
+/// common::dual_backend_test!(
 ///     with_workers_serial,
 ///     e2e_my_test,
 ///     e2e_sqlite_my_test,
@@ -706,7 +706,7 @@ pub fn test_client() -> reqwest::Client {
 ///
 /// ## `with_workers_and_rate_limit` — spawn returns `(String, WorkerHandle, u64)`
 /// ```ignore
-/// dual_backend_test!(
+/// common::dual_backend_test!(
 ///     with_workers_and_rate_limit,
 ///     e2e_my_test,
 ///     e2e_sqlite_my_test,
