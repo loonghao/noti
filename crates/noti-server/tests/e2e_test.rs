@@ -1608,143 +1608,147 @@ async fn e2e_validated_json_valid_request_passes_validation() {
 
 // ───────────────────── Worker processing & Webhook callback (e2e) ─────────────────────
 
-#[tokio::test]
-async fn e2e_worker_processes_task_to_completion() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+common::dual_backend_test!(
+    with_workers,
+    e2e_worker_processes_task_to_completion,
+    e2e_sqlite_worker_processes_task_to_completion,
+    |spawn_with_workers, label| {
+        let (base, worker_handle) = spawn_with_workers().await;
+        let client = test_client();
 
-    // Enqueue a task for mock-ok provider
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "worker e2e test"
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "worker e2e test"
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Wait for worker to process the task
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "completed",
-        "task should be completed by worker"
-    );
-    assert_eq!(task["provider"], "mock-ok");
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(
+            task["status"], "completed",
+            "{label}task should be completed by worker"
+        );
+        assert_eq!(task["provider"], "mock-ok");
 
-    // Verify stats reflect the completed task
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 1);
+        let resp = client
+            .get(format!("{base}/api/v1/queue/stats"))
+            .send()
+            .await
+            .unwrap();
+        let stats: Value = resp.json().await.unwrap();
+        assert!(stats["completed"].as_u64().unwrap() >= 1);
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
-#[tokio::test]
-async fn e2e_worker_handles_failed_task() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+common::dual_backend_test!(
+    with_workers,
+    e2e_worker_handles_failed_task,
+    e2e_sqlite_worker_handles_failed_task,
+    |spawn_with_workers, label| {
+        let (base, worker_handle) = spawn_with_workers().await;
+        let client = test_client();
 
-    // Enqueue a task for mock-fail provider with no retries
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "worker failure test",
-            "retry": {"max_retries": 0, "delay_ms": 10}
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-fail",
+                "text": "worker failure test",
+                "retry": {"max_retries": 0, "delay_ms": 10}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Wait for worker to process and fail the task
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "failed", "task should be failed by worker");
-    assert!(
-        task["last_error"].is_string(),
-        "failed task should have an error message"
-    );
-    // With max_retries=0, only 1 attempt should have been made
-    assert_eq!(
-        task["attempts"].as_u64().unwrap(),
-        1,
-        "with max_retries=0, should have exactly 1 attempt"
-    );
-
-    // Verify stats reflect the failed task
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["failed"].as_u64().unwrap() >= 1);
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_webhook_callback_on_success() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
-
-    let callback_url = format!("{callback_base}/callback");
-
-    // Enqueue a task with callback_url
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "callback success test",
-            "callback_url": callback_url,
-            "metadata": {"trace_id": "e2e-callback-ok"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // Wait for task to complete
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed");
-
-    // Give callback a moment to fire (best-effort, async)
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Verify callback was received
-    {
-        let received = payloads.lock().unwrap();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(
+            task["status"], "failed",
+            "{label}task should be failed by worker"
+        );
         assert!(
-            !received.is_empty(),
-            "callback server should have received at least one payload"
+            task["last_error"].is_string(),
+            "{label}failed task should have an error message"
+        );
+        assert_eq!(
+            task["attempts"].as_u64().unwrap(),
+            1,
+            "{label}with max_retries=0, should have exactly 1 attempt"
         );
 
-        let cb = &received[0];
-        assert_eq!(cb["task_id"], task_id);
-        assert_eq!(cb["provider"], "mock-ok");
-        assert_eq!(cb["status"], "completed");
-        assert!(cb["attempts"].as_u64().unwrap() >= 1);
-        assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
-    }
+        let resp = client
+            .get(format!("{base}/api/v1/queue/stats"))
+            .send()
+            .await
+            .unwrap();
+        let stats: Value = resp.json().await.unwrap();
+        assert!(stats["failed"].as_u64().unwrap() >= 1);
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+common::dual_backend_test!(
+    with_workers,
+    e2e_webhook_callback_on_success,
+    e2e_sqlite_webhook_callback_on_success,
+    |spawn_with_workers, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        let (base, worker_handle) = spawn_with_workers().await;
+        let client = test_client();
+
+        let callback_url = format!("{callback_base}/callback");
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "callback success test",
+                "callback_url": callback_url,
+                "metadata": {"trace_id": "e2e-callback-ok"}
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(task["status"], "completed");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        {
+            let received = payloads.lock().unwrap();
+            assert!(
+                !received.is_empty(),
+                "{label}callback server should have received at least one payload"
+            );
+
+            let cb = &received[0];
+            assert_eq!(cb["task_id"], task_id);
+            assert_eq!(cb["provider"], "mock-ok");
+            assert_eq!(cb["status"], "completed");
+            assert!(cb["attempts"].as_u64().unwrap() >= 1);
+            assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 #[tokio::test]
 async fn e2e_webhook_callback_on_failure() {
@@ -2669,130 +2673,6 @@ async fn e2e_sqlite_async_send_query_cancel_purge() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     assert!(body["purged"].as_u64().unwrap() >= 1);
-}
-
-#[tokio::test]
-async fn e2e_sqlite_worker_processes_task_to_completion() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite worker e2e test"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "completed",
-        "task should be completed by worker (SQLite backend)"
-    );
-    assert_eq!(task["provider"], "mock-ok");
-
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 1);
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_worker_handles_failed_task() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "sqlite worker failure test",
-            "retry": {"max_retries": 0, "delay_ms": 10}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "failed",
-        "task should be failed by worker (SQLite backend)"
-    );
-    assert!(
-        task["last_error"].is_string(),
-        "failed task should have an error message"
-    );
-
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["failed"].as_u64().unwrap() >= 1);
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_webhook_callback_on_success() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite callback success test",
-            "callback_url": callback_url,
-            "metadata": {"trace_id": "sqlite-callback-ok"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed");
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            !received.is_empty(),
-            "callback server should have received at least one payload (SQLite backend)"
-        );
-
-        let cb = &received[0];
-        assert_eq!(cb["task_id"], task_id);
-        assert_eq!(cb["provider"], "mock-ok");
-        assert_eq!(cb["status"], "completed");
-        assert_eq!(cb["metadata"]["trace_id"], "sqlite-callback-ok");
-    }
-
-    worker_handle.shutdown_and_join().await;
 }
 
 #[tokio::test]
