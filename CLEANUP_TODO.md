@@ -95,7 +95,7 @@ rounds or require coordination with the iteration agent.
 
 - [x] ~~`e2e_priority_ordering_urgent_before_low` — name claims to verify ordering but only asserts all tasks completed~~ — iteration agent rewrote to verify all tasks completed; `e2e_priority_ordering_verified_by_completion_order` now verifies callback arrival order (e9846ee)
 - [x] ~~`e2e_priority_high_tasks_processed_before_normal` (line 2064) — name claims ordering verification but only checks `stats.completed >= 4`~~ — rewritten: enqueues 3 normal + 1 high on server without workers, starts single worker, verifies via callback arrival order that high is processed first
-- [ ] `e2e_retry_zero_retries_fails_immediately` — near-duplicate of `e2e_worker_handles_failed_task`; only unique assertion is `attempts == 1`, which should be added to the existing test instead
+- [x] ~~`e2e_retry_zero_retries_fails_immediately` — near-duplicate of `e2e_worker_handles_failed_task`; only unique assertion is `attempts == 1`, which should be added to the existing test instead~~ — obsolete: duplicate test was removed and `e2e_worker_handles_failed_task` now covers `attempts == 1`
 - [x] ~~`e2e_test.rs`: 13 tests use inline server setup (~15-21 lines each) instead of common helpers~~ — extracted `spawn_server_without_workers()` and `spawn_server_sqlite_without_workers()` to `tests/common/mod.rs`; all 14 inline `TcpListener::bind` sites replaced
 - [x] ~~`e2e_batch_async_mixed_priorities_processed_in_order` ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order`~~ — deduplicated via `common::dual_backend_test!` macro; backend-specific spawn function + label are now parameterized in one shared test body
 - [x] ~~`e2e_graceful_shutdown_waits_for_inflight_task` ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task`~~ — deduplicated via `common::dual_backend_test!` macro; preserves the same assertions for both backends from one shared test body
@@ -108,12 +108,12 @@ rounds or require coordination with the iteration agent.
 - [ ] `e2e_backoff_delay_timing_flaky_task` ≈ `e2e_sqlite_backoff_delay_timing_flaky_task` — ~95% identical, same InMemory vs SQLite pattern (added 251aca6)
 - [ ] `e2e_backoff_delay_timing_exhausted_retries` ≈ `e2e_sqlite_backoff_delay_timing_exhausted_retries` — ~95% identical, same pattern (added 251aca6)
 - [ ] `e2e_exponential_backoff_api_flaky_task` ≈ `e2e_sqlite_exponential_backoff_api_flaky_task` — ~95% identical, same pattern (added 481e7cf)
-- [ ] `e2e_scheduled_send_delay_seconds_holds_task` ≈ `e2e_sqlite_scheduled_send_delay_seconds_holds_task` — ~95% identical, same InMemory vs SQLite pattern (added 9bdd527)
-- [ ] `e2e_scheduled_send_delay_zero_is_immediate` ≈ `e2e_sqlite_scheduled_send_delay_zero_is_immediate` — ~95% identical, same pattern (added 9bdd527)
-- [ ] `e2e_scheduled_send_rfc3339_timestamp` ≈ `e2e_sqlite_scheduled_send_rfc3339_timestamp` — ~95% identical, same pattern (added 9bdd527)
-- [ ] `e2e_scheduled_send_mutually_exclusive_error` ≈ `e2e_sqlite_scheduled_send_mutually_exclusive_error` — ~95% identical, same pattern (added 9bdd527)
-- [ ] `e2e_scheduled_send_invalid_timestamp_format` ≈ `e2e_sqlite_scheduled_send_invalid_timestamp_format` — ~95% identical, same pattern (added 9bdd527)
-- [ ] `e2e_scheduled_send_no_scheduled_at_for_immediate` ≈ `e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate` — ~95% identical, same pattern (added 9bdd527)
+- [x] ~~`e2e_scheduled_send_delay_seconds_holds_task` ≈ `e2e_sqlite_scheduled_send_delay_seconds_holds_task` — ~95% identical, same InMemory vs SQLite pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_delay_zero_is_immediate` ≈ `e2e_sqlite_scheduled_send_delay_zero_is_immediate` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_rfc3339_timestamp` ≈ `e2e_sqlite_scheduled_send_rfc3339_timestamp` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_mutually_exclusive_error` ≈ `e2e_sqlite_scheduled_send_mutually_exclusive_error` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_invalid_timestamp_format` ≈ `e2e_sqlite_scheduled_send_invalid_timestamp_format` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_no_scheduled_at_for_immediate` ≈ `e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
 
 - [x] ~~`spawn_server_with_workers_serial` — near-duplicate of `spawn_server_with_workers`~~ — both extracted to `common/mod.rs` with distinct parameters: `spawn_server_with_workers()` (concurrency=2) and `spawn_server_with_workers_serial(extra_providers)` (concurrency=1) (e9846ee)
 
