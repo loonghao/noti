@@ -87,7 +87,7 @@ rounds or require coordination with the iteration agent.
 
 - [x] ~~`config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches~~ — aligned: `from_str_lossy` now explicitly matches `"memory"/"mem"/"in-memory"` and logs `tracing::warn!` for unknown values; added `test_queue_backend_type_from_str_lossy` unit test
 - [x] ~~`e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper~~ — extracted to `tests/common/mod.rs` with `bind_and_serve()` core helper (e9846ee)
-- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 171 times (was 169 before `ff233ef`) — low-impact boilerplate; each test independently creates a client
+- [x] ~~`e2e_test.rs`: `reqwest::Client::new()` repeated 171 times~~ — extracted `test_client()` helper to `common/mod.rs`, replaced all 171 call sites (cbb3a9b)
 - [x] ~~`e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top~~ — all spawn helpers extracted to `tests/common/mod.rs` (e9846ee)
 - [x] ~~`e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top~~ — all `use` statements now at file top (lines 10-24); no mid-file imports (e9846ee)
 
@@ -97,8 +97,9 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`e2e_priority_high_tasks_processed_before_normal` (line 2064) — name claims ordering verification but only checks `stats.completed >= 4`~~ — rewritten: enqueues 3 normal + 1 high on server without workers, starts single worker, verifies via callback arrival order that high is processed first
 - [ ] `e2e_retry_zero_retries_fails_immediately` — near-duplicate of `e2e_worker_handles_failed_task`; only unique assertion is `attempts == 1`, which should be added to the existing test instead
 - [x] ~~`e2e_test.rs`: 13 tests use inline server setup (~15-21 lines each) instead of common helpers~~ — extracted `spawn_server_without_workers()` and `spawn_server_sqlite_without_workers()` to `tests/common/mod.rs`; all 14 inline `TcpListener::bind` sites replaced
-- [ ] `e2e_batch_async_mixed_priorities_processed_in_order` ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order` — ~95% identical, only queue backend type and diagnostic string prefixes differ; consider a parameterized helper or macro
-- [ ] `e2e_graceful_shutdown_waits_for_inflight_task` ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task` — ~95% identical, same pattern
+- [x] ~~`e2e_batch_async_mixed_priorities_processed_in_order` ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order`~~ — deduplicated via `common::dual_backend_test!` macro; backend-specific spawn function + label are now parameterized in one shared test body
+- [x] ~~`e2e_graceful_shutdown_waits_for_inflight_task` ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task`~~ — deduplicated via `common::dual_backend_test!` macro; preserves the same assertions for both backends from one shared test body
+
 - [ ] `e2e_batch_async_mixed_providers_and_priorities` ≈ `e2e_sqlite_batch_async_mixed_providers_and_priorities` — ~95% identical, same InMemory vs SQLite pattern
 - [ ] `e2e_batch_async_mock_fail_provider_with_priorities` ≈ `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` — ~95% identical, same pattern
 - [ ] `e2e_batch_async_flaky_with_retry_succeeds` ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds` — ~95% identical, same InMemory vs SQLite pattern (added 157cf8d–64d421c)

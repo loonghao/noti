@@ -648,14 +648,179 @@ pub async fn spawn_callback_server() -> (String, Arc<Mutex<Vec<Value>>>) {
 
 // ───────────────────── Shared HTTP client ─────────────────────
 
-/// Return a shared `reqwest::Client` for use in e2e tests.
+/// Return a `reqwest::Client` for use in e2e tests.
 ///
-/// This avoids creating a brand-new client in every test function. The default
-/// `Client` is cheap to clone and reuses a single connection pool, so sharing
-/// one instance across a test is both simpler and more efficient.
+/// Keeping client construction behind this helper makes call sites consistent
+/// and gives the test suite a single place to evolve if it later needs shared
+/// client configuration.
 pub fn test_client() -> reqwest::Client {
     reqwest::Client::new()
 }
+
+// ───────────────────── Dual-backend test macro ─────────────────────
+
+/// Generate two `#[tokio::test]` functions — one for InMemory, one for SQLite —
+/// from a single test body. This eliminates the ~95% code duplication between
+/// `e2e_<name>` and `e2e_sqlite_<name>` test pairs.
+///
+/// The macro accepts two test names and a block that uses the provided spawn
+/// function and label. The block is duplicated: once with the InMemory spawn
+/// variant and once with the SQLite spawn variant.
+///
+/// # Variants
+///
+/// ## `without_workers` — spawn returns `(String, AppState)`
+/// ```ignore
+/// dual_backend_test!(
+///     without_workers,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `with_workers` — spawn returns `(String, WorkerHandle)`
+/// ```ignore
+/// dual_backend_test!(
+///     with_workers,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `with_workers_serial` — spawn returns `(String, WorkerHandle)`
+/// ```ignore
+/// dual_backend_test!(
+///     with_workers_serial,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `with_workers_and_rate_limit` — spawn returns `(String, WorkerHandle, u64)`
+/// ```ignore
+/// dual_backend_test!(
+///     with_workers_and_rate_limit,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+macro_rules! dual_backend_test {
+    // ── without_workers: spawn_fn(providers) -> (String, AppState) ──
+    (without_workers, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn(
+                providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_server::state::AppState) {
+                $crate::common::spawn_server_without_workers(providers).await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn(
+                providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_server::state::AppState) {
+                $crate::common::spawn_server_sqlite_without_workers(providers).await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── with_workers: spawn_fn() -> (String, WorkerHandle) ──
+    (with_workers, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn() -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_with_workers().await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn() -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_sqlite_with_workers().await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── with_workers_serial: spawn_fn(extra_providers) -> (String, WorkerHandle) ──
+    (with_workers_serial, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_with_workers_serial(extra_providers).await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_sqlite_with_workers_serial(extra_providers).await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── with_workers_and_rate_limit: spawn_fn(extra, max, window) -> (String, WorkerHandle, u64) ──
+    (with_workers_and_rate_limit, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+                max_requests: u64,
+                window_secs: u64,
+            ) -> (String, noti_queue::WorkerHandle, u64) {
+                $crate::common::spawn_server_with_workers_and_rate_limit(
+                    extra_providers,
+                    max_requests,
+                    window_secs,
+                )
+                .await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+                max_requests: u64,
+                window_secs: u64,
+            ) -> (String, noti_queue::WorkerHandle, u64) {
+                $crate::common::spawn_server_sqlite_with_workers_and_rate_limit(
+                    extra_providers,
+                    max_requests,
+                    window_secs,
+                )
+                .await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+}
+
+pub(crate) use dual_backend_test;
 
 // ───────────────────── Polling utilities ─────────────────────
 

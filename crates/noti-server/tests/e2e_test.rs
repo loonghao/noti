@@ -20,9 +20,9 @@ use common::{
     spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
-    spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_and_rate_limit,
-    spawn_server_with_workers_serial, spawn_server_without_workers, test_client,
-    wait_for_terminal_status,
+    spawn_server_with_request_id, spawn_server_with_workers,
+    spawn_server_with_workers_and_rate_limit, spawn_server_with_workers_serial,
+    spawn_server_without_workers, test_client, wait_for_terminal_status,
 };
 use noti_queue::QueueBackend;
 use reqwest::StatusCode;
@@ -62,8 +62,13 @@ async fn e2e_api_versions_endpoint() {
     let body: Value = resp.json().await.unwrap();
 
     // Should have a versions array and a latest field
-    let versions = body["versions"].as_array().expect("versions should be an array");
-    assert!(!versions.is_empty(), "at least one version should be listed");
+    let versions = body["versions"]
+        .as_array()
+        .expect("versions should be an array");
+    assert!(
+        !versions.is_empty(),
+        "at least one version should be listed"
+    );
 
     // v1 should be present and stable
     let v1 = versions.iter().find(|v| v["version"] == "v1");
@@ -97,7 +102,10 @@ async fn e2e_api_versions_in_openapi_spec() {
     // Verify the Meta tag exists
     let tags = body["tags"].as_array().unwrap();
     let meta_tag = tags.iter().find(|t| t["name"] == "Meta");
-    assert!(meta_tag.is_some(), "Meta tag should be present in OpenAPI spec");
+    assert!(
+        meta_tag.is_some(),
+        "Meta tag should be present in OpenAPI spec"
+    );
 }
 
 #[tokio::test]
@@ -2821,8 +2829,7 @@ async fn e2e_sqlite_priority_ordering_urgent_before_low() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
     // Create AppState with SQLite queue but NO workers yet
-    let (base, state) =
-        spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
+    let (base, state) = spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = test_client();
     let callback_url = format!("{callback_base}/callback");
@@ -3075,277 +3082,184 @@ async fn e2e_sqlite_task_metadata_preserved() {
 
 // ───────────────────── Batch async with mixed priorities (e2e) ─────────────────────
 
-#[tokio::test]
-async fn e2e_batch_async_mixed_priorities_processed_in_order() {
-    // Batch-enqueue 4 tasks with different priorities via the async batch endpoint.
-    // Use a single worker to ensure strict priority-ordered processing.
-    // Verify via callback order that urgent is processed first, then high, normal, low.
-    let (callback_base, payloads) = spawn_callback_server().await;
+common::dual_backend_test!(
+    without_workers,
+    e2e_batch_async_mixed_priorities_processed_in_order,
+    e2e_sqlite_batch_async_mixed_priorities_processed_in_order,
+    |spawn_without_workers, label| {
+        // Batch-enqueue 4 tasks with different priorities via the async batch endpoint.
+        // Use a single worker to ensure strict priority-ordered processing.
+        // Verify via callback order that urgent is processed first, then high, normal, low.
+        let (callback_base, payloads) = spawn_callback_server().await;
 
-    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
+        let (base, state) = spawn_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    // Batch-enqueue: low, normal, high, urgent — all in one request
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-low",
-                    "priority": "low",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "low"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-normal",
-                    "priority": "normal",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "normal"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-high",
-                    "priority": "high",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "high"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-urgent",
-                    "priority": "urgent",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "urgent"}
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
+        // Batch-enqueue: low, normal, high, urgent — all in one request
+        let resp = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-low",
+                        "priority": "low",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "low"}
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-normal",
+                        "priority": "normal",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "normal"}
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-high",
+                        "priority": "high",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "high"}
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-urgent",
+                        "priority": "urgent",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "urgent"}
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["total"], 4);
-    assert_eq!(body["enqueued"], 4);
-    assert_eq!(body["failed"], 0);
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["total"], 4);
+        assert_eq!(body["enqueued"], 4);
+        assert_eq!(body["failed"], 0);
 
-    // Collect all task IDs
-    let results = body["results"].as_array().unwrap();
-    let task_ids: Vec<String> = results
-        .iter()
-        .map(|r| r["task_id"].as_str().unwrap().to_string())
-        .collect();
+        // Collect all task IDs
+        let results = body["results"].as_array().unwrap();
+        let task_ids: Vec<String> = results
+            .iter()
+            .map(|r| r["task_id"].as_str().unwrap().to_string())
+            .collect();
 
-    // NOW start a single worker so tasks are processed in strict priority order
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+        // NOW start a single worker so tasks are processed in strict priority order
+        let worker_config = noti_queue::WorkerConfig::default()
+            .with_concurrency(1)
+            .with_poll_interval(Duration::from_millis(50));
+        let worker_handle = state.start_workers(worker_config);
 
-    // Wait for all tasks to complete
-    for task_id in &task_ids {
-        wait_for_terminal_status(&client, &base, task_id).await;
-    }
-
-    // Give callbacks time to arrive
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify callback order: urgent → high → normal → low
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            received.len() >= 4,
-            "expected at least 4 callbacks, got {}",
-            received.len()
-        );
-
-        let expected_order = ["urgent", "high", "normal", "low"];
-        for (i, expected) in expected_order.iter().enumerate() {
-            assert_eq!(
-                received[i]["metadata"]["order"].as_str().unwrap(),
-                *expected,
-                "callback #{i} should be '{expected}', got '{}'",
-                received[i]["metadata"]["order"]
-            );
+        // Wait for all tasks to complete
+        for task_id in &task_ids {
+            wait_for_terminal_status(&client, &base, task_id).await;
         }
-    }
 
-    worker_handle.shutdown_and_join().await;
-}
+        // Give callbacks time to arrive
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-#[tokio::test]
-async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
-    // Same as above but using SQLite queue backend.
-    let (callback_base, payloads) = spawn_callback_server().await;
-
-    let (base, state) =
-        spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
-
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
-
-    // Batch-enqueue: low, normal, high, urgent — all in one request
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-low",
-                    "priority": "low",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "low"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-normal",
-                    "priority": "normal",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "normal"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-high",
-                    "priority": "high",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "high"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-urgent",
-                    "priority": "urgent",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "urgent"}
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["total"], 4);
-    assert_eq!(body["enqueued"], 4);
-    assert_eq!(body["failed"], 0);
-
-    // Collect all task IDs
-    let results = body["results"].as_array().unwrap();
-    let task_ids: Vec<String> = results
-        .iter()
-        .map(|r| r["task_id"].as_str().unwrap().to_string())
-        .collect();
-
-    // NOW start a single worker so tasks are processed in strict priority order
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    // Wait for all tasks to complete
-    for task_id in &task_ids {
-        wait_for_terminal_status(&client, &base, task_id).await;
-    }
-
-    // Give callbacks time to arrive
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify callback order: urgent → high → normal → low
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            received.len() >= 4,
-            "SQLite: expected at least 4 callbacks, got {}",
-            received.len()
-        );
-
-        let expected_order = ["urgent", "high", "normal", "low"];
-        for (i, expected) in expected_order.iter().enumerate() {
-            assert_eq!(
-                received[i]["metadata"]["order"].as_str().unwrap(),
-                *expected,
-                "SQLite: callback #{i} should be '{expected}', got '{}'",
-                received[i]["metadata"]["order"]
+        // Verify callback order: urgent → high → normal → low
+        {
+            let received = payloads.lock().unwrap();
+            assert!(
+                received.len() >= 4,
+                "{label}expected at least 4 callbacks, got {}",
+                received.len()
             );
-        }
-    }
 
-    worker_handle.shutdown_and_join().await;
-}
+            let expected_order = ["urgent", "high", "normal", "low"];
+            for (i, expected) in expected_order.iter().enumerate() {
+                assert_eq!(
+                    received[i]["metadata"]["order"].as_str().unwrap(),
+                    *expected,
+                    "{label}callback #{i} should be '{expected}', got '{}'",
+                    received[i]["metadata"]["order"]
+                );
+            }
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 // ───────────────────── Graceful shutdown (e2e) ─────────────────────
 
-/// Verify that `shutdown_and_join()` waits for an in-flight slow task to complete
-/// before the worker pool exits, and the task reaches `completed` status.
-#[tokio::test]
-async fn e2e_graceful_shutdown_waits_for_inflight_task() {
-    let (callback_base, payloads) = spawn_callback_server().await;
+// Verify that `shutdown_and_join()` waits for an in-flight slow task to complete
+// before the worker pool exits, and the task reaches `completed` status.
+common::dual_backend_test!(
+    without_workers,
+    e2e_graceful_shutdown_waits_for_inflight_task,
+    e2e_sqlite_graceful_shutdown_waits_for_inflight_task,
+    |spawn_without_workers, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
 
-    let slow: Arc<dyn noti_core::NotifyProvider> =
-        Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
+        let slow: Arc<dyn noti_core::NotifyProvider> =
+            Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
 
-    let (base, state) = spawn_server_without_workers(vec![slow]).await;
+        let (base, state) = spawn_without_workers(vec![slow]).await;
 
-    // Start a single worker
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+        // Start a single worker
+        let worker_config = noti_queue::WorkerConfig::default()
+            .with_concurrency(1)
+            .with_poll_interval(Duration::from_millis(50));
+        let worker_handle = state.start_workers(worker_config);
 
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    // Enqueue a task that takes 500ms to process
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-slow",
-            "text": "slow-task",
-            "callback_url": &callback_url,
-            "metadata": {"test": "graceful-shutdown"}
-        }))
-        .send()
-        .await
-        .unwrap();
+        // Enqueue a task that takes 500ms to process
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-slow",
+                "text": "slow-task",
+                "callback_url": &callback_url,
+                "metadata": {"test": "graceful-shutdown"}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Wait a bit for the worker to pick up the task (but not finish it)
-    tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait a bit for the worker to pick up the task (but not finish it)
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Issue shutdown while the slow task is still in-flight
-    // shutdown_and_join should block until the worker finishes the current task
-    worker_handle.shutdown_and_join().await;
+        // Issue shutdown while the slow task is still in-flight
+        worker_handle.shutdown_and_join().await;
 
-    // After shutdown completes, the task should be completed (worker waited for it)
-    let resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
+        // After shutdown completes, the task should be completed (worker waited for it)
+        let resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::OK);
-    let task: Value = resp.json().await.unwrap();
-    assert_eq!(
-        task["status"], "completed",
-        "in-flight task should complete before worker exits"
-    );
+        assert_eq!(resp.status(), StatusCode::OK);
+        let task: Value = resp.json().await.unwrap();
+        assert_eq!(
+            task["status"], "completed",
+            "{label}in-flight task should complete before worker exits"
+        );
 
-    // Verify the callback was fired
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert!(
-        !received.is_empty(),
-        "callback should have been fired for the completed slow task"
-    );
-    assert_eq!(received[0]["status"], "completed");
-    assert_eq!(received[0]["metadata"]["test"], "graceful-shutdown");
-}
+        // Verify the callback was fired
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "{label}callback should have been fired for the completed slow task"
+        );
+        assert_eq!(received[0]["status"], "completed");
+        assert_eq!(received[0]["metadata"]["test"], "graceful-shutdown");
+    }
+);
 
 /// Verify that after shutdown, queued tasks that were not picked up remain in `pending` status.
 /// Uses a slow provider so the single worker can only process one task before shutdown.
@@ -3432,8 +3346,7 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(300)));
 
-    let (base, state) =
-        spawn_server_without_workers(vec![slow, Arc::new(MockOkProvider)]).await;
+    let (base, state) = spawn_server_without_workers(vec![slow, Arc::new(MockOkProvider)]).await;
 
     // Start worker
     let worker_config = noti_queue::WorkerConfig::default()
@@ -3489,72 +3402,6 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
         .await
         .expect("server should respond after worker shutdown");
     assert_eq!(resp.status(), StatusCode::OK);
-}
-
-/// Verify graceful shutdown with SQLite backend — in-flight task completes.
-#[tokio::test]
-async fn e2e_sqlite_graceful_shutdown_waits_for_inflight_task() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-
-    let slow: Arc<dyn noti_core::NotifyProvider> =
-        Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
-
-    let (base, state) = spawn_server_sqlite_without_workers(vec![slow]).await;
-
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    let client = test_client();
-    let callback_url = format!("{callback_base}/callback");
-
-    // Enqueue a slow task
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-slow",
-            "text": "sqlite-slow-task",
-            "callback_url": &callback_url,
-            "metadata": {"test": "sqlite-graceful-shutdown"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // Wait for the worker to pick up the task
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Shut down — should wait for in-flight task
-    worker_handle.shutdown_and_join().await;
-
-    // Task should be completed in the SQLite backend
-    let resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let task: Value = resp.json().await.unwrap();
-    assert_eq!(
-        task["status"], "completed",
-        "SQLite: in-flight task should complete before worker exits"
-    );
-
-    // Verify callback
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert!(
-        !received.is_empty(),
-        "SQLite: callback should have been fired for the completed slow task"
-    );
-    assert_eq!(received[0]["status"], "completed");
-    assert_eq!(received[0]["metadata"]["test"], "sqlite-graceful-shutdown");
 }
 
 /// Verify that shutdown_and_join completes within a reasonable time
@@ -4913,8 +4760,7 @@ async fn e2e_batch_async_mixed_providers_and_priorities() {
 async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let (base, state) =
-        spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
+    let (base, state) = spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = test_client();
     let callback_url = format!("{callback_base}/callback");
@@ -7173,10 +7019,7 @@ async fn e2e_scheduled_send_delay_seconds_holds_task() {
 
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("scheduled"));
+    assert!(body["message"].as_str().unwrap().contains("scheduled"));
 
     let task_id = body["task_id"].as_str().unwrap().to_string();
 
@@ -7228,10 +7071,7 @@ async fn e2e_scheduled_send_delay_zero_is_immediate() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let body: Value = resp.json().await.unwrap();
     // Should say "enqueued" not "scheduled"
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("enqueued"));
+    assert!(body["message"].as_str().unwrap().contains("enqueued"));
 
     let task_id = body["task_id"].as_str().unwrap().to_string();
     let task = wait_for_terminal_status(&client, &base, &task_id).await;
@@ -7307,10 +7147,12 @@ async fn e2e_scheduled_send_mutually_exclusive_error() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("mutually exclusive"));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("mutually exclusive")
+    );
 }
 
 /// Verify that an invalid `scheduled_at` format returns 400.
@@ -7333,10 +7175,12 @@ async fn e2e_scheduled_send_invalid_timestamp_format() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("invalid scheduled_at"));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid scheduled_at")
+    );
 }
 
 /// Verify that `task_info.scheduled_at` is absent for non-delayed tasks.
@@ -7428,10 +7272,7 @@ async fn e2e_sqlite_scheduled_send_delay_seconds_holds_task() {
 
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("scheduled"));
+    assert!(body["message"].as_str().unwrap().contains("scheduled"));
 
     let task_id = body["task_id"].as_str().unwrap().to_string();
 
@@ -7483,10 +7324,7 @@ async fn e2e_sqlite_scheduled_send_delay_zero_is_immediate() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let body: Value = resp.json().await.unwrap();
     // Should say "enqueued" not "scheduled"
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("enqueued"));
+    assert!(body["message"].as_str().unwrap().contains("enqueued"));
 
     let task_id = body["task_id"].as_str().unwrap().to_string();
     let task = wait_for_terminal_status(&client, &base, &task_id).await;
@@ -7562,10 +7400,12 @@ async fn e2e_sqlite_scheduled_send_mutually_exclusive_error() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("mutually exclusive"));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("mutually exclusive")
+    );
 }
 
 /// SQLite: Verify that an invalid `scheduled_at` format returns 400.
@@ -7588,10 +7428,12 @@ async fn e2e_sqlite_scheduled_send_invalid_timestamp_format() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap();
-    assert!(body["message"]
-        .as_str()
-        .unwrap()
-        .contains("invalid scheduled_at"));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid scheduled_at")
+    );
 }
 
 /// SQLite: Verify that `task_info.scheduled_at` is absent for non-delayed tasks.
