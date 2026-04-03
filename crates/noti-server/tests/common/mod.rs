@@ -188,11 +188,17 @@ pub async fn spawn_server_with_cors_permissive() -> String {
 }
 
 /// Start a server with restricted CORS (specific origins only).
+/// Invalid origins are filtered out (matching production behavior in main.rs).
 pub async fn spawn_server_with_cors_restricted(allowed_origins: Vec<String>) -> String {
     let state = default_app_state();
     let origins: Vec<axum::http::HeaderValue> = allowed_origins
         .iter()
-        .filter_map(|o| o.parse().ok())
+        .filter_map(|o| {
+            o.parse::<axum::http::HeaderValue>().ok().or_else(|| {
+                eprintln!("test: dropping invalid CORS origin: {o}");
+                None
+            })
+        })
         .collect();
     let cors_layer = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))

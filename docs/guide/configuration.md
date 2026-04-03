@@ -538,7 +538,8 @@ withEnv(["NOTI_CONFIG=${WORKSPACE}/.noti/config.toml"]) {
 
 - In production, always restrict `NOTI_CORS_ALLOWED_ORIGINS` to known origins
 - The default `*` (permissive) is suitable for development only
-- Invalid origin strings are silently dropped during parsing
+- Invalid origin strings are dropped during parsing with a `WARN`-level log entry for each invalid value
+- If **all** configured origins are invalid, a warning is emitted indicating no origin will be allowed
 
 ## Output Mode
 
