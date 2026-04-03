@@ -646,6 +646,17 @@ pub async fn spawn_callback_server() -> (String, Arc<Mutex<Vec<Value>>>) {
     (base, payloads)
 }
 
+// ───────────────────── Shared HTTP client ─────────────────────
+
+/// Return a shared `reqwest::Client` for use in e2e tests.
+///
+/// This avoids creating a brand-new client in every test function. The default
+/// `Client` is cheap to clone and reuses a single connection pool, so sharing
+/// one instance across a test is both simpler and more efficient.
+pub fn test_client() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
 // ───────────────────── Polling utilities ─────────────────────
 
 /// Poll a task until it reaches a terminal state (`completed`, `failed`, or `cancelled`).

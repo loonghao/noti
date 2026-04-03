@@ -21,7 +21,8 @@ use common::{
     spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
     spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
     spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_and_rate_limit,
-    spawn_server_with_workers_serial, spawn_server_without_workers, wait_for_terminal_status,
+    spawn_server_with_workers_serial, spawn_server_without_workers, test_client,
+    wait_for_terminal_status,
 };
 use noti_queue::QueueBackend;
 use reqwest::StatusCode;
@@ -32,7 +33,7 @@ use serde_json::{Value, json};
 #[tokio::test]
 async fn e2e_health_check() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -49,7 +50,7 @@ async fn e2e_health_check() {
 #[tokio::test]
 async fn e2e_api_versions_endpoint() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/versions"))
@@ -78,7 +79,7 @@ async fn e2e_api_versions_endpoint() {
 #[tokio::test]
 async fn e2e_api_versions_in_openapi_spec() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -102,7 +103,7 @@ async fn e2e_api_versions_in_openapi_spec() {
 #[tokio::test]
 async fn e2e_metrics_endpoint() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/metrics"))
@@ -122,7 +123,7 @@ async fn e2e_metrics_endpoint() {
 #[tokio::test]
 async fn e2e_list_providers() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -139,7 +140,7 @@ async fn e2e_list_providers() {
 #[tokio::test]
 async fn e2e_get_provider_detail() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers/slack"))
@@ -156,7 +157,7 @@ async fn e2e_get_provider_detail() {
 #[tokio::test]
 async fn e2e_provider_not_found() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers/nonexistent"))
@@ -172,7 +173,7 @@ async fn e2e_provider_not_found() {
 #[tokio::test]
 async fn e2e_send_missing_provider() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -190,7 +191,7 @@ async fn e2e_send_missing_provider() {
 #[tokio::test]
 async fn e2e_send_missing_config() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -211,7 +212,7 @@ async fn e2e_send_missing_config() {
 #[tokio::test]
 async fn e2e_template_crud_lifecycle() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Create
     let resp = client
@@ -303,7 +304,7 @@ async fn e2e_template_crud_lifecycle() {
 #[tokio::test]
 async fn e2e_async_send_and_query() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue
     let resp = client
@@ -368,7 +369,7 @@ async fn e2e_async_send_and_query() {
 #[tokio::test]
 async fn e2e_async_batch_send() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async/batch"))
@@ -401,7 +402,7 @@ async fn e2e_async_batch_send() {
 #[tokio::test]
 async fn e2e_openapi_json_valid() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -444,7 +445,7 @@ async fn e2e_openapi_json_valid() {
 #[tokio::test]
 async fn e2e_swagger_ui_accessible() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/swagger-ui/"))
@@ -470,7 +471,7 @@ async fn e2e_swagger_ui_accessible() {
 #[tokio::test]
 async fn e2e_openapi_schema_retry_config_has_backoff_fields() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -530,7 +531,7 @@ async fn e2e_openapi_schema_retry_config_has_backoff_fields() {
 #[tokio::test]
 async fn e2e_openapi_schema_all_key_components_exist() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -567,7 +568,7 @@ async fn e2e_openapi_schema_all_key_components_exist() {
 #[tokio::test]
 async fn e2e_openapi_schema_all_api_paths_exist() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -616,7 +617,7 @@ async fn e2e_openapi_schema_all_api_paths_exist() {
 #[tokio::test]
 async fn e2e_status_not_found() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/status/nonexistent-id"))
@@ -630,7 +631,7 @@ async fn e2e_status_not_found() {
 #[tokio::test]
 async fn e2e_all_statuses_empty() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/status"))
@@ -646,7 +647,7 @@ async fn e2e_all_statuses_empty() {
 #[tokio::test]
 async fn e2e_purge_statuses_empty() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/status/purge"))
@@ -663,7 +664,7 @@ async fn e2e_purge_statuses_empty() {
 #[tokio::test]
 async fn e2e_purge_statuses_with_max_age() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/status/purge?max_age_secs=60"))
@@ -681,7 +682,7 @@ async fn e2e_purge_statuses_with_max_age() {
 #[tokio::test]
 async fn e2e_queue_invalid_status_filter() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/queue/tasks?status=bogus"))
@@ -695,7 +696,7 @@ async fn e2e_queue_invalid_status_filter() {
 #[tokio::test]
 async fn e2e_queue_task_not_found() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/queue/tasks/nonexistent-id"))
@@ -711,7 +712,7 @@ async fn e2e_queue_task_not_found() {
 #[tokio::test]
 async fn e2e_auth_rejects_unauthenticated_request() {
     let (base, _keys) = spawn_server_with_auth(vec!["test-key-alpha".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -733,7 +734,7 @@ async fn e2e_auth_rejects_unauthenticated_request() {
 #[tokio::test]
 async fn e2e_auth_rejects_invalid_key() {
     let (base, _keys) = spawn_server_with_auth(vec!["correct-key".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -756,7 +757,7 @@ async fn e2e_auth_rejects_invalid_key() {
 #[tokio::test]
 async fn e2e_auth_accepts_valid_bearer_token() {
     let (base, keys) = spawn_server_with_auth(vec!["my-secret-key".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -773,7 +774,7 @@ async fn e2e_auth_accepts_valid_bearer_token() {
 #[tokio::test]
 async fn e2e_auth_accepts_x_api_key_header() {
     let (base, keys) = spawn_server_with_auth(vec!["x-api-key-value".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -788,7 +789,7 @@ async fn e2e_auth_accepts_x_api_key_header() {
 #[tokio::test]
 async fn e2e_auth_health_bypasses_auth() {
     let (base, _keys) = spawn_server_with_auth(vec!["secret".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // /health is excluded from auth by default
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -802,7 +803,7 @@ async fn e2e_auth_health_bypasses_auth() {
 async fn e2e_auth_multiple_keys() {
     let (base, keys) =
         spawn_server_with_auth(vec!["key-one".to_string(), "key-two".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     for key in &keys {
         let resp = client
@@ -822,7 +823,7 @@ async fn e2e_auth_multiple_keys() {
 #[tokio::test]
 async fn e2e_auth_post_endpoint_requires_key() {
     let (base, keys) = spawn_server_with_auth(vec!["post-key".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Without key → 401
     let resp = client
@@ -849,7 +850,7 @@ async fn e2e_auth_post_endpoint_requires_key() {
 #[tokio::test]
 async fn e2e_rate_limit_allows_within_quota() {
     let (base, max_requests) = spawn_server_with_rate_limit(5, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     for i in 0..max_requests {
         let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -878,7 +879,7 @@ async fn e2e_rate_limit_allows_within_quota() {
 #[tokio::test]
 async fn e2e_rate_limit_returns_429_when_exceeded() {
     let (base, max_requests) = spawn_server_with_rate_limit(3, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Exhaust the quota
     for _ in 0..max_requests {
@@ -901,7 +902,7 @@ async fn e2e_rate_limit_returns_429_when_exceeded() {
 #[tokio::test]
 async fn e2e_rate_limit_429_has_retry_after_header() {
     let (base, _max) = spawn_server_with_rate_limit(1, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Use up the single allowed request
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -929,7 +930,7 @@ async fn e2e_rate_limit_429_has_retry_after_header() {
 #[tokio::test]
 async fn e2e_rate_limit_remaining_decrements() {
     let (base, _max) = spawn_server_with_rate_limit(10, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp1 = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(resp1.status(), StatusCode::OK);
@@ -959,7 +960,7 @@ async fn e2e_rate_limit_remaining_decrements() {
 async fn e2e_full_middleware_auth_before_rate_limit() {
     let (base, keys) =
         spawn_server_with_full_middleware(vec!["full-stack-key".to_string()], 5, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Unauthenticated → 401 (auth fires before rate limit)
     let resp = client
@@ -985,7 +986,7 @@ async fn e2e_full_middleware_auth_before_rate_limit() {
 async fn e2e_full_middleware_health_bypasses_auth_has_rate_limit() {
     let (base, _keys) =
         spawn_server_with_full_middleware(vec!["bypass-key".to_string()], 100, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // /health bypasses auth but still gets rate limit headers
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -999,7 +1000,7 @@ async fn e2e_full_middleware_health_bypasses_auth_has_rate_limit() {
 async fn e2e_full_middleware_exhausts_rate_limit() {
     let (base, keys) =
         spawn_server_with_full_middleware(vec!["exhaust-key".to_string()], 3, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let key = &keys[0];
 
     // Use up quota with authenticated requests
@@ -1029,7 +1030,7 @@ async fn e2e_full_middleware_exhausts_rate_limit() {
 async fn e2e_body_limit_small_body_accepted() {
     // Set a 1 KiB limit — small JSON payloads should be accepted
     let (base, _max) = spawn_server_with_body_limit(1024).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1058,7 +1059,7 @@ async fn e2e_body_limit_oversized_body_rejected() {
     // extractor may catch the underlying bytes rejection and return 400.
     // Either way, the request should NOT succeed (not 2xx).
     let (base, _max) = spawn_server_with_body_limit(128).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Build a payload much larger than 128 bytes
     let large_text = "x".repeat(2048);
@@ -1087,7 +1088,7 @@ async fn e2e_body_limit_oversized_body_rejected() {
 async fn e2e_body_limit_get_requests_unaffected() {
     // Body limit only applies to request bodies; GET endpoints should work fine
     let (base, _max) = spawn_server_with_body_limit(64).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
 
@@ -1102,7 +1103,7 @@ async fn e2e_body_limit_exact_boundary() {
     // The json!({}) payload is about 2 bytes ("{}"), but reqwest adds Content-Type
     // headers etc. We use a known-small payload with a generous limit.
     let (base, _max) = spawn_server_with_body_limit(4096).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates"))
@@ -1123,7 +1124,7 @@ async fn e2e_body_limit_exact_boundary() {
 #[tokio::test]
 async fn e2e_request_id_generated_when_absent() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
 
@@ -1146,7 +1147,7 @@ async fn e2e_request_id_generated_when_absent() {
 #[tokio::test]
 async fn e2e_request_id_preserved_when_provided() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let custom_id = "my-custom-request-id-42";
     let resp = client
@@ -1173,7 +1174,7 @@ async fn e2e_request_id_preserved_when_provided() {
 #[tokio::test]
 async fn e2e_request_id_unique_per_request() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp1 = client.get(format!("{base}/health")).send().await.unwrap();
     let id1 = resp1.headers()["x-request-id"]
@@ -1193,7 +1194,7 @@ async fn e2e_request_id_unique_per_request() {
 #[tokio::test]
 async fn e2e_request_id_present_on_post_endpoints() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1220,7 +1221,7 @@ async fn e2e_request_id_present_on_post_endpoints() {
 #[tokio::test]
 async fn e2e_request_id_present_on_error_responses() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Request a non-existent provider — should get 404 but still have x-request-id
     let resp = client
@@ -1241,7 +1242,7 @@ async fn e2e_request_id_present_on_error_responses() {
 #[tokio::test]
 async fn e2e_cors_permissive_allows_any_origin() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -1265,7 +1266,7 @@ async fn e2e_cors_permissive_allows_any_origin() {
 #[tokio::test]
 async fn e2e_cors_permissive_preflight_succeeds() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/providers"))
@@ -1306,7 +1307,7 @@ async fn e2e_cors_restricted_allows_matching_origin() {
         "https://also-allowed.com".to_string(),
     ])
     .await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -1331,7 +1332,7 @@ async fn e2e_cors_restricted_allows_matching_origin() {
 async fn e2e_cors_restricted_rejects_non_matching_origin() {
     let base =
         spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -1353,7 +1354,7 @@ async fn e2e_cors_restricted_rejects_non_matching_origin() {
 async fn e2e_cors_restricted_preflight_non_matching_origin() {
     let base =
         spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/send"))
@@ -1373,7 +1374,7 @@ async fn e2e_cors_restricted_preflight_non_matching_origin() {
 #[tokio::test]
 async fn e2e_cors_permissive_post_endpoint() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1399,7 +1400,7 @@ async fn e2e_cors_permissive_post_endpoint() {
 #[tokio::test]
 async fn e2e_validated_json_empty_provider_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1431,7 +1432,7 @@ async fn e2e_validated_json_empty_provider_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_empty_text_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1455,7 +1456,7 @@ async fn e2e_validated_json_empty_text_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_multiple_field_errors() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1484,7 +1485,7 @@ async fn e2e_validated_json_multiple_field_errors() {
 #[tokio::test]
 async fn e2e_validated_json_invalid_json_returns_400() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1506,7 +1507,7 @@ async fn e2e_validated_json_invalid_json_returns_400() {
 #[tokio::test]
 async fn e2e_validated_json_missing_required_fields_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Send JSON with missing required fields (only config, no provider/text)
     let resp = client
@@ -1526,7 +1527,7 @@ async fn e2e_validated_json_missing_required_fields_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_template_empty_name_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates"))
@@ -1550,7 +1551,7 @@ async fn e2e_validated_json_template_empty_name_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_template_empty_body_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates"))
@@ -1574,7 +1575,7 @@ async fn e2e_validated_json_template_empty_body_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_valid_request_passes_validation() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // A valid send request — should pass validation and reach the handler
     // (will fail at provider config level, but not at validation level)
@@ -1602,7 +1603,7 @@ async fn e2e_validated_json_valid_request_passes_validation() {
 #[tokio::test]
 async fn e2e_worker_processes_task_to_completion() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task for mock-ok provider
     let resp = client
@@ -1642,7 +1643,7 @@ async fn e2e_worker_processes_task_to_completion() {
 #[tokio::test]
 async fn e2e_worker_handles_failed_task() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task for mock-fail provider with no retries
     let resp = client
@@ -1684,7 +1685,7 @@ async fn e2e_worker_handles_failed_task() {
 async fn e2e_webhook_callback_on_success() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let callback_url = format!("{callback_base}/callback");
 
@@ -1735,7 +1736,7 @@ async fn e2e_webhook_callback_on_success() {
 async fn e2e_webhook_callback_on_failure() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let callback_url = format!("{callback_base}/callback");
 
@@ -1788,7 +1789,7 @@ async fn e2e_webhook_callback_on_failure() {
 async fn e2e_no_callback_when_url_not_set() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task WITHOUT callback_url
     let resp = client
@@ -1827,7 +1828,7 @@ async fn e2e_no_callback_when_url_not_set() {
 #[tokio::test]
 async fn e2e_worker_multiple_tasks_processed() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let mut task_ids = Vec::new();
 
@@ -1876,7 +1877,7 @@ async fn e2e_webhook_callback_not_fired_for_cancelled_before_processing() {
 
     // Use a server WITHOUT workers so the task stays queued
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task with callback_url (but no workers to process it)
     let resp = client
@@ -1920,7 +1921,7 @@ async fn e2e_webhook_callback_not_fired_for_cancelled_before_processing() {
 async fn e2e_worker_task_with_metadata_preserved() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let callback_url = format!("{callback_base}/callback");
 
@@ -1978,7 +1979,7 @@ async fn e2e_priority_ordering_urgent_before_low() {
     // then start a single worker so tasks are processed in priority order.
     let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue tasks with different priorities (low first, urgent last)
     let priorities = vec!["low", "normal", "high", "urgent"];
@@ -2036,7 +2037,7 @@ async fn e2e_priority_ordering_verified_by_completion_order() {
 
     let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue: low first, then urgent — urgent should be processed first
@@ -2120,7 +2121,7 @@ async fn e2e_retry_task_eventually_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -2178,7 +2179,7 @@ async fn e2e_retry_exhausted_task_fails() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -2231,7 +2232,7 @@ async fn e2e_retry_exhausted_task_fails() {
 async fn e2e_retry_zero_retries_fails_immediately() {
     // With max_retries=0, a failing task should fail on the first attempt.
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -2272,7 +2273,7 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
 
     let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue 3 normal tasks first
@@ -2366,7 +2367,7 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_isolates_x_forwarded_for() {
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // IP-A exhausts its quota
     for i in 0..max_requests {
@@ -2417,7 +2418,7 @@ async fn e2e_per_ip_rate_limit_isolates_x_forwarded_for() {
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_isolates_x_real_ip() {
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // IP-C exhausts its quota via X-Real-IP
     for _ in 0..max_requests {
@@ -2462,7 +2463,7 @@ async fn e2e_per_ip_rate_limit_x_forwarded_for_takes_precedence() {
     // When both X-Forwarded-For and X-Real-IP are present,
     // X-Forwarded-For should take precedence per extract_client_ip logic.
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Exhaust quota for IP identified by X-Forwarded-For: 10.1.1.1
     for _ in 0..max_requests {
@@ -2509,7 +2510,7 @@ async fn e2e_per_ip_rate_limit_x_forwarded_for_takes_precedence() {
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_remaining_tracks_per_ip() {
     let (base, _max) = spawn_server_with_rate_limit_per_ip(10, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // IP-E sends one request
     let resp_e1 = client
@@ -2568,7 +2569,7 @@ async fn e2e_per_ip_rate_limit_multiple_ips_in_x_forwarded_for() {
     // X-Forwarded-For can contain multiple IPs separated by commas.
     // The middleware should use the first one (the original client IP).
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Exhaust quota for client IP 10.0.0.50 (first in chain)
     for _ in 0..max_requests {
@@ -2613,7 +2614,7 @@ async fn e2e_per_ip_rate_limit_multiple_ips_in_x_forwarded_for() {
 #[tokio::test]
 async fn e2e_sqlite_health_check() {
     let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -2629,7 +2630,7 @@ async fn e2e_sqlite_health_check() {
 #[tokio::test]
 async fn e2e_sqlite_async_send_query_cancel_purge() {
     let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue
     let resp = client
@@ -2694,7 +2695,7 @@ async fn e2e_sqlite_async_send_query_cancel_purge() {
 #[tokio::test]
 async fn e2e_sqlite_worker_processes_task_to_completion() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -2731,7 +2732,7 @@ async fn e2e_sqlite_worker_processes_task_to_completion() {
 #[tokio::test]
 async fn e2e_sqlite_worker_handles_failed_task() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -2773,7 +2774,7 @@ async fn e2e_sqlite_worker_handles_failed_task() {
 async fn e2e_sqlite_webhook_callback_on_success() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let callback_url = format!("{callback_base}/callback");
 
@@ -2823,7 +2824,7 @@ async fn e2e_sqlite_priority_ordering_urgent_before_low() {
     let (base, state) =
         spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue: low first, then urgent — SQLite should dequeue urgent first
@@ -2902,7 +2903,7 @@ async fn e2e_sqlite_retry_task_eventually_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -2953,7 +2954,7 @@ async fn e2e_sqlite_retry_task_eventually_succeeds() {
 #[tokio::test]
 async fn e2e_sqlite_multiple_tasks_processed() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let mut task_ids = Vec::new();
 
@@ -2995,7 +2996,7 @@ async fn e2e_sqlite_multiple_tasks_processed() {
 #[tokio::test]
 async fn e2e_sqlite_batch_async_send() {
     let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async/batch"))
@@ -3027,7 +3028,7 @@ async fn e2e_sqlite_batch_async_send() {
 async fn e2e_sqlite_task_metadata_preserved() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let callback_url = format!("{callback_base}/callback");
 
@@ -3083,7 +3084,7 @@ async fn e2e_batch_async_mixed_priorities_processed_in_order() {
 
     let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Batch-enqueue: low, normal, high, urgent — all in one request
@@ -3183,7 +3184,7 @@ async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
     let (base, state) =
         spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Batch-enqueue: low, normal, high, urgent — all in one request
@@ -3294,7 +3295,7 @@ async fn e2e_graceful_shutdown_waits_for_inflight_task() {
         .with_poll_interval(Duration::from_millis(50));
     let worker_handle = state.start_workers(worker_config);
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue a task that takes 500ms to process
@@ -3356,7 +3357,7 @@ async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
 
     let (base, state) = spawn_server_without_workers(vec![slow]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue 5 tasks BEFORE starting workers
     let mut task_ids = Vec::new();
@@ -3440,7 +3441,7 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
         .with_poll_interval(Duration::from_millis(50));
     let worker_handle = state.start_workers(worker_config);
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let base_clone = base.clone();
 
     // Enqueue a slow task
@@ -3505,7 +3506,7 @@ async fn e2e_sqlite_graceful_shutdown_waits_for_inflight_task() {
         .with_poll_interval(Duration::from_millis(50));
     let worker_handle = state.start_workers(worker_config);
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue a slow task
@@ -3621,7 +3622,7 @@ async fn e2e_stale_recovery_processing_tasks_become_queued() {
 
     // Phase 2: start HTTP server against the same DB — triggers recover_stale_tasks()
     let base = spawn_server_sqlite_file(&db_path).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // List tasks — recovered tasks should be "queued"
     let resp = client
@@ -3676,7 +3677,7 @@ async fn e2e_stale_recovery_tasks_can_be_processed_by_workers() {
 
     // Phase 2: start server with workers — recovery + worker processing
     let (base, worker_handle) = spawn_server_sqlite_file_with_workers(&db_path).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Give workers time to pick up and process the recovered task
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -3719,7 +3720,7 @@ async fn e2e_stale_recovery_no_stale_tasks_is_noop() {
 
     // Phase 2: start server — no stale recovery needed
     let base = spawn_server_sqlite_file(&db_path).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Task should still be queued (not touched by recovery)
     let resp = client
@@ -3748,7 +3749,7 @@ async fn e2e_stale_recovery_no_stale_tasks_is_noop() {
 #[tokio::test]
 async fn e2e_purge_empty_queue_returns_zero() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/queue/purge"))
@@ -3765,7 +3766,7 @@ async fn e2e_purge_empty_queue_returns_zero() {
 #[tokio::test]
 async fn e2e_purge_removes_terminal_preserves_nonterminal() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task that will complete (mock-ok provider)
     let resp = client
@@ -3860,7 +3861,7 @@ async fn e2e_purge_removes_terminal_preserves_nonterminal() {
 #[tokio::test]
 async fn e2e_sqlite_purge_removes_terminal_tasks() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task that completes
     let resp = client
@@ -3931,7 +3932,7 @@ async fn e2e_sqlite_purge_removes_terminal_tasks() {
 #[tokio::test]
 async fn e2e_purge_idempotent_second_purge_returns_zero() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue and wait for completion
     let resp = client
@@ -3976,7 +3977,7 @@ async fn e2e_purge_idempotent_second_purge_returns_zero() {
 #[tokio::test]
 async fn e2e_template_list_multiple_sorted() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     for name in ["zulu-tpl", "alpha-tpl", "mike-tpl"] {
         let resp = client
@@ -4012,7 +4013,7 @@ async fn e2e_template_list_multiple_sorted() {
 #[tokio::test]
 async fn e2e_template_update_preserves_defaults() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Create with two defaults
     client
@@ -4045,7 +4046,7 @@ async fn e2e_template_update_preserves_defaults() {
 #[tokio::test]
 async fn e2e_template_render_missing_required_var_returns_400() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     client
         .post(format!("{base}/api/v1/templates"))
@@ -4079,7 +4080,7 @@ async fn e2e_template_render_missing_required_var_returns_400() {
 #[tokio::test]
 async fn e2e_template_render_defaults_fill_missing_vars() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     client
         .post(format!("{base}/api/v1/templates"))
@@ -4111,7 +4112,7 @@ async fn e2e_template_render_defaults_fill_missing_vars() {
 #[tokio::test]
 async fn e2e_template_delete_nonexistent_returns_404() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .delete(format!("{base}/api/v1/templates/no-such-template"))
@@ -4125,7 +4126,7 @@ async fn e2e_template_delete_nonexistent_returns_404() {
 #[tokio::test]
 async fn e2e_template_get_nonexistent_returns_404() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/templates/nonexistent"))
@@ -4139,7 +4140,7 @@ async fn e2e_template_get_nonexistent_returns_404() {
 #[tokio::test]
 async fn e2e_template_render_nonexistent_returns_404() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates/ghost/render"))
@@ -4154,7 +4155,7 @@ async fn e2e_template_render_nonexistent_returns_404() {
 #[tokio::test]
 async fn e2e_template_create_same_name_overwrites() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Create v1
     client
@@ -4204,7 +4205,7 @@ async fn e2e_template_create_same_name_overwrites() {
 #[tokio::test]
 async fn e2e_template_update_body_only_preserves_title() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     client
         .post(format!("{base}/api/v1/templates"))
@@ -4237,7 +4238,7 @@ async fn e2e_template_update_body_only_preserves_title() {
 #[tokio::test]
 async fn e2e_concurrent_tasks_all_processed() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let task_count = 10;
     let mut task_ids = Vec::new();
@@ -4300,7 +4301,7 @@ async fn e2e_concurrent_tasks_all_processed() {
 async fn e2e_concurrent_tasks_no_duplicate_processing() {
     let (base, worker_handle) = spawn_server_with_workers().await;
     let (cb_base, payloads) = spawn_callback_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let task_count = 8;
     let mut task_ids = Vec::new();
@@ -4362,7 +4363,7 @@ async fn e2e_concurrent_tasks_no_duplicate_processing() {
 #[tokio::test]
 async fn e2e_sqlite_concurrent_tasks_all_processed() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let task_count = 10;
     let mut task_ids = Vec::new();
@@ -4419,7 +4420,7 @@ async fn e2e_sqlite_concurrent_tasks_all_processed() {
 #[tokio::test]
 async fn e2e_concurrent_mixed_success_failure() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let mut ok_ids = Vec::new();
     let mut fail_ids = Vec::new();
@@ -4493,7 +4494,7 @@ fn assert_error_shape(body: &Value, expected_error: &str, context: &str) {
 #[tokio::test]
 async fn e2e_error_structure_not_found_responses() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Provider not found
     let resp = client
@@ -4572,7 +4573,7 @@ async fn e2e_error_structure_not_found_responses() {
 #[tokio::test]
 async fn e2e_error_structure_bad_request_responses() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Send with missing config (provider validation failure)
     let resp = client
@@ -4617,7 +4618,7 @@ async fn e2e_error_structure_bad_request_responses() {
 #[tokio::test]
 async fn e2e_error_structure_validation_responses() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -4642,7 +4643,7 @@ async fn e2e_error_structure_validation_responses() {
 #[tokio::test]
 async fn e2e_error_structure_invalid_json_response() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -4662,7 +4663,7 @@ async fn e2e_error_structure_invalid_json_response() {
 #[tokio::test]
 async fn e2e_error_codes_not_found_responses_have_code() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Provider not found → PROVIDER_NOT_FOUND
     let resp = client
@@ -4713,7 +4714,7 @@ async fn e2e_error_codes_not_found_responses_have_code() {
 #[tokio::test]
 async fn e2e_error_codes_bad_request_responses_have_code() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Config validation failure → CONFIG_VALIDATION_FAILED
     let resp = client
@@ -4761,7 +4762,7 @@ async fn e2e_error_codes_bad_request_responses_have_code() {
 #[tokio::test]
 async fn e2e_error_codes_absent_when_not_applicable() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Invalid JSON body → no code field (handled by ValidatedJsonRejection, not ApiError)
     let resp = client
@@ -4791,7 +4792,7 @@ async fn e2e_batch_async_mixed_providers_and_priorities() {
 
     let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Mix of valid (mock-ok) and invalid (nonexistent) providers at various priorities.
@@ -4915,7 +4916,7 @@ async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
     let (base, state) =
         spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Same mix: valid (mock-ok) and invalid (nonexistent) at various priorities
@@ -5017,7 +5018,7 @@ async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
 async fn e2e_batch_async_all_invalid_providers_returns_202() {
     let (base, _state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async/batch"))
@@ -5073,7 +5074,7 @@ async fn e2e_batch_async_mock_fail_provider_with_priorities() {
     // Use the serial helper which already registers MockOkProvider + MockFailProvider
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Batch: mix of mock-ok (always succeeds) and mock-fail (always fails at send time)
@@ -5190,7 +5191,7 @@ async fn e2e_sqlite_batch_async_mock_fail_provider_with_priorities() {
 
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5292,7 +5293,7 @@ async fn e2e_batch_async_mock_fail_mixed_with_nonexistent() {
 
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5392,7 +5393,7 @@ async fn e2e_concurrent_batch_async_requests_all_accepted() {
 
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Fire 5 concurrent batch requests, each with 2 items
@@ -5485,7 +5486,7 @@ async fn e2e_concurrent_batch_async_requests_all_accepted() {
 async fn e2e_concurrent_batch_async_with_mixed_providers() {
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Fire 3 concurrent batches: each has 1 mock-ok and 1 mock-fail item
     let mut handles = Vec::new();
@@ -5552,7 +5553,7 @@ async fn e2e_sqlite_concurrent_batch_async_requests() {
 
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Fire 4 concurrent batch requests, each with 3 items
@@ -5656,7 +5657,7 @@ async fn e2e_batch_async_flaky_with_retry_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5729,7 +5730,7 @@ async fn e2e_batch_async_flaky_retry_exhausted_fails() {
     // MockFlakyProvider fails first 5 calls — with max_retries=1, only 2 total attempts → fails
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5805,7 +5806,7 @@ async fn e2e_batch_async_mixed_retry_policies() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5913,7 +5914,7 @@ async fn e2e_concurrent_batch_async_with_rate_limit_partial_reject() {
     // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
     let (base, worker_handle, _max_requests) =
         spawn_server_with_workers_and_rate_limit(vec![], 3, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let mut handles = Vec::new();
@@ -5982,7 +5983,7 @@ async fn e2e_batch_async_within_rate_limit_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle, _max) =
         spawn_server_with_workers_and_rate_limit(vec![], 10, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6038,7 +6039,7 @@ async fn e2e_sequential_batch_async_rate_limit_exhaustion() {
     let (callback_base, payloads) = spawn_callback_server().await;
     // Only 2 requests allowed per 60s
     let (base, worker_handle, _max) = spawn_server_with_workers_and_rate_limit(vec![], 2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // First batch — should succeed (request 1)
@@ -6122,7 +6123,7 @@ async fn e2e_sqlite_batch_async_flaky_with_retry_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6194,7 +6195,7 @@ async fn e2e_sqlite_batch_async_flaky_retry_exhausted_fails() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6270,7 +6271,7 @@ async fn e2e_sqlite_batch_async_mixed_retry_policies() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6373,7 +6374,7 @@ async fn e2e_sqlite_concurrent_batch_async_with_rate_limit_partial_reject() {
     // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
     let (base, worker_handle, _max_requests) =
         spawn_server_sqlite_with_workers_and_rate_limit(vec![], 3, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let mut handles = Vec::new();
@@ -6443,7 +6444,7 @@ async fn e2e_sqlite_batch_async_within_rate_limit_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle, _max) =
         spawn_server_sqlite_with_workers_and_rate_limit(vec![], 10, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6501,7 +6502,7 @@ async fn e2e_sqlite_sequential_batch_async_rate_limit_exhaustion() {
     // Only 2 requests allowed per 60s
     let (base, worker_handle, _max) =
         spawn_server_sqlite_with_workers_and_rate_limit(vec![], 2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // First batch — should succeed (request 1)
@@ -6584,7 +6585,7 @@ async fn e2e_backoff_delay_timing_flaky_task() {
     // Total expected wall-clock time >= 200ms * 2 retries = 400ms.
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -6631,7 +6632,7 @@ async fn e2e_backoff_delay_timing_exhausted_retries() {
     // MockFailProvider always fails. With max_retries=2, delay_ms=150,
     // the task should fail after 3 attempts with >= 300ms total delay.
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -6670,7 +6671,7 @@ async fn e2e_backoff_delay_zero_delay_is_fast() {
     // With delay_ms=0, retries should happen immediately (no backoff delay).
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -6713,7 +6714,7 @@ async fn e2e_sqlite_backoff_delay_timing_flaky_task() {
     // Same as e2e_backoff_delay_timing_flaky_task but with SQLite queue backend.
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -6758,7 +6759,7 @@ async fn e2e_sqlite_backoff_delay_timing_flaky_task() {
 async fn e2e_sqlite_backoff_delay_timing_exhausted_retries() {
     // Same as e2e_backoff_delay_timing_exhausted_retries but with SQLite queue backend.
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -6804,7 +6805,7 @@ async fn e2e_exponential_backoff_api_flaky_task() {
     // Total backoff ≥ 250ms (100 + 200 = 300, minus timing slack)
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
     let resp = client
@@ -6855,7 +6856,7 @@ async fn e2e_exponential_backoff_api_exhausted() {
     // Test exponential backoff with max_retries=2, always-fail provider.
     // delay_ms=100, backoff_multiplier=2.0 → waits 100ms + 200ms = 300ms total.
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
     let resp = client
@@ -6900,7 +6901,7 @@ async fn e2e_exponential_backoff_api_max_delay_caps() {
     // Total ≥ 450ms (200 + 300 = 500, minus timing slack)
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
     let resp = client
@@ -6948,7 +6949,7 @@ async fn e2e_sqlite_exponential_backoff_api_flaky_task() {
     // Same as e2e_exponential_backoff_api_flaky_task but with SQLite queue backend.
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
     let resp = client
@@ -7001,7 +7002,7 @@ async fn e2e_backoff_multiplier_1_is_fixed() {
     // Total backoff = 100ms + 100ms = 200ms
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
     let resp = client
@@ -7051,7 +7052,7 @@ async fn e2e_backoff_multiplier_1_is_fixed() {
 #[tokio::test]
 async fn e2e_health_response_has_documented_structure() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -7084,7 +7085,7 @@ async fn e2e_health_response_has_documented_structure() {
 #[tokio::test]
 async fn e2e_request_id_generated_is_valid_uuid() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -7103,7 +7104,7 @@ async fn e2e_request_id_generated_is_valid_uuid() {
 #[tokio::test]
 async fn e2e_request_id_preserves_client_provided() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let custom_id = "my-custom-trace-id-abc";
 
     let resp = client
@@ -7129,7 +7130,7 @@ async fn e2e_request_id_preserves_client_provided() {
 #[tokio::test]
 async fn e2e_cors_permissive_returns_wildcard_for_arbitrary_origin() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -7155,7 +7156,7 @@ async fn e2e_cors_permissive_returns_wildcard_for_arbitrary_origin() {
 #[tokio::test]
 async fn e2e_scheduled_send_delay_seconds_holds_task() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -7209,7 +7210,7 @@ async fn e2e_scheduled_send_delay_seconds_holds_task() {
 #[tokio::test]
 async fn e2e_scheduled_send_delay_zero_is_immediate() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -7250,7 +7251,7 @@ async fn e2e_scheduled_send_delay_zero_is_immediate() {
 #[tokio::test]
 async fn e2e_scheduled_send_rfc3339_timestamp() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Schedule 2 seconds from now
     let scheduled_time = std::time::SystemTime::now() + Duration::from_secs(2);
@@ -7289,7 +7290,7 @@ async fn e2e_scheduled_send_rfc3339_timestamp() {
 #[tokio::test]
 async fn e2e_scheduled_send_mutually_exclusive_error() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -7316,7 +7317,7 @@ async fn e2e_scheduled_send_mutually_exclusive_error() {
 #[tokio::test]
 async fn e2e_scheduled_send_invalid_timestamp_format() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -7342,7 +7343,7 @@ async fn e2e_scheduled_send_invalid_timestamp_format() {
 #[tokio::test]
 async fn e2e_scheduled_send_no_scheduled_at_for_immediate() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -7375,7 +7376,7 @@ async fn e2e_scheduled_send_no_scheduled_at_for_immediate() {
 #[tokio::test]
 async fn e2e_openapi_schema_has_scheduled_send_fields() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -7410,7 +7411,7 @@ async fn e2e_openapi_schema_has_scheduled_send_fields() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_delay_seconds_holds_task() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -7464,7 +7465,7 @@ async fn e2e_sqlite_scheduled_send_delay_seconds_holds_task() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_delay_zero_is_immediate() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let start = std::time::Instant::now();
 
@@ -7505,7 +7506,7 @@ async fn e2e_sqlite_scheduled_send_delay_zero_is_immediate() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_rfc3339_timestamp() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Schedule 2 seconds from now
     let scheduled_time = std::time::SystemTime::now() + Duration::from_secs(2);
@@ -7544,7 +7545,7 @@ async fn e2e_sqlite_scheduled_send_rfc3339_timestamp() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_mutually_exclusive_error() {
     let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -7571,7 +7572,7 @@ async fn e2e_sqlite_scheduled_send_mutually_exclusive_error() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_invalid_timestamp_format() {
     let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -7597,7 +7598,7 @@ async fn e2e_sqlite_scheduled_send_invalid_timestamp_format() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate() {
     let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
@@ -7630,7 +7631,7 @@ async fn e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate() {
 #[tokio::test]
 async fn e2e_sqlite_scheduled_send_batch_mixed_delays() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async/batch"))
