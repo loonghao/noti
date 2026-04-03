@@ -163,7 +163,8 @@ When the rate limit is exceeded, the server responds with:
 ```bash
 response=$(curl -s -w "\n%{http_code}" http://localhost:3000/api/v1/send -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"provider":"slack","text":"hello","config":{"webhook":"..."}}')
+  -d '{"provider":"slack","text":"hello","config":{"webhook_url":"..."}}')
+
 
 status=$(echo "$response" | tail -1)
 if [ "$status" = "429" ]; then

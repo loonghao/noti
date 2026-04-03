@@ -33,13 +33,14 @@ curl -X POST http://localhost:3000/api/v1/send/async \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "slack",
-    "config": {"webhook": "https://hooks.slack.com/services/..."},
+    "config": {"webhook_url": "https://hooks.slack.com/services/..."},
     "text": "Deployment complete",
     "title": "Deploy Alert",
     "priority": "high",
     "metadata": {"deploy_id": "d-123", "env": "production"},
     "callback_url": "https://your-server.com/webhook/noti-callback"
   }'
+
 ```
 
 The same field works for batch async requests:
@@ -51,10 +52,11 @@ curl -X POST http://localhost:3000/api/v1/send/async/batch \
     "items": [
       {
         "provider": "slack",
-        "config": {"webhook": "https://hooks.slack.com/..."},
+        "config": {"webhook_url": "https://hooks.slack.com/..."},
         "text": "Alert: disk full",
         "callback_url": "https://your-server.com/webhook/noti-callback"
       },
+
       {
         "provider": "email",
         "config": {"smtp_host": "smtp.example.com", "to": "ops@example.com"},

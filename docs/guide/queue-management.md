@@ -14,7 +14,8 @@ NOTI_QUEUE_BACKEND=sqlite NOTI_QUEUE_DB_PATH=./noti.db noti-server
 # Enqueue a notification
 curl -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "slack", "config": {"webhook": "https://hooks.slack.com/..."}, "text": "Hello!"}'
+  -d '{"provider": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}, "text": "Hello!"}'
+
 
 # Check queue stats
 curl http://localhost:3000/api/v1/queue/stats
@@ -78,7 +79,7 @@ curl -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
   -d '{
     "provider": "slack",
-    "config": {"webhook": "https://hooks.slack.com/..."},
+    "config": {"webhook_url": "https://hooks.slack.com/..."},
     "text": "Deployment complete",
     "title": "Deploy Alert",
     "priority": "high",
@@ -87,6 +88,7 @@ curl -X POST http://localhost:3000/api/v1/send/async \
     "callback_url": "https://your-server.com/webhook/noti-callback",
     "delay_seconds": 60
   }'
+
 ```
 
 **Response (202 Accepted):**
@@ -133,10 +135,11 @@ curl -X POST http://localhost:3000/api/v1/send/async/batch \
   -H 'Content-Type: application/json' \
   -d '{
     "items": [
-      {"provider": "slack", "config": {"webhook": "..."}, "text": "Alert 1", "priority": "urgent"},
+      {"provider": "slack", "config": {"webhook_url": "..."}, "text": "Alert 1", "priority": "urgent"},
       {"provider": "email", "config": {"to": "user@example.com"}, "text": "Alert 2"},
       {"provider": "webhook", "config": {"url": "..."}, "text": "Alert 3", "delay_seconds": 300}
     ]
+
   }'
 ```
 
@@ -291,7 +294,8 @@ Tasks are dequeued in priority order. Within the same priority level, earlier ta
 # Urgent tasks jump to the front of the queue
 curl -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "Critical alert!", "priority": "urgent"}'
+  -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "Critical alert!", "priority": "urgent"}'
+
 ```
 
 ## Retry & Backoff
@@ -332,7 +336,8 @@ Defer notification delivery to a future time. See [Scheduled & Delayed Send](/gu
 # Delay by 5 minutes
 curl -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "Reminder!", "delay_seconds": 300}'
+  -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "Reminder!", "delay_seconds": 300}'
+
 
 # Schedule for a specific time
 curl -X POST http://localhost:3000/api/v1/send/async \

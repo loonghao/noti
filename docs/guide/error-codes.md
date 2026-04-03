@@ -96,9 +96,10 @@ curl -s -X POST http://localhost:3000/api/v1/send \
 ```json
 {
   "error": "bad_request",
-  "message": "slack requires parameter 'webhook'",
+  "message": "slack requires parameter 'webhook_url'",
   "code": "CONFIG_VALIDATION_FAILED"
 }
+
 ```
 
 **INVALID_PARAMETER** — bad status filter:
@@ -275,7 +276,8 @@ def send_with_retry(url, payload, max_retries=3):
 # Queue is at capacity
 curl -s -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "hello"}'
+  -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "hello"}'
+
 ```
 
 ```json

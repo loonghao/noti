@@ -47,10 +47,11 @@ Endpoints in the OpenAPI spec are grouped into the following tags:
 | **Meta** | API version discovery and metadata | `GET /api/versions` |
 | **Notifications** | Synchronous notification sending | `POST /api/v1/send`, `POST /api/v1/send/batch` |
 | **Async Queue** | Asynchronous queue-based notification processing | `POST /api/v1/send/async`, `GET /api/v1/queue/stats` |
-| **Status** | Delivery status tracking | `GET /api/v1/status/{notification_id}` |
+| **Status** | Delivery status tracking | `GET /api/v1/status`, `GET /api/v1/status/{notification_id}`, `POST /api/v1/status/purge` |
 | **Templates** | Message template management (CRUD) | `POST /api/v1/templates`, `GET /api/v1/templates/{name}` |
 | **Providers** | Notification provider information | `GET /api/v1/providers`, `GET /api/v1/providers/{name}` |
 | **Monitoring** | Metrics and monitoring | `GET /api/v1/metrics` |
+
 
 ## OpenAPI Specification
 

@@ -43,11 +43,14 @@ All v1 endpoints are prefixed with `/api/v1/`:
 |----------|-----------|
 | **Notifications** | `POST /api/v1/send`, `POST /api/v1/send/batch` |
 | **Async Queue** | `POST /api/v1/send/async`, `POST /api/v1/send/async/batch` |
-| **Status** | `GET /api/v1/status`, `GET /api/v1/status/{id}` |
+| **Status** | `GET /api/v1/status`, `GET /api/v1/status/{id}`, `POST /api/v1/status/purge` |
 | **Templates** | `GET/POST /api/v1/templates`, `GET/PUT/DELETE /api/v1/templates/{name}` |
 | **Providers** | `GET /api/v1/providers`, `GET /api/v1/providers/{name}` |
 | **Queue** | `GET /api/v1/queue/stats`, `GET /api/v1/queue/tasks`, etc. |
 | **Metrics** | `GET /api/v1/metrics` |
+
+The status purge endpoint accepts an optional `max_age_secs` query parameter to remove only terminal records older than the specified age.
+
 
 ### Version-Independent Endpoints
 

@@ -432,12 +432,13 @@ Reference in your Deployment:
 spec:
   containers:
     - name: noti
-      image: ghcr.io/loonghao/noti:latest
+      image: ghcr.io/loonghao/noti-server:latest
       envFrom:
         - configMapRef:
             name: noti-config
         - secretRef:
             name: noti-secrets
+
 ```
 
 ## Install Script Configuration
