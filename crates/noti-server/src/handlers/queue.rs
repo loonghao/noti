@@ -177,9 +177,9 @@ pub struct BatchEnqueueResponse {
 // ───────────────────── Helpers ─────────────────────
 
 fn task_to_info(task: &NotificationTask) -> TaskInfo {
-    let scheduled_at = task.available_at.map(|at| {
-        humantime::format_rfc3339(at).to_string()
-    });
+    let scheduled_at = task
+        .available_at
+        .map(|at| humantime::format_rfc3339(at).to_string());
 
     TaskInfo {
         id: task.id.clone(),
@@ -409,20 +409,21 @@ pub async fn send_async_batch(
         let policy = common::build_retry_policy(item.retry.as_ref(), RetryPolicy::default());
 
         // Parse schedule/delay for this item
-        let available_at = match parse_scheduled_time(item.delay_seconds, item.scheduled_at.as_deref()) {
-            Ok(at) => at,
-            Err(e) => {
-                results.push(BatchEnqueueItemResult {
-                    index,
-                    provider: item.provider,
-                    success: false,
-                    task_id: None,
-                    error: Some(e.message),
-                });
-                failed += 1;
-                continue;
-            }
-        };
+        let available_at =
+            match parse_scheduled_time(item.delay_seconds, item.scheduled_at.as_deref()) {
+                Ok(at) => at,
+                Err(e) => {
+                    results.push(BatchEnqueueItemResult {
+                        index,
+                        provider: item.provider,
+                        success: false,
+                        task_id: None,
+                        error: Some(e.message),
+                    });
+                    failed += 1;
+                    continue;
+                }
+            };
 
         let mut task = NotificationTask::new(&item.provider, config, msg).with_retry_policy(policy);
 
@@ -462,12 +463,7 @@ pub async fn send_async_batch(
         }
     }
 
-    info!(
-        total,
-        enqueued,
-        failed,
-        "batch async enqueue completed"
-    );
+    info!(total, enqueued, failed, "batch async enqueue completed");
 
     Ok((
         StatusCode::ACCEPTED,
@@ -812,7 +808,10 @@ mod tests {
     #[test]
     fn test_parse_scheduled_time_delay_zero() {
         let result = parse_scheduled_time(Some(0), None).unwrap();
-        assert!(result.is_none(), "delay_seconds=0 should be treated as immediate");
+        assert!(
+            result.is_none(),
+            "delay_seconds=0 should be treated as immediate"
+        );
     }
 
     #[test]
