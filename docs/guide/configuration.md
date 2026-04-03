@@ -358,8 +358,8 @@ Override any variable in `docker-compose.yml`:
 
 ```yaml
 services:
-  noti:
-    image: ghcr.io/loonghao/noti:latest
+  noti-server:
+    image: ghcr.io/loonghao/noti-server:latest
     ports:
       - "${NOTI_PORT:-3000}:3000"
     volumes:

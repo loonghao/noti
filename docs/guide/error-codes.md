@@ -77,13 +77,15 @@ Errors caused by invalid client input.
 
 | Code | Description | Trigger |
 |:-----|:------------|:--------|
-| `CONFIG_VALIDATION_FAILED` | Provider-specific configuration failed validation | Missing required config keys (e.g., `webhook` for Slack) |
+| `CONFIG_VALIDATION_FAILED` | Provider-specific configuration failed validation | Missing required config keys (e.g., `webhook_url` for Slack) |
+
 | `INVALID_PARAMETER` | A query or path parameter value is invalid | Bad `?status=` filter, `delay_seconds` + `scheduled_at` both provided, invalid RFC 3339 timestamp |
 | `TEMPLATE_VARIABLE_MISSING` | Required template variables are missing during render | Rendering a template without providing all required (no-default) variables |
 
 #### Examples
 
-**CONFIG_VALIDATION_FAILED** — missing `webhook` for Slack:
+**CONFIG_VALIDATION_FAILED** — missing `webhook_url` for Slack:
+
 
 ```bash
 curl -s -X POST http://localhost:3000/api/v1/send \
@@ -118,7 +120,8 @@ curl -s "http://localhost:3000/api/v1/queue/tasks?status=bogus"
 ```bash
 curl -s -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "test", "delay_seconds": 60, "scheduled_at": "2025-08-15T09:00:00Z"}'
+  -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "test", "delay_seconds": 60, "scheduled_at": "2025-08-15T09:00:00Z"}'
+
 ```
 
 ```json
@@ -292,8 +295,9 @@ When receiving `QUEUE_FULL`, clients should back off and retry:
 for i in 1 2 3 4 5; do
   RESP=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/v1/send/async \
     -H 'Content-Type: application/json' \
-    -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "hello"}')
+    -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "hello"}')
   HTTP_CODE=$(echo "$RESP" | tail -1)
+
   if [ "$HTTP_CODE" != "503" ]; then
     echo "Success or non-retryable error"
     break

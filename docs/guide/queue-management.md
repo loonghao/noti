@@ -337,7 +337,8 @@ curl -X POST http://localhost:3000/api/v1/send/async \
 # Schedule for a specific time
 curl -X POST http://localhost:3000/api/v1/send/async \
   -H 'Content-Type: application/json' \
-  -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "Morning report", "scheduled_at": "2025-08-15T09:00:00Z"}'
+  -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "Morning report", "scheduled_at": "2025-08-15T09:00:00Z"}'
+
 ```
 
 ::: warning

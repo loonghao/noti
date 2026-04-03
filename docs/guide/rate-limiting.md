@@ -192,7 +192,8 @@ if resp.status_code == 429:
 const resp = await fetch("http://localhost:3000/api/v1/send", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ provider: "slack", text: "hello", config: { webhook: "..." } }),
+  body: JSON.stringify({ provider: "slack", text: "hello", config: { webhook_url: "..." } }),
+
 });
 
 if (resp.status === 429) {

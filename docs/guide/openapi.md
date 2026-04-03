@@ -57,7 +57,8 @@ Endpoints in the OpenAPI spec are grouped into the following tags:
 The JSON specification includes:
 
 - **API info** — title, version, license (MIT), and contact link
-- **Paths** — all 22 API endpoints with HTTP methods, parameters, request bodies, and response schemas
+- **Paths** — all 23 API operations with HTTP methods, parameters, request bodies, and response schemas
+
 - **Components/Schemas** — 40+ reusable type definitions (request/response bodies, enums, nested objects)
 - **Tags** — logical grouping of endpoints by functional area
 
@@ -191,6 +192,8 @@ The OpenAPI spec defines these component schemas:
 | `DeliveryStatus` | Enum: `pending`, `sending`, `delivered`, `failed`, `cancelled`, `read` |
 | `StatusEvent` | Timestamped status transition event |
 | `StatusSummary` | Aggregate counts across all statuses |
+| `PurgeStatusResponse` | Status purge result (`purged`, `message`) |
+
 
 ### Templates
 

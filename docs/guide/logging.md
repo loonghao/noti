@@ -128,7 +128,8 @@ Useful for distributed tracing across multiple services:
 ```bash
 curl -H "X-Request-Id: my-trace-123" http://localhost:3000/api/v1/send \
   -H "Content-Type: application/json" \
-  -d '{"provider": "slack", "config": {"webhook": "..."}, "text": "hello"}'
+  -d '{"provider": "slack", "config": {"webhook_url": "..."}, "text": "hello"}'
+
 
 # Response header: X-Request-Id: my-trace-123
 # All server logs for this request contain: request_id=my-trace-123

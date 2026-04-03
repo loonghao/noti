@@ -217,8 +217,9 @@ TASK_ID=$(curl -s -X POST http://noti:3000/api/v1/send/async \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "slack",
-    "config": {"webhook": "'$SLACK_WEBHOOK'"},
+    "config": {"webhook_url": "'$SLACK_WEBHOOK'"},
     "text": "Deploying '"$SERVICE"' to '"$ENV"'",
+
     "callback_url": "'$CI_CALLBACK_URL'",
     "metadata": {"pipeline_id": "'$CI_PIPELINE_ID'", "service": "'$SERVICE'"}
   }' | jq -r '.task_id')

@@ -67,7 +67,7 @@ sha256sum -c noti-checksums.txt
 | `NOTI_CONFIG` | Override config file path (default: `~/.config/noti/config.toml`) |
 | `NOTI_INSTALL_DIR` | Custom install directory for install scripts |
 | `NOTI_INSTALL_VERSION` | Pin version for install scripts |
-| `NOTI_INSTALL_REPOSITORY` | Override GitHub repo (default: `loonghao/wecom-bot-cli`) |
+| `NOTI_INSTALL_REPOSITORY` | Override GitHub repo (default: `loonghao/noti`) |
 
 ## Quick Usage Patterns
 

@@ -190,8 +190,9 @@ To rotate keys without downtime:
 ```yaml
 services:
   noti-server:
-    image: ghcr.io/loonghao/noti:latest
+    image: ghcr.io/loonghao/noti-server:latest
     environment:
+
       NOTI_API_KEYS: "${NOTI_API_KEYS}"
       NOTI_AUTH_EXCLUDED_PATHS: "/health"
     ports:

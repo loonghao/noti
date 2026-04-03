@@ -527,8 +527,9 @@ Configure via:
 ```json
 {
   "provider": "slack",
-  "config": {"webhook": "https://hooks.slack.com/..."},
+  "config": {"webhook_url": "https://hooks.slack.com/..."},
   "text": "Deployment complete",
+
   "title": "Deploy Alert",
   "priority": "high",
   "retry": {"max_retries": 3, "delay_ms": 1000},
