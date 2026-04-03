@@ -91,7 +91,7 @@ jobs:
               continue
             fi
             echo "Publishing skill: ${skill_name} v${SKILL_VERSION}"
-            clawhub skill publish "${skill_dir}" \
+            clawhub publish "${skill_dir}" \
               --owner "noti-cli" \
               --slug "${skill_name}" \
               --name "${skill_name}" \
