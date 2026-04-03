@@ -188,11 +188,12 @@ pub async fn spawn_server_with_cors_permissive() -> String {
 }
 
 /// Start a server with restricted CORS (specific origins only).
+/// Invalid origins are filtered out (matching production behavior in main.rs).
 pub async fn spawn_server_with_cors_restricted(allowed_origins: Vec<String>) -> String {
     let state = default_app_state();
     let origins: Vec<axum::http::HeaderValue> = allowed_origins
         .iter()
-        .filter_map(|o| o.parse().ok())
+        .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
         .collect();
     let cors_layer = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
@@ -245,6 +246,23 @@ pub async fn spawn_server_with_workers_serial(
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
     (base, worker_handle)
+}
+
+/// Start a noti server with custom mock providers but **no background workers**.
+/// This allows tests to enqueue tasks, inspect them, and then start workers manually.
+/// Returns `(base_url, app_state)`.
+pub async fn spawn_server_without_workers(
+    providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+) -> (String, noti_server::state::AppState) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    for p in providers {
+        registry.register(p);
+    }
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+    let base = bind_and_serve(app).await;
+    (base, state)
 }
 
 // ───────────────────── SQLite queue backend helpers ─────────────────────
@@ -307,6 +325,22 @@ pub async fn spawn_server_sqlite_with_workers_serial(
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
     (base, worker_handle)
+}
+
+/// Start a server with in-memory SQLite queue and custom providers, but **no workers**.
+/// Returns `(base_url, app_state)` so tests can enqueue first and start workers later.
+pub async fn spawn_server_sqlite_without_workers(
+    providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+) -> (String, noti_server::state::AppState) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    for p in providers {
+        registry.register(p);
+    }
+
+    let state = sqlite_app_state_with_registry(registry);
+    let app = noti_server::routes::build_router(state.clone());
+    let base = bind_and_serve(app).await;
+    (base, state)
 }
 
 /// Start a real HTTP server backed by a file-based SQLite queue.
@@ -607,17 +641,225 @@ pub async fn spawn_callback_server() -> (String, Arc<Mutex<Vec<Value>>>) {
     (base, payloads)
 }
 
+// ───────────────────── Shared HTTP client ─────────────────────
+
+/// Return a `reqwest::Client` for use in e2e tests.
+///
+/// Keeping client construction behind this helper makes call sites consistent
+/// and gives the test suite a single place to evolve if it later needs shared
+/// client configuration.
+pub fn test_client() -> reqwest::Client {
+    reqwest::Client::new()
+}
+
+// ───────────────────── Dual-backend test macro ─────────────────────
+
+/// Generate two `#[tokio::test]` functions — one for InMemory, one for SQLite —
+/// from a single test body. This eliminates the ~95% code duplication between
+/// `e2e_<name>` and `e2e_sqlite_<name>` test pairs.
+///
+/// The macro accepts two test names and a block that uses the provided spawn
+/// function and label. The block is duplicated: once with the InMemory spawn
+/// variant and once with the SQLite spawn variant.
+///
+/// # Variants
+///
+/// ## `basic` — spawn returns `String` (no providers, no workers)
+/// ```ignore
+/// common::dual_backend_test!(
+///     basic,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `without_workers` — spawn returns `(String, AppState)`
+/// ```ignore
+/// common::dual_backend_test!(
+///     without_workers,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `with_workers` — spawn returns `(String, WorkerHandle)`
+/// ```ignore
+/// common::dual_backend_test!(
+///     with_workers,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `with_workers_serial` — spawn returns `(String, WorkerHandle)`
+/// ```ignore
+/// common::dual_backend_test!(
+///     with_workers_serial,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
+/// ## `with_workers_and_rate_limit` — spawn returns `(String, WorkerHandle, u64)`
+/// ```ignore
+/// common::dual_backend_test!(
+///     with_workers_and_rate_limit,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+macro_rules! dual_backend_test {
+    // ── basic: spawn_fn() -> String ──
+    (basic, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn() -> String {
+                $crate::common::spawn_server().await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn() -> String {
+                $crate::common::spawn_server_sqlite().await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── without_workers: spawn_fn(providers) -> (String, AppState) ──
+    (without_workers, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn(
+                providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_server::state::AppState) {
+                $crate::common::spawn_server_without_workers(providers).await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn(
+                providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_server::state::AppState) {
+                $crate::common::spawn_server_sqlite_without_workers(providers).await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── with_workers: spawn_fn() -> (String, WorkerHandle) ──
+    (with_workers, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn() -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_with_workers().await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn() -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_sqlite_with_workers().await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── with_workers_serial: spawn_fn(extra_providers) -> (String, WorkerHandle) ──
+    (with_workers_serial, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_with_workers_serial(extra_providers).await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+            ) -> (String, noti_queue::WorkerHandle) {
+                $crate::common::spawn_server_sqlite_with_workers_serial(extra_providers).await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
+    // ── with_workers_and_rate_limit: spawn_fn(extra, max, window) -> (String, WorkerHandle, u64) ──
+    (with_workers_and_rate_limit, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+                max_requests: u64,
+                window_secs: u64,
+            ) -> (String, noti_queue::WorkerHandle, u64) {
+                $crate::common::spawn_server_with_workers_and_rate_limit(
+                    extra_providers,
+                    max_requests,
+                    window_secs,
+                )
+                .await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn(
+                extra_providers: Vec<std::sync::Arc<dyn noti_core::NotifyProvider>>,
+                max_requests: u64,
+                window_secs: u64,
+            ) -> (String, noti_queue::WorkerHandle, u64) {
+                $crate::common::spawn_server_sqlite_with_workers_and_rate_limit(
+                    extra_providers,
+                    max_requests,
+                    window_secs,
+                )
+                .await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+}
+
+pub(crate) use dual_backend_test;
+
 // ───────────────────── Polling utilities ─────────────────────
 
 /// Poll a task until it reaches a terminal state (`completed`, `failed`, or `cancelled`).
-/// Panics if the task does not reach a terminal state within 5 seconds.
+/// Panics if the task does not reach a terminal state within 15 seconds.
+/// The generous timeout accommodates retry backoff delays (default policy: 1s + 2s + 4s = 7s).
 pub async fn wait_for_terminal_status(
     client: &reqwest::Client,
     base: &str,
     task_id: &str,
 ) -> Value {
     let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(15);
 
     loop {
         let resp = client

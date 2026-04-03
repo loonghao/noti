@@ -14,13 +14,13 @@ use std::time::Duration;
 
 use common::{
     MockFlakyProvider, MockOkProvider, MockSlowProvider, spawn_callback_server, spawn_server,
-    spawn_server_sqlite, spawn_server_sqlite_file, spawn_server_sqlite_file_with_workers,
-    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_and_rate_limit,
-    spawn_server_sqlite_with_workers_serial, spawn_server_with_auth, spawn_server_with_body_limit,
+    spawn_server_sqlite_file, spawn_server_sqlite_file_with_workers,
+    spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_serial,
+    spawn_server_sqlite_without_workers, spawn_server_with_auth, spawn_server_with_body_limit,
     spawn_server_with_cors_permissive, spawn_server_with_cors_restricted,
     spawn_server_with_full_middleware, spawn_server_with_rate_limit,
     spawn_server_with_rate_limit_per_ip, spawn_server_with_request_id, spawn_server_with_workers,
-    spawn_server_with_workers_and_rate_limit, spawn_server_with_workers_serial,
+    spawn_server_with_workers_serial, spawn_server_without_workers, test_client,
     wait_for_terminal_status,
 };
 use noti_queue::QueueBackend;
@@ -29,27 +29,92 @@ use serde_json::{Value, json};
 
 // ───────────────────── Health & Meta ─────────────────────
 
+common::dual_backend_test!(
+    basic,
+    e2e_health_check,
+    e2e_sqlite_health_check,
+    |spawn_fn, _label| {
+        let base = spawn_fn().await;
+        let client = test_client();
+
+        let resp = client
+            .get(format!("{base}/health"))
+            .send()
+            .await
+            .expect("request failed");
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["status"], "ok");
+        assert!(body["version"].is_string());
+    }
+);
+
 #[tokio::test]
-async fn e2e_health_check() {
+async fn e2e_api_versions_endpoint() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
-        .get(format!("{base}/health"))
+        .get(format!("{base}/api/versions"))
         .send()
         .await
         .expect("request failed");
 
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-    assert!(body["version"].is_string());
+
+    // Should have a versions array and a latest field
+    let versions = body["versions"]
+        .as_array()
+        .expect("versions should be an array");
+    assert!(
+        !versions.is_empty(),
+        "at least one version should be listed"
+    );
+
+    // v1 should be present and stable
+    let v1 = versions.iter().find(|v| v["version"] == "v1");
+    assert!(v1.is_some(), "v1 should be listed");
+    let v1 = v1.unwrap();
+    assert_eq!(v1["status"], "stable");
+    assert_eq!(v1["deprecated"], false);
+
+    // latest should be v1
+    assert_eq!(body["latest"], "v1");
+}
+
+#[tokio::test]
+async fn e2e_api_versions_in_openapi_spec() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+
+    let paths = body["paths"].as_object().unwrap();
+    assert!(
+        paths.contains_key("/api/versions"),
+        "OpenAPI spec should include /api/versions path"
+    );
+
+    // Verify the Meta tag exists
+    let tags = body["tags"].as_array().unwrap();
+    let meta_tag = tags.iter().find(|t| t["name"] == "Meta");
+    assert!(
+        meta_tag.is_some(),
+        "Meta tag should be present in OpenAPI spec"
+    );
 }
 
 #[tokio::test]
 async fn e2e_metrics_endpoint() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/metrics"))
@@ -69,7 +134,7 @@ async fn e2e_metrics_endpoint() {
 #[tokio::test]
 async fn e2e_list_providers() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -86,7 +151,7 @@ async fn e2e_list_providers() {
 #[tokio::test]
 async fn e2e_get_provider_detail() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers/slack"))
@@ -103,7 +168,7 @@ async fn e2e_get_provider_detail() {
 #[tokio::test]
 async fn e2e_provider_not_found() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers/nonexistent"))
@@ -119,7 +184,7 @@ async fn e2e_provider_not_found() {
 #[tokio::test]
 async fn e2e_send_missing_provider() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -137,7 +202,7 @@ async fn e2e_send_missing_provider() {
 #[tokio::test]
 async fn e2e_send_missing_config() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -158,7 +223,7 @@ async fn e2e_send_missing_config() {
 #[tokio::test]
 async fn e2e_template_crud_lifecycle() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Create
     let resp = client
@@ -247,108 +312,116 @@ async fn e2e_template_crud_lifecycle() {
 
 // ───────────────────── Async queue (real HTTP) ─────────────────────
 
-#[tokio::test]
-async fn e2e_async_send_and_query() {
-    let base = spawn_server().await;
-    let client = reqwest::Client::new();
+common::dual_backend_test!(
+    basic,
+    e2e_async_send_and_query,
+    e2e_sqlite_async_send_query_cancel_purge,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
 
-    // Enqueue
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "e2e async test",
-            "config": {
-                "webhook_url": "https://hooks.slack.com/services/T00/B00/e2e"
-            }
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["status"], "queued");
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // Get task
-    let resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["id"], task_id);
-    assert_eq!(body["provider"], "slack");
-
-    // Queue stats
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["total"].as_u64().unwrap() >= 1);
-
-    // Cancel task
-    let resp = client
-        .post(format!("{base}/api/v1/queue/tasks/{task_id}/cancel"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["cancelled"].as_bool().unwrap());
-
-    // Purge
-    let resp = client
-        .post(format!("{base}/api/v1/queue/purge"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["purged"].as_u64().unwrap() >= 1);
-}
-
-#[tokio::test]
-async fn e2e_async_batch_send() {
-    let base = spawn_server().await;
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "slack",
-                    "text": "batch item 1",
-                    "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/batch1"}
-                },
-                {
-                    "provider": "nonexistent",
-                    "text": "batch item 2"
+        // Enqueue
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": format!("{label}async test"),
+                "config": {
+                    "webhook_url": "https://hooks.slack.com/services/T00/B00/e2e"
                 }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["status"], "queued");
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["total"], 2);
-    assert_eq!(body["enqueued"], 1);
-    assert_eq!(body["failed"], 1);
-}
+        // Get task
+        let resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["id"], task_id);
+        assert_eq!(body["provider"], "slack");
+
+        // Queue stats
+        let resp = client
+            .get(format!("{base}/api/v1/queue/stats"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["total"].as_u64().unwrap() >= 1);
+
+        // Cancel task
+        let resp = client
+            .post(format!("{base}/api/v1/queue/tasks/{task_id}/cancel"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["cancelled"].as_bool().unwrap());
+
+        // Purge
+        let resp = client
+            .post(format!("{base}/api/v1/queue/purge"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["purged"].as_u64().unwrap() >= 1);
+    }
+);
+
+common::dual_backend_test!(
+    basic,
+    e2e_async_batch_send,
+    e2e_sqlite_batch_async_send,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "slack",
+                        "text": format!("{label}batch item 1"),
+                        "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/batch1"}
+                    },
+                    {
+                        "provider": "nonexistent",
+                        "text": format!("{label}batch item 2")
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["total"], 2);
+        assert_eq!(body["enqueued"], 1);
+        assert_eq!(body["failed"], 1);
+    }
+);
 
 // ───────────────────── OpenAPI / Swagger ─────────────────────
 
 #[tokio::test]
 async fn e2e_openapi_json_valid() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api-docs/openapi.json"))
@@ -391,7 +464,7 @@ async fn e2e_openapi_json_valid() {
 #[tokio::test]
 async fn e2e_swagger_ui_accessible() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/swagger-ui/"))
@@ -414,12 +487,156 @@ async fn e2e_swagger_ui_accessible() {
     );
 }
 
+#[tokio::test]
+async fn e2e_openapi_schema_retry_config_has_backoff_fields() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    // Navigate to RetryConfig schema
+    let schemas = &body["components"]["schemas"];
+    assert!(
+        schemas["RetryConfig"].is_object(),
+        "RetryConfig schema should exist in OpenAPI components"
+    );
+
+    let retry_props = &schemas["RetryConfig"]["properties"];
+    assert!(
+        retry_props.is_object(),
+        "RetryConfig should have properties"
+    );
+
+    // Verify all four fields are present
+    assert!(
+        retry_props["max_retries"].is_object(),
+        "RetryConfig should have max_retries field"
+    );
+    assert!(
+        retry_props["delay_ms"].is_object(),
+        "RetryConfig should have delay_ms field"
+    );
+    assert!(
+        retry_props["backoff_multiplier"].is_object(),
+        "RetryConfig should have backoff_multiplier field"
+    );
+    assert!(
+        retry_props["max_delay_ms"].is_object(),
+        "RetryConfig should have max_delay_ms field"
+    );
+
+    // Verify types: backoff_multiplier should be number, max_delay_ms should be integer
+    let bm_type = retry_props["backoff_multiplier"]["type"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        bm_type == "number" || retry_props["backoff_multiplier"]["format"].is_string(),
+        "backoff_multiplier should be a number type, got: {bm_type}"
+    );
+
+    let md_type = retry_props["max_delay_ms"]["type"].as_str().unwrap_or("");
+    assert!(
+        md_type == "integer" || retry_props["max_delay_ms"]["format"].is_string(),
+        "max_delay_ms should be an integer type, got: {md_type}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_openapi_schema_all_key_components_exist() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let schemas = body["components"]["schemas"].as_object().unwrap();
+
+    // Verify all key schema components are present
+    let expected_schemas = [
+        "ApiError",
+        "RetryConfig",
+        "SendRequest",
+        "HealthResponse",
+        "EnqueueResponse",
+        "StatsResponse",
+        "TaskInfo",
+        "TemplateResponse",
+        "ProviderInfo",
+        "MetricsResponse",
+    ];
+
+    for name in &expected_schemas {
+        assert!(
+            schemas.contains_key(*name),
+            "missing schema component: {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn e2e_openapi_schema_all_api_paths_exist() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let paths = body["paths"].as_object().unwrap();
+
+    // All API routes should be documented
+    let expected_paths = [
+        "/health",
+        "/api/versions",
+        "/api/v1/send",
+        "/api/v1/send/batch",
+        "/api/v1/send/async",
+        "/api/v1/send/async/batch",
+        "/api/v1/status/{notification_id}",
+        "/api/v1/status",
+        "/api/v1/status/purge",
+        "/api/v1/templates",
+        "/api/v1/templates/{name}",
+        "/api/v1/templates/{name}/render",
+        "/api/v1/providers",
+        "/api/v1/providers/{name}",
+        "/api/v1/queue/stats",
+        "/api/v1/queue/tasks",
+        "/api/v1/queue/tasks/{task_id}",
+        "/api/v1/queue/tasks/{task_id}/cancel",
+        "/api/v1/queue/purge",
+        "/api/v1/metrics",
+    ];
+
+    for path in &expected_paths {
+        assert!(
+            paths.contains_key(*path),
+            "missing API path in OpenAPI spec: {path}"
+        );
+    }
+}
+
 // ───────────────────── Status endpoints ─────────────────────
 
 #[tokio::test]
 async fn e2e_status_not_found() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/status/nonexistent-id"))
@@ -433,7 +650,7 @@ async fn e2e_status_not_found() {
 #[tokio::test]
 async fn e2e_all_statuses_empty() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/status"))
@@ -446,12 +663,45 @@ async fn e2e_all_statuses_empty() {
     assert_eq!(body["total"], 0);
 }
 
+#[tokio::test]
+async fn e2e_purge_statuses_empty() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .post(format!("{base}/api/v1/status/purge"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["purged"], 0);
+    assert!(body["message"].as_str().unwrap().contains("Purged 0"));
+}
+
+#[tokio::test]
+async fn e2e_purge_statuses_with_max_age() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .post(format!("{base}/api/v1/status/purge?max_age_secs=60"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["purged"], 0);
+}
+
 // ───────────────────── Queue edge cases ─────────────────────
 
 #[tokio::test]
 async fn e2e_queue_invalid_status_filter() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/queue/tasks?status=bogus"))
@@ -465,7 +715,7 @@ async fn e2e_queue_invalid_status_filter() {
 #[tokio::test]
 async fn e2e_queue_task_not_found() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/queue/tasks/nonexistent-id"))
@@ -481,7 +731,7 @@ async fn e2e_queue_task_not_found() {
 #[tokio::test]
 async fn e2e_auth_rejects_unauthenticated_request() {
     let (base, _keys) = spawn_server_with_auth(vec!["test-key-alpha".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -503,7 +753,7 @@ async fn e2e_auth_rejects_unauthenticated_request() {
 #[tokio::test]
 async fn e2e_auth_rejects_invalid_key() {
     let (base, _keys) = spawn_server_with_auth(vec!["correct-key".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -526,7 +776,7 @@ async fn e2e_auth_rejects_invalid_key() {
 #[tokio::test]
 async fn e2e_auth_accepts_valid_bearer_token() {
     let (base, keys) = spawn_server_with_auth(vec!["my-secret-key".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -543,7 +793,7 @@ async fn e2e_auth_accepts_valid_bearer_token() {
 #[tokio::test]
 async fn e2e_auth_accepts_x_api_key_header() {
     let (base, keys) = spawn_server_with_auth(vec!["x-api-key-value".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/providers"))
@@ -558,7 +808,7 @@ async fn e2e_auth_accepts_x_api_key_header() {
 #[tokio::test]
 async fn e2e_auth_health_bypasses_auth() {
     let (base, _keys) = spawn_server_with_auth(vec!["secret".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // /health is excluded from auth by default
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -572,7 +822,7 @@ async fn e2e_auth_health_bypasses_auth() {
 async fn e2e_auth_multiple_keys() {
     let (base, keys) =
         spawn_server_with_auth(vec!["key-one".to_string(), "key-two".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     for key in &keys {
         let resp = client
@@ -592,7 +842,7 @@ async fn e2e_auth_multiple_keys() {
 #[tokio::test]
 async fn e2e_auth_post_endpoint_requires_key() {
     let (base, keys) = spawn_server_with_auth(vec!["post-key".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Without key → 401
     let resp = client
@@ -619,7 +869,7 @@ async fn e2e_auth_post_endpoint_requires_key() {
 #[tokio::test]
 async fn e2e_rate_limit_allows_within_quota() {
     let (base, max_requests) = spawn_server_with_rate_limit(5, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     for i in 0..max_requests {
         let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -648,7 +898,7 @@ async fn e2e_rate_limit_allows_within_quota() {
 #[tokio::test]
 async fn e2e_rate_limit_returns_429_when_exceeded() {
     let (base, max_requests) = spawn_server_with_rate_limit(3, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Exhaust the quota
     for _ in 0..max_requests {
@@ -671,7 +921,7 @@ async fn e2e_rate_limit_returns_429_when_exceeded() {
 #[tokio::test]
 async fn e2e_rate_limit_429_has_retry_after_header() {
     let (base, _max) = spawn_server_with_rate_limit(1, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Use up the single allowed request
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -699,7 +949,7 @@ async fn e2e_rate_limit_429_has_retry_after_header() {
 #[tokio::test]
 async fn e2e_rate_limit_remaining_decrements() {
     let (base, _max) = spawn_server_with_rate_limit(10, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp1 = client.get(format!("{base}/health")).send().await.unwrap();
     assert_eq!(resp1.status(), StatusCode::OK);
@@ -729,7 +979,7 @@ async fn e2e_rate_limit_remaining_decrements() {
 async fn e2e_full_middleware_auth_before_rate_limit() {
     let (base, keys) =
         spawn_server_with_full_middleware(vec!["full-stack-key".to_string()], 5, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Unauthenticated → 401 (auth fires before rate limit)
     let resp = client
@@ -755,7 +1005,7 @@ async fn e2e_full_middleware_auth_before_rate_limit() {
 async fn e2e_full_middleware_health_bypasses_auth_has_rate_limit() {
     let (base, _keys) =
         spawn_server_with_full_middleware(vec!["bypass-key".to_string()], 100, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // /health bypasses auth but still gets rate limit headers
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
@@ -769,7 +1019,7 @@ async fn e2e_full_middleware_health_bypasses_auth_has_rate_limit() {
 async fn e2e_full_middleware_exhausts_rate_limit() {
     let (base, keys) =
         spawn_server_with_full_middleware(vec!["exhaust-key".to_string()], 3, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let key = &keys[0];
 
     // Use up quota with authenticated requests
@@ -799,7 +1049,7 @@ async fn e2e_full_middleware_exhausts_rate_limit() {
 async fn e2e_body_limit_small_body_accepted() {
     // Set a 1 KiB limit — small JSON payloads should be accepted
     let (base, _max) = spawn_server_with_body_limit(1024).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -828,7 +1078,7 @@ async fn e2e_body_limit_oversized_body_rejected() {
     // extractor may catch the underlying bytes rejection and return 400.
     // Either way, the request should NOT succeed (not 2xx).
     let (base, _max) = spawn_server_with_body_limit(128).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Build a payload much larger than 128 bytes
     let large_text = "x".repeat(2048);
@@ -857,7 +1107,7 @@ async fn e2e_body_limit_oversized_body_rejected() {
 async fn e2e_body_limit_get_requests_unaffected() {
     // Body limit only applies to request bodies; GET endpoints should work fine
     let (base, _max) = spawn_server_with_body_limit(64).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
 
@@ -872,7 +1122,7 @@ async fn e2e_body_limit_exact_boundary() {
     // The json!({}) payload is about 2 bytes ("{}"), but reqwest adds Content-Type
     // headers etc. We use a known-small payload with a generous limit.
     let (base, _max) = spawn_server_with_body_limit(4096).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates"))
@@ -893,7 +1143,7 @@ async fn e2e_body_limit_exact_boundary() {
 #[tokio::test]
 async fn e2e_request_id_generated_when_absent() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client.get(format!("{base}/health")).send().await.unwrap();
 
@@ -916,7 +1166,7 @@ async fn e2e_request_id_generated_when_absent() {
 #[tokio::test]
 async fn e2e_request_id_preserved_when_provided() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let custom_id = "my-custom-request-id-42";
     let resp = client
@@ -943,7 +1193,7 @@ async fn e2e_request_id_preserved_when_provided() {
 #[tokio::test]
 async fn e2e_request_id_unique_per_request() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp1 = client.get(format!("{base}/health")).send().await.unwrap();
     let id1 = resp1.headers()["x-request-id"]
@@ -963,7 +1213,7 @@ async fn e2e_request_id_unique_per_request() {
 #[tokio::test]
 async fn e2e_request_id_present_on_post_endpoints() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -990,7 +1240,7 @@ async fn e2e_request_id_present_on_post_endpoints() {
 #[tokio::test]
 async fn e2e_request_id_present_on_error_responses() {
     let base = spawn_server_with_request_id().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Request a non-existent provider — should get 404 but still have x-request-id
     let resp = client
@@ -1011,7 +1261,7 @@ async fn e2e_request_id_present_on_error_responses() {
 #[tokio::test]
 async fn e2e_cors_permissive_allows_any_origin() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -1035,7 +1285,7 @@ async fn e2e_cors_permissive_allows_any_origin() {
 #[tokio::test]
 async fn e2e_cors_permissive_preflight_succeeds() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/providers"))
@@ -1076,7 +1326,7 @@ async fn e2e_cors_restricted_allows_matching_origin() {
         "https://also-allowed.com".to_string(),
     ])
     .await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -1101,7 +1351,7 @@ async fn e2e_cors_restricted_allows_matching_origin() {
 async fn e2e_cors_restricted_rejects_non_matching_origin() {
     let base =
         spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/health"))
@@ -1123,7 +1373,7 @@ async fn e2e_cors_restricted_rejects_non_matching_origin() {
 async fn e2e_cors_restricted_preflight_non_matching_origin() {
     let base =
         spawn_server_with_cors_restricted(vec!["https://allowed.example.com".to_string()]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .request(reqwest::Method::OPTIONS, format!("{base}/api/v1/send"))
@@ -1143,7 +1393,7 @@ async fn e2e_cors_restricted_preflight_non_matching_origin() {
 #[tokio::test]
 async fn e2e_cors_permissive_post_endpoint() {
     let base = spawn_server_with_cors_permissive().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1169,7 +1419,7 @@ async fn e2e_cors_permissive_post_endpoint() {
 #[tokio::test]
 async fn e2e_validated_json_empty_provider_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1201,7 +1451,7 @@ async fn e2e_validated_json_empty_provider_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_empty_text_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1225,7 +1475,7 @@ async fn e2e_validated_json_empty_text_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_multiple_field_errors() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1254,7 +1504,7 @@ async fn e2e_validated_json_multiple_field_errors() {
 #[tokio::test]
 async fn e2e_validated_json_invalid_json_returns_400() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -1276,7 +1526,7 @@ async fn e2e_validated_json_invalid_json_returns_400() {
 #[tokio::test]
 async fn e2e_validated_json_missing_required_fields_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Send JSON with missing required fields (only config, no provider/text)
     let resp = client
@@ -1296,7 +1546,7 @@ async fn e2e_validated_json_missing_required_fields_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_template_empty_name_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates"))
@@ -1320,7 +1570,7 @@ async fn e2e_validated_json_template_empty_name_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_template_empty_body_returns_422() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates"))
@@ -1344,7 +1594,7 @@ async fn e2e_validated_json_template_empty_body_returns_422() {
 #[tokio::test]
 async fn e2e_validated_json_valid_request_passes_validation() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // A valid send request — should pass validation and reach the handler
     // (will fail at provider config level, but not at validation level)
@@ -1369,143 +1619,153 @@ async fn e2e_validated_json_valid_request_passes_validation() {
 
 // ───────────────────── Worker processing & Webhook callback (e2e) ─────────────────────
 
-#[tokio::test]
-async fn e2e_worker_processes_task_to_completion() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+common::dual_backend_test!(
+    with_workers,
+    e2e_worker_processes_task_to_completion,
+    e2e_sqlite_worker_processes_task_to_completion,
+    |spawn_with_workers, label| {
+        let (base, worker_handle) = spawn_with_workers().await;
+        let client = test_client();
 
-    // Enqueue a task for mock-ok provider
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "worker e2e test"
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "worker e2e test"
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Wait for worker to process the task
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "completed",
-        "task should be completed by worker"
-    );
-    assert_eq!(task["provider"], "mock-ok");
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(
+            task["status"], "completed",
+            "{label}task should be completed by worker"
+        );
+        assert_eq!(task["provider"], "mock-ok");
 
-    // Verify stats reflect the completed task
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 1);
+        let resp = client
+            .get(format!("{base}/api/v1/queue/stats"))
+            .send()
+            .await
+            .unwrap();
+        let stats: Value = resp.json().await.unwrap();
+        assert!(stats["completed"].as_u64().unwrap() >= 1);
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
-#[tokio::test]
-async fn e2e_worker_handles_failed_task() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+common::dual_backend_test!(
+    with_workers,
+    e2e_worker_handles_failed_task,
+    e2e_sqlite_worker_handles_failed_task,
+    |spawn_with_workers, label| {
+        let (base, worker_handle) = spawn_with_workers().await;
+        let client = test_client();
 
-    // Enqueue a task for mock-fail provider with no retries
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "worker failure test",
-            "retry": {"max_retries": 0, "delay_ms": 10}
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-fail",
+                "text": "worker failure test",
+                "retry": {"max_retries": 0, "delay_ms": 10}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Wait for worker to process and fail the task
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "failed", "task should be failed by worker");
-    assert!(
-        task["last_error"].is_string(),
-        "failed task should have an error message"
-    );
-
-    // Verify stats reflect the failed task
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["failed"].as_u64().unwrap() >= 1);
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_webhook_callback_on_success() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let callback_url = format!("{callback_base}/callback");
-
-    // Enqueue a task with callback_url
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "callback success test",
-            "callback_url": callback_url,
-            "metadata": {"trace_id": "e2e-callback-ok"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // Wait for task to complete
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed");
-
-    // Give callback a moment to fire (best-effort, async)
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Verify callback was received
-    {
-        let received = payloads.lock().unwrap();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(
+            task["status"], "failed",
+            "{label}task should be failed by worker"
+        );
         assert!(
-            !received.is_empty(),
-            "callback server should have received at least one payload"
+            task["last_error"].is_string(),
+            "{label}failed task should have an error message"
+        );
+        assert_eq!(
+            task["attempts"].as_u64().unwrap(),
+            1,
+            "{label}with max_retries=0, should have exactly 1 attempt"
         );
 
-        let cb = &received[0];
-        assert_eq!(cb["task_id"], task_id);
-        assert_eq!(cb["provider"], "mock-ok");
-        assert_eq!(cb["status"], "completed");
-        assert!(cb["attempts"].as_u64().unwrap() >= 1);
-        assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
-    }
+        let resp = client
+            .get(format!("{base}/api/v1/queue/stats"))
+            .send()
+            .await
+            .unwrap();
+        let stats: Value = resp.json().await.unwrap();
+        assert!(stats["failed"].as_u64().unwrap() >= 1);
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+common::dual_backend_test!(
+    with_workers,
+    e2e_webhook_callback_on_success,
+    e2e_sqlite_webhook_callback_on_success,
+    |spawn_with_workers, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        let (base, worker_handle) = spawn_with_workers().await;
+        let client = test_client();
+
+        let callback_url = format!("{callback_base}/callback");
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "callback success test",
+                "callback_url": callback_url,
+                "metadata": {"trace_id": "e2e-callback-ok"}
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(task["status"], "completed");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        {
+            let received = payloads.lock().unwrap();
+            assert!(
+                !received.is_empty(),
+                "{label}callback server should have received at least one payload"
+            );
+
+            let cb = &received[0];
+            assert_eq!(cb["task_id"], task_id);
+            assert_eq!(cb["provider"], "mock-ok");
+            assert_eq!(cb["status"], "completed");
+            assert!(cb["attempts"].as_u64().unwrap() >= 1);
+            assert_eq!(cb["metadata"]["trace_id"], "e2e-callback-ok");
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 #[tokio::test]
 async fn e2e_webhook_callback_on_failure() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let callback_url = format!("{callback_base}/callback");
 
@@ -1558,7 +1818,7 @@ async fn e2e_webhook_callback_on_failure() {
 async fn e2e_no_callback_when_url_not_set() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task WITHOUT callback_url
     let resp = client
@@ -1594,50 +1854,54 @@ async fn e2e_no_callback_when_url_not_set() {
     worker_handle.shutdown_and_join().await;
 }
 
-#[tokio::test]
-async fn e2e_worker_multiple_tasks_processed() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+common::dual_backend_test!(
+    with_workers,
+    e2e_worker_multiple_tasks_processed,
+    e2e_sqlite_multiple_tasks_processed,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    let mut task_ids = Vec::new();
+        let mut task_ids = Vec::new();
 
-    // Enqueue 5 tasks
-    for i in 0..5 {
+        // Enqueue 5 tasks
+        for i in 0..5 {
+            let resp = client
+                .post(format!("{base}/api/v1/send/async"))
+                .json(&json!({
+                    "provider": "mock-ok",
+                    "text": format!("{label}batch worker test {i}")
+                }))
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(resp.status(), StatusCode::ACCEPTED);
+            let body: Value = resp.json().await.unwrap();
+            task_ids.push(body["task_id"].as_str().unwrap().to_string());
+        }
+
+        // Wait for all tasks to complete
+        for task_id in &task_ids {
+            let task = wait_for_terminal_status(&client, &base, task_id).await;
+            assert_eq!(
+                task["status"], "completed",
+                "{label}task {task_id} should be completed"
+            );
+        }
+
+        // Verify stats
         let resp = client
-            .post(format!("{base}/api/v1/send/async"))
-            .json(&json!({
-                "provider": "mock-ok",
-                "text": format!("batch worker test {i}")
-            }))
+            .get(format!("{base}/api/v1/queue/stats"))
             .send()
             .await
             .unwrap();
+        let stats: Value = resp.json().await.unwrap();
+        assert!(stats["completed"].as_u64().unwrap() >= 5);
 
-        assert_eq!(resp.status(), StatusCode::ACCEPTED);
-        let body: Value = resp.json().await.unwrap();
-        task_ids.push(body["task_id"].as_str().unwrap().to_string());
+        worker_handle.shutdown_and_join().await;
     }
-
-    // Wait for all tasks to complete
-    for task_id in &task_ids {
-        let task = wait_for_terminal_status(&client, &base, task_id).await;
-        assert_eq!(
-            task["status"], "completed",
-            "task {task_id} should be completed"
-        );
-    }
-
-    // Verify stats
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 5);
-
-    worker_handle.shutdown_and_join().await;
-}
+);
 
 #[tokio::test]
 async fn e2e_webhook_callback_not_fired_for_cancelled_before_processing() {
@@ -1646,7 +1910,7 @@ async fn e2e_webhook_callback_not_fired_for_cancelled_before_processing() {
 
     // Use a server WITHOUT workers so the task stays queued
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task with callback_url (but no workers to process it)
     let resp = client
@@ -1686,59 +1950,63 @@ async fn e2e_webhook_callback_not_fired_for_cancelled_before_processing() {
     );
 }
 
-#[tokio::test]
-async fn e2e_worker_task_with_metadata_preserved() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+common::dual_backend_test!(
+    with_workers,
+    e2e_worker_task_with_metadata_preserved,
+    e2e_sqlite_task_metadata_preserved,
+    |spawn_fn, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    let callback_url = format!("{callback_base}/callback");
+        let callback_url = format!("{callback_base}/callback");
 
-    // Enqueue with metadata
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "metadata test",
-            "callback_url": callback_url,
-            "metadata": {
-                "request_id": "req-abc-123",
-                "source": "e2e-test",
-                "env": "test"
-            }
-        }))
-        .send()
-        .await
-        .unwrap();
+        // Enqueue with metadata
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": format!("{label}metadata test"),
+                "callback_url": callback_url,
+                "metadata": {
+                    "request_id": format!("{label}req-abc-123"),
+                    "source": format!("{label}e2e-test"),
+                    "env": "test"
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Wait for completion
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed");
+        // Wait for completion
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(task["status"], "completed");
 
-    // Verify metadata is preserved in task info
-    assert_eq!(task["metadata"]["request_id"], "req-abc-123");
-    assert_eq!(task["metadata"]["source"], "e2e-test");
-    assert_eq!(task["metadata"]["env"], "test");
+        // Verify metadata is preserved in task info (SQLite roundtrip)
+        assert_eq!(task["metadata"]["request_id"], format!("{label}req-abc-123"));
+        assert_eq!(task["metadata"]["source"], format!("{label}e2e-test"));
+        assert_eq!(task["metadata"]["env"], "test");
 
-    // Give callback time
-    tokio::time::sleep(Duration::from_millis(200)).await;
+        // Give callback time
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Verify metadata in callback payload
-    {
-        let received = payloads.lock().unwrap();
-        assert!(!received.is_empty());
-        let cb = &received[0];
-        assert_eq!(cb["metadata"]["request_id"], "req-abc-123");
-        assert_eq!(cb["metadata"]["source"], "e2e-test");
-        assert_eq!(cb["metadata"]["env"], "test");
+        // Verify metadata in callback payload
+        {
+            let received = payloads.lock().unwrap();
+            assert!(!received.is_empty());
+            let cb = &received[0];
+            assert_eq!(cb["metadata"]["request_id"], format!("{label}req-abc-123"));
+            assert_eq!(cb["metadata"]["source"], format!("{label}e2e-test"));
+            assert_eq!(cb["metadata"]["env"], "test");
+        }
+
+        worker_handle.shutdown_and_join().await;
     }
-
-    worker_handle.shutdown_and_join().await;
-}
+);
 
 // ───────────────────── Priority ordering & Retry behavior (e2e) ─────────────────────
 
@@ -1746,23 +2014,9 @@ async fn e2e_worker_task_with_metadata_preserved() {
 async fn e2e_priority_ordering_urgent_before_low() {
     // Enqueue tasks with different priorities on a server with NO workers,
     // then start a single worker so tasks are processed in priority order.
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue tasks with different priorities (low first, urgent last)
     let priorities = vec!["low", "normal", "high", "urgent"];
@@ -1818,23 +2072,9 @@ async fn e2e_priority_ordering_verified_by_completion_order() {
     // Enqueue low then urgent, verify urgent callback arrives before low
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue: low first, then urgent — urgent should be processed first
@@ -1911,63 +2151,67 @@ async fn e2e_priority_ordering_verified_by_completion_order() {
     worker_handle.shutdown_and_join().await;
 }
 
-#[tokio::test]
-async fn e2e_retry_task_eventually_succeeds() {
-    // MockFlakyProvider fails first 2 calls, then succeeds.
-    // With max_retries=3, the task should eventually complete.
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
+common::dual_backend_test!(
+    with_workers_serial,
+    e2e_retry_task_eventually_succeeds,
+    e2e_sqlite_retry_task_eventually_succeeds,
+    |spawn_fn, label| {
+        // MockFlakyProvider fails first 2 calls, then succeeds.
+        // With max_retries=3, the task should eventually complete.
+        let (callback_base, payloads) = spawn_callback_server().await;
+        let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+        let (base, worker_handle) = spawn_fn(vec![flaky]).await;
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-flaky",
-            "text": "retry success test",
-            "retry": {"max_retries": 3, "delay_ms": 10},
-            "callback_url": &callback_url,
-            "metadata": {"test": "retry-success"}
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-flaky",
+                "text": format!("{label}retry success test"),
+                "retry": {"max_retries": 3, "delay_ms": 10},
+                "callback_url": &callback_url,
+                "metadata": {"test": format!("{label}retry-success")}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
-    // Wait for worker to process through retries and succeed
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "completed",
-        "flaky task should eventually succeed after retries"
-    );
-    // The task went through 3 attempts: fail, fail, succeed
-    assert!(
-        task["attempts"].as_u64().unwrap() >= 3,
-        "expected at least 3 attempts, got {}",
-        task["attempts"]
-    );
-
-    // Give callback time
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            !received.is_empty(),
-            "callback should be received for completed task"
+        // Wait for worker to process through retries and succeed
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        assert_eq!(
+            task["status"], "completed",
+            "{label}flaky task should eventually succeed after retries"
         );
-        assert_eq!(received[0]["status"], "completed");
-        assert_eq!(received[0]["metadata"]["test"], "retry-success");
-    }
+        // The task went through 3 attempts: fail, fail, succeed
+        assert!(
+            task["attempts"].as_u64().unwrap() >= 3,
+            "{label}expected at least 3 attempts, got {}",
+            task["attempts"]
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        // Give callback time
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        {
+            let received = payloads.lock().unwrap();
+            assert!(
+                !received.is_empty(),
+                "{label}callback should be received for completed task"
+            );
+            assert_eq!(received[0]["status"], "completed");
+            assert_eq!(received[0]["metadata"]["test"], format!("{label}retry-success"));
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 #[tokio::test]
 async fn e2e_retry_exhausted_task_fails() {
@@ -1976,7 +2220,7 @@ async fn e2e_retry_exhausted_task_fails() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -2026,61 +2270,35 @@ async fn e2e_retry_exhausted_task_fails() {
 }
 
 #[tokio::test]
-async fn e2e_retry_zero_retries_fails_immediately() {
-    // With max_retries=0, a failing task should fail on the first attempt.
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "no retry test",
-            "retry": {"max_retries": 0, "delay_ms": 10}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "failed");
-    // With 0 retries, only 1 attempt should have been made
-    assert_eq!(
-        task["attempts"].as_u64().unwrap(),
-        1,
-        "with max_retries=0, should have exactly 1 attempt"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
 async fn e2e_priority_high_tasks_processed_before_normal() {
-    // Enqueue 3 normal + 1 high, verify all complete (high processed first)
-    let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
-    let client = reqwest::Client::new();
+    // Enqueue 3 normal tasks, then 1 high-priority task on a server with NO
+    // workers.  Start a single worker afterwards so dequeue order reflects
+    // priority.  Verify via callback arrival order that the high-priority task
+    // is processed before all normal tasks.
+    let (callback_base, payloads) = spawn_callback_server().await;
 
-    // Enqueue 3 normal tasks
-    let mut normal_ids = Vec::new();
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
+
+    let client = test_client();
+    let callback_url = format!("{callback_base}/callback");
+
+    // Enqueue 3 normal tasks first
+    let mut all_ids = Vec::new();
     for i in 0..3 {
         let resp = client
             .post(format!("{base}/api/v1/send/async"))
             .json(&json!({
                 "provider": "mock-ok",
                 "text": format!("normal-{i}"),
-                "priority": "normal"
+                "priority": "normal",
+                "callback_url": &callback_url,
+                "metadata": {"order": format!("normal-{i}")}
             }))
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
-        normal_ids.push(
+        all_ids.push(
             resp.json::<Value>().await.unwrap()["task_id"]
                 .as_str()
                 .unwrap()
@@ -2088,37 +2306,64 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
         );
     }
 
-    // Enqueue 1 high-priority task
+    // Enqueue 1 high-priority task (after the normals)
     let resp = client
         .post(format!("{base}/api/v1/send/async"))
         .json(&json!({
             "provider": "mock-ok",
             "text": "high-priority",
-            "priority": "high"
+            "priority": "high",
+            "callback_url": &callback_url,
+            "metadata": {"order": "high"}
         }))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let high_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    all_ids.push(
+        resp.json::<Value>().await.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
 
-    // Wait for all to complete
-    wait_for_terminal_status(&client, &base, &high_id).await;
-    for nid in &normal_ids {
-        wait_for_terminal_status(&client, &base, nid).await;
+    // Start a single worker — enforces serial processing in priority order.
+    let worker_config = noti_queue::WorkerConfig::default()
+        .with_concurrency(1)
+        .with_poll_interval(Duration::from_millis(50));
+    let worker_handle = state.start_workers(worker_config);
+
+    // Wait for all tasks to reach terminal state
+    for id in &all_ids {
+        wait_for_terminal_status(&client, &base, id).await;
     }
 
-    // All should be completed
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 4);
+    // Give callbacks time to arrive
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Verify callback order: high-priority task should arrive first
+    {
+        let received = payloads.lock().unwrap();
+        assert!(
+            received.len() >= 4,
+            "expected at least 4 callbacks, got {}",
+            received.len()
+        );
+        // First callback must be from the high-priority task
+        assert_eq!(
+            received[0]["metadata"]["order"], "high",
+            "high-priority task should be processed first, but first callback was: {:?}",
+            received[0]["metadata"]["order"]
+        );
+        // Remaining callbacks should all be normal tasks
+        for i in 1..4 {
+            let order = received[i]["metadata"]["order"].as_str().unwrap_or("");
+            assert!(
+                order.starts_with("normal"),
+                "callback {i} should be a normal task, got: {order}"
+            );
+        }
+    }
 
     worker_handle.shutdown_and_join().await;
 }
@@ -2128,7 +2373,7 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_isolates_x_forwarded_for() {
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // IP-A exhausts its quota
     for i in 0..max_requests {
@@ -2179,7 +2424,7 @@ async fn e2e_per_ip_rate_limit_isolates_x_forwarded_for() {
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_isolates_x_real_ip() {
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // IP-C exhausts its quota via X-Real-IP
     for _ in 0..max_requests {
@@ -2224,7 +2469,7 @@ async fn e2e_per_ip_rate_limit_x_forwarded_for_takes_precedence() {
     // When both X-Forwarded-For and X-Real-IP are present,
     // X-Forwarded-For should take precedence per extract_client_ip logic.
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Exhaust quota for IP identified by X-Forwarded-For: 10.1.1.1
     for _ in 0..max_requests {
@@ -2271,7 +2516,7 @@ async fn e2e_per_ip_rate_limit_x_forwarded_for_takes_precedence() {
 #[tokio::test]
 async fn e2e_per_ip_rate_limit_remaining_tracks_per_ip() {
     let (base, _max) = spawn_server_with_rate_limit_per_ip(10, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // IP-E sends one request
     let resp_e1 = client
@@ -2330,7 +2575,7 @@ async fn e2e_per_ip_rate_limit_multiple_ips_in_x_forwarded_for() {
     // X-Forwarded-For can contain multiple IPs separated by commas.
     // The middleware should use the first one (the original client IP).
     let (base, max_requests) = spawn_server_with_rate_limit_per_ip(2, 60).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Exhaust quota for client IP 10.0.0.50 (first in chain)
     for _ in 0..max_requests {
@@ -2373,234 +2618,13 @@ async fn e2e_per_ip_rate_limit_multiple_ips_in_x_forwarded_for() {
 // ───────────────────── SQLite queue backend (e2e) ─────────────────────
 
 #[tokio::test]
-async fn e2e_sqlite_health_check() {
-    let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!("{base}/health"))
-        .send()
-        .await
-        .expect("request failed");
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-}
-
-#[tokio::test]
-async fn e2e_sqlite_async_send_query_cancel_purge() {
-    let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
-
-    // Enqueue
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "sqlite e2e test",
-            "config": {
-                "webhook_url": "https://hooks.slack.com/services/T00/B00/sqlite"
-            }
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["status"], "queued");
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // Get task
-    let resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["id"], task_id);
-    assert_eq!(body["provider"], "slack");
-
-    // Queue stats
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["total"].as_u64().unwrap() >= 1);
-
-    // Cancel task
-    let resp = client
-        .post(format!("{base}/api/v1/queue/tasks/{task_id}/cancel"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["cancelled"].as_bool().unwrap());
-
-    // Purge
-    let resp = client
-        .post(format!("{base}/api/v1/queue/purge"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["purged"].as_u64().unwrap() >= 1);
-}
-
-#[tokio::test]
-async fn e2e_sqlite_worker_processes_task_to_completion() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite worker e2e test"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "completed",
-        "task should be completed by worker (SQLite backend)"
-    );
-    assert_eq!(task["provider"], "mock-ok");
-
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 1);
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_worker_handles_failed_task() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-fail",
-            "text": "sqlite worker failure test",
-            "retry": {"max_retries": 0, "delay_ms": 10}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "failed",
-        "task should be failed by worker (SQLite backend)"
-    );
-    assert!(
-        task["last_error"].is_string(),
-        "failed task should have an error message"
-    );
-
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["failed"].as_u64().unwrap() >= 1);
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_webhook_callback_on_success() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite callback success test",
-            "callback_url": callback_url,
-            "metadata": {"trace_id": "sqlite-callback-ok"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed");
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            !received.is_empty(),
-            "callback server should have received at least one payload (SQLite backend)"
-        );
-
-        let cb = &received[0];
-        assert_eq!(cb["task_id"], task_id);
-        assert_eq!(cb["provider"], "mock-ok");
-        assert_eq!(cb["status"], "completed");
-        assert_eq!(cb["metadata"]["trace_id"], "sqlite-callback-ok");
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
 async fn e2e_sqlite_priority_ordering_urgent_before_low() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
     // Create AppState with SQLite queue but NO workers yet
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
+    let (base, state) = spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Enqueue: low first, then urgent — SQLite should dequeue urgent first
@@ -2674,72 +2698,57 @@ async fn e2e_sqlite_priority_ordering_urgent_before_low() {
     worker_handle.shutdown_and_join().await;
 }
 
-#[tokio::test]
-async fn e2e_sqlite_retry_task_eventually_succeeds() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
-    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
+// ───────────────────── Batch async with mixed priorities (e2e) ─────────────────────
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-flaky",
-            "text": "sqlite retry success test",
-            "retry": {"max_retries": 3, "delay_ms": 10},
-            "callback_url": &callback_url,
-            "metadata": {"test": "sqlite-retry-success"}
-        }))
-        .send()
-        .await
-        .unwrap();
+common::dual_backend_test!(
+    without_workers,
+    e2e_batch_async_mixed_priorities_processed_in_order,
+    e2e_sqlite_batch_async_mixed_priorities_processed_in_order,
+    |spawn_without_workers, label| {
+        // Batch-enqueue 4 tasks with different priorities via the async batch endpoint.
+        // Use a single worker to ensure strict priority-ordered processing.
+        // Verify via callback order that urgent is processed first, then high, normal, low.
+        let (callback_base, payloads) = spawn_callback_server().await;
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+        let (base, state) = spawn_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(
-        task["status"], "completed",
-        "SQLite: flaky task should eventually succeed after retries"
-    );
-    assert!(
-        task["attempts"].as_u64().unwrap() >= 3,
-        "SQLite: expected at least 3 attempts, got {}",
-        task["attempts"]
-    );
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            !received.is_empty(),
-            "callback should be received for completed task (SQLite)"
-        );
-        assert_eq!(received[0]["status"], "completed");
-        assert_eq!(received[0]["metadata"]["test"], "sqlite-retry-success");
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_multiple_tasks_processed() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let mut task_ids = Vec::new();
-
-    for i in 0..5 {
+        // Batch-enqueue: low, normal, high, urgent — all in one request
         let resp = client
-            .post(format!("{base}/api/v1/send/async"))
+            .post(format!("{base}/api/v1/send/async/batch"))
             .json(&json!({
-                "provider": "mock-ok",
-                "text": format!("sqlite batch test {i}")
+                "items": [
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-low",
+                        "priority": "low",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "low"}
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-normal",
+                        "priority": "normal",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "normal"}
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-high",
+                        "priority": "high",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "high"}
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "batch-urgent",
+                        "priority": "urgent",
+                        "callback_url": &callback_url,
+                        "metadata": {"order": "urgent"}
+                    }
+                ]
             }))
             .send()
             .await
@@ -2747,448 +2756,140 @@ async fn e2e_sqlite_multiple_tasks_processed() {
 
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
         let body: Value = resp.json().await.unwrap();
-        task_ids.push(body["task_id"].as_str().unwrap().to_string());
-    }
+        assert_eq!(body["total"], 4);
+        assert_eq!(body["enqueued"], 4);
+        assert_eq!(body["failed"], 0);
 
-    for task_id in &task_ids {
-        let task = wait_for_terminal_status(&client, &base, task_id).await;
-        assert_eq!(
-            task["status"], "completed",
-            "SQLite: task {task_id} should be completed"
-        );
-    }
+        // Collect all task IDs
+        let results = body["results"].as_array().unwrap();
+        let task_ids: Vec<String> = results
+            .iter()
+            .map(|r| r["task_id"].as_str().unwrap().to_string())
+            .collect();
 
-    let resp = client
-        .get(format!("{base}/api/v1/queue/stats"))
-        .send()
-        .await
-        .unwrap();
-    let stats: Value = resp.json().await.unwrap();
-    assert!(stats["completed"].as_u64().unwrap() >= 5);
+        // NOW start a single worker so tasks are processed in strict priority order
+        let worker_config = noti_queue::WorkerConfig::default()
+            .with_concurrency(1)
+            .with_poll_interval(Duration::from_millis(50));
+        let worker_handle = state.start_workers(worker_config);
 
-    worker_handle.shutdown_and_join().await;
-}
+        // Wait for all tasks to complete
+        for task_id in &task_ids {
+            wait_for_terminal_status(&client, &base, task_id).await;
+        }
 
-#[tokio::test]
-async fn e2e_sqlite_batch_async_send() {
-    let base = spawn_server_sqlite().await;
-    let client = reqwest::Client::new();
+        // Give callbacks time to arrive
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "slack",
-                    "text": "sqlite batch item 1",
-                    "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/sbatch1"}
-                },
-                {
-                    "provider": "nonexistent",
-                    "text": "sqlite batch item 2"
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
+        // Verify callback order: urgent → high → normal → low
+        {
+            let received = payloads.lock().unwrap();
+            assert!(
+                received.len() >= 4,
+                "{label}expected at least 4 callbacks, got {}",
+                received.len()
+            );
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["total"], 2);
-    assert_eq!(body["enqueued"], 1);
-    assert_eq!(body["failed"], 1);
-}
-
-#[tokio::test]
-async fn e2e_sqlite_task_metadata_preserved() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
-
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite metadata test",
-            "callback_url": callback_url,
-            "metadata": {
-                "request_id": "sqlite-req-123",
-                "source": "sqlite-e2e",
-                "env": "test"
+            let expected_order = ["urgent", "high", "normal", "low"];
+            for (i, expected) in expected_order.iter().enumerate() {
+                assert_eq!(
+                    received[i]["metadata"]["order"].as_str().unwrap(),
+                    *expected,
+                    "{label}callback #{i} should be '{expected}', got '{}'",
+                    received[i]["metadata"]["order"]
+                );
             }
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    assert_eq!(task["status"], "completed");
-
-    // Verify metadata is preserved through SQLite serialization roundtrip
-    assert_eq!(task["metadata"]["request_id"], "sqlite-req-123");
-    assert_eq!(task["metadata"]["source"], "sqlite-e2e");
-    assert_eq!(task["metadata"]["env"], "test");
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    {
-        let received = payloads.lock().unwrap();
-        assert!(!received.is_empty());
-        let cb = &received[0];
-        assert_eq!(cb["metadata"]["request_id"], "sqlite-req-123");
-        assert_eq!(cb["metadata"]["source"], "sqlite-e2e");
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-// ───────────────────── Batch async with mixed priorities (e2e) ─────────────────────
-
-#[tokio::test]
-async fn e2e_batch_async_mixed_priorities_processed_in_order() {
-    // Batch-enqueue 4 tasks with different priorities via the async batch endpoint.
-    // Use a single worker to ensure strict priority-ordered processing.
-    // Verify via callback order that urgent is processed first, then high, normal, low.
-    let (callback_base, payloads) = spawn_callback_server().await;
-
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
-
-    // Batch-enqueue: low, normal, high, urgent — all in one request
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-low",
-                    "priority": "low",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "low"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-normal",
-                    "priority": "normal",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "normal"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-high",
-                    "priority": "high",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "high"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "batch-urgent",
-                    "priority": "urgent",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "urgent"}
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["total"], 4);
-    assert_eq!(body["enqueued"], 4);
-    assert_eq!(body["failed"], 0);
-
-    // Collect all task IDs
-    let results = body["results"].as_array().unwrap();
-    let task_ids: Vec<String> = results
-        .iter()
-        .map(|r| r["task_id"].as_str().unwrap().to_string())
-        .collect();
-
-    // NOW start a single worker so tasks are processed in strict priority order
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    // Wait for all tasks to complete
-    for task_id in &task_ids {
-        wait_for_terminal_status(&client, &base, task_id).await;
-    }
-
-    // Give callbacks time to arrive
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify callback order: urgent → high → normal → low
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            received.len() >= 4,
-            "expected at least 4 callbacks, got {}",
-            received.len()
-        );
-
-        let expected_order = ["urgent", "high", "normal", "low"];
-        for (i, expected) in expected_order.iter().enumerate() {
-            assert_eq!(
-                received[i]["metadata"]["order"].as_str().unwrap(),
-                *expected,
-                "callback #{i} should be '{expected}', got '{}'",
-                received[i]["metadata"]["order"]
-            );
         }
+
+        worker_handle.shutdown_and_join().await;
     }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-#[tokio::test]
-async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
-    // Same as above but using SQLite queue backend.
-    let (callback_base, payloads) = spawn_callback_server().await;
-
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
-
-    // Batch-enqueue: low, normal, high, urgent — all in one request
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-low",
-                    "priority": "low",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "low"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-normal",
-                    "priority": "normal",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "normal"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-high",
-                    "priority": "high",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "high"}
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite-batch-urgent",
-                    "priority": "urgent",
-                    "callback_url": &callback_url,
-                    "metadata": {"order": "urgent"}
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["total"], 4);
-    assert_eq!(body["enqueued"], 4);
-    assert_eq!(body["failed"], 0);
-
-    // Collect all task IDs
-    let results = body["results"].as_array().unwrap();
-    let task_ids: Vec<String> = results
-        .iter()
-        .map(|r| r["task_id"].as_str().unwrap().to_string())
-        .collect();
-
-    // NOW start a single worker so tasks are processed in strict priority order
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    // Wait for all tasks to complete
-    for task_id in &task_ids {
-        wait_for_terminal_status(&client, &base, task_id).await;
-    }
-
-    // Give callbacks time to arrive
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Verify callback order: urgent → high → normal → low
-    {
-        let received = payloads.lock().unwrap();
-        assert!(
-            received.len() >= 4,
-            "SQLite: expected at least 4 callbacks, got {}",
-            received.len()
-        );
-
-        let expected_order = ["urgent", "high", "normal", "low"];
-        for (i, expected) in expected_order.iter().enumerate() {
-            assert_eq!(
-                received[i]["metadata"]["order"].as_str().unwrap(),
-                *expected,
-                "SQLite: callback #{i} should be '{expected}', got '{}'",
-                received[i]["metadata"]["order"]
-            );
-        }
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
+);
 
 // ───────────────────── Graceful shutdown (e2e) ─────────────────────
 
-/// Verify that `shutdown_and_join()` waits for an in-flight slow task to complete
-/// before the worker pool exits, and the task reaches `completed` status.
-#[tokio::test]
-async fn e2e_graceful_shutdown_waits_for_inflight_task() {
-    let (callback_base, payloads) = spawn_callback_server().await;
+// Verify that `shutdown_and_join()` waits for an in-flight slow task to complete
+// before the worker pool exits, and the task reaches `completed` status.
+common::dual_backend_test!(
+    without_workers,
+    e2e_graceful_shutdown_waits_for_inflight_task,
+    e2e_sqlite_graceful_shutdown_waits_for_inflight_task,
+    |spawn_without_workers, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    let slow: Arc<dyn noti_core::NotifyProvider> =
-        Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
-    registry.register(slow);
+        let slow: Arc<dyn noti_core::NotifyProvider> =
+            Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
+        let (base, state) = spawn_without_workers(vec![slow]).await;
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
+        // Start a single worker
+        let worker_config = noti_queue::WorkerConfig::default()
+            .with_concurrency(1)
+            .with_poll_interval(Duration::from_millis(50));
+        let worker_handle = state.start_workers(worker_config);
 
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    // Start a single worker
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+        // Enqueue a task that takes 500ms to process
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-slow",
+                "text": "slow-task",
+                "callback_url": &callback_url,
+                "metadata": {"test": "graceful-shutdown"}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // Enqueue a task that takes 500ms to process
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-slow",
-            "text": "slow-task",
-            "callback_url": &callback_url,
-            "metadata": {"test": "graceful-shutdown"}
-        }))
-        .send()
-        .await
-        .unwrap();
+        // Wait a bit for the worker to pick up the task (but not finish it)
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        // Issue shutdown while the slow task is still in-flight
+        worker_handle.shutdown_and_join().await;
 
-    // Wait a bit for the worker to pick up the task (but not finish it)
-    tokio::time::sleep(Duration::from_millis(100)).await;
+        // After shutdown completes, the task should be completed (worker waited for it)
+        let resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
 
-    // Issue shutdown while the slow task is still in-flight
-    // shutdown_and_join should block until the worker finishes the current task
-    worker_handle.shutdown_and_join().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let task: Value = resp.json().await.unwrap();
+        assert_eq!(
+            task["status"], "completed",
+            "{label}in-flight task should complete before worker exits"
+        );
 
-    // After shutdown completes, the task should be completed (worker waited for it)
-    let resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let task: Value = resp.json().await.unwrap();
-    assert_eq!(
-        task["status"], "completed",
-        "in-flight task should complete before worker exits"
-    );
-
-    // Verify the callback was fired
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert!(
-        !received.is_empty(),
-        "callback should have been fired for the completed slow task"
-    );
-    assert_eq!(received[0]["status"], "completed");
-    assert_eq!(received[0]["metadata"]["test"], "graceful-shutdown");
-}
+        // Verify the callback was fired
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let received = payloads.lock().unwrap();
+        assert!(
+            !received.is_empty(),
+            "{label}callback should have been fired for the completed slow task"
+        );
+        assert_eq!(received[0]["status"], "completed");
+        assert_eq!(received[0]["metadata"]["test"], "graceful-shutdown");
+    }
+);
 
 /// Verify that after shutdown, queued tasks that were not picked up remain in `pending` status.
 /// Uses a slow provider so the single worker can only process one task before shutdown.
 #[tokio::test]
 async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
-    let mut registry = noti_core::ProviderRegistry::new();
     // Each task takes 200ms to complete
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(200)));
-    registry.register(slow);
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
+    let (base, state) = spawn_server_without_workers(vec![slow]).await;
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue 5 tasks BEFORE starting workers
     let mut task_ids = Vec::new();
@@ -3260,24 +2961,10 @@ async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
 /// (Workers shutting down should not affect the server's ability to serve requests.)
 #[tokio::test]
 async fn e2e_http_server_responsive_during_worker_shutdown() {
-    let mut registry = noti_core::ProviderRegistry::new();
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(300)));
-    registry.register(slow);
-    registry.register(Arc::new(MockOkProvider));
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![slow, Arc::new(MockOkProvider)]).await;
 
     // Start worker
     let worker_config = noti_queue::WorkerConfig::default()
@@ -3285,7 +2972,7 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
         .with_poll_interval(Duration::from_millis(50));
     let worker_handle = state.start_workers(worker_config);
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let base_clone = base.clone();
 
     // Enqueue a slow task
@@ -3335,108 +3022,11 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-/// Verify graceful shutdown with SQLite backend — in-flight task completes.
-#[tokio::test]
-async fn e2e_sqlite_graceful_shutdown_waits_for_inflight_task() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-
-    let mut registry = noti_core::ProviderRegistry::new();
-    let slow: Arc<dyn noti_core::NotifyProvider> =
-        Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
-    registry.register(slow);
-
-    let queue = Arc::new(
-        noti_queue::SqliteQueue::in_memory().expect("failed to create in-memory SQLite queue"),
-    );
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let worker_config = noti_queue::WorkerConfig::default()
-        .with_concurrency(1)
-        .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
-
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
-
-    // Enqueue a slow task
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-slow",
-            "text": "sqlite-slow-task",
-            "callback_url": &callback_url,
-            "metadata": {"test": "sqlite-graceful-shutdown"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // Wait for the worker to pick up the task
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Shut down — should wait for in-flight task
-    worker_handle.shutdown_and_join().await;
-
-    // Task should be completed in the SQLite backend
-    let resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let task: Value = resp.json().await.unwrap();
-    assert_eq!(
-        task["status"], "completed",
-        "SQLite: in-flight task should complete before worker exits"
-    );
-
-    // Verify callback
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let received = payloads.lock().unwrap();
-    assert!(
-        !received.is_empty(),
-        "SQLite: callback should have been fired for the completed slow task"
-    );
-    assert_eq!(received[0]["status"], "completed");
-    assert_eq!(received[0]["metadata"]["test"], "sqlite-graceful-shutdown");
-}
-
 /// Verify that shutdown_and_join completes within a reasonable time
 /// even when the queue is empty (no tasks to process).
 #[tokio::test]
 async fn e2e_graceful_shutdown_empty_queue_completes_quickly() {
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let _base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (_base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     // Start workers with multiple concurrency
     let worker_config = noti_queue::WorkerConfig::default()
@@ -3497,7 +3087,7 @@ async fn e2e_stale_recovery_processing_tasks_become_queued() {
 
     // Phase 2: start HTTP server against the same DB — triggers recover_stale_tasks()
     let base = spawn_server_sqlite_file(&db_path).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // List tasks — recovered tasks should be "queued"
     let resp = client
@@ -3552,7 +3142,7 @@ async fn e2e_stale_recovery_tasks_can_be_processed_by_workers() {
 
     // Phase 2: start server with workers — recovery + worker processing
     let (base, worker_handle) = spawn_server_sqlite_file_with_workers(&db_path).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Give workers time to pick up and process the recovered task
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -3595,7 +3185,7 @@ async fn e2e_stale_recovery_no_stale_tasks_is_noop() {
 
     // Phase 2: start server — no stale recovery needed
     let base = spawn_server_sqlite_file(&db_path).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Task should still be queued (not touched by recovery)
     let resp = client
@@ -3624,7 +3214,7 @@ async fn e2e_stale_recovery_no_stale_tasks_is_noop() {
 #[tokio::test]
 async fn e2e_purge_empty_queue_returns_zero() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/queue/purge"))
@@ -3641,7 +3231,7 @@ async fn e2e_purge_empty_queue_returns_zero() {
 #[tokio::test]
 async fn e2e_purge_removes_terminal_preserves_nonterminal() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task that will complete (mock-ok provider)
     let resp = client
@@ -3736,7 +3326,7 @@ async fn e2e_purge_removes_terminal_preserves_nonterminal() {
 #[tokio::test]
 async fn e2e_sqlite_purge_removes_terminal_tasks() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue a task that completes
     let resp = client
@@ -3807,7 +3397,7 @@ async fn e2e_sqlite_purge_removes_terminal_tasks() {
 #[tokio::test]
 async fn e2e_purge_idempotent_second_purge_returns_zero() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Enqueue and wait for completion
     let resp = client
@@ -3852,7 +3442,7 @@ async fn e2e_purge_idempotent_second_purge_returns_zero() {
 #[tokio::test]
 async fn e2e_template_list_multiple_sorted() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     for name in ["zulu-tpl", "alpha-tpl", "mike-tpl"] {
         let resp = client
@@ -3888,7 +3478,7 @@ async fn e2e_template_list_multiple_sorted() {
 #[tokio::test]
 async fn e2e_template_update_preserves_defaults() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Create with two defaults
     client
@@ -3921,7 +3511,7 @@ async fn e2e_template_update_preserves_defaults() {
 #[tokio::test]
 async fn e2e_template_render_missing_required_var_returns_400() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     client
         .post(format!("{base}/api/v1/templates"))
@@ -3955,7 +3545,7 @@ async fn e2e_template_render_missing_required_var_returns_400() {
 #[tokio::test]
 async fn e2e_template_render_defaults_fill_missing_vars() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     client
         .post(format!("{base}/api/v1/templates"))
@@ -3987,7 +3577,7 @@ async fn e2e_template_render_defaults_fill_missing_vars() {
 #[tokio::test]
 async fn e2e_template_delete_nonexistent_returns_404() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .delete(format!("{base}/api/v1/templates/no-such-template"))
@@ -4001,7 +3591,7 @@ async fn e2e_template_delete_nonexistent_returns_404() {
 #[tokio::test]
 async fn e2e_template_get_nonexistent_returns_404() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .get(format!("{base}/api/v1/templates/nonexistent"))
@@ -4015,7 +3605,7 @@ async fn e2e_template_get_nonexistent_returns_404() {
 #[tokio::test]
 async fn e2e_template_render_nonexistent_returns_404() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/templates/ghost/render"))
@@ -4030,7 +3620,7 @@ async fn e2e_template_render_nonexistent_returns_404() {
 #[tokio::test]
 async fn e2e_template_create_same_name_overwrites() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Create v1
     client
@@ -4080,7 +3670,7 @@ async fn e2e_template_create_same_name_overwrites() {
 #[tokio::test]
 async fn e2e_template_update_body_only_preserves_title() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     client
         .post(format!("{base}/api/v1/templates"))
@@ -4113,7 +3703,7 @@ async fn e2e_template_update_body_only_preserves_title() {
 #[tokio::test]
 async fn e2e_concurrent_tasks_all_processed() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let task_count = 10;
     let mut task_ids = Vec::new();
@@ -4176,7 +3766,7 @@ async fn e2e_concurrent_tasks_all_processed() {
 async fn e2e_concurrent_tasks_no_duplicate_processing() {
     let (base, worker_handle) = spawn_server_with_workers().await;
     let (cb_base, payloads) = spawn_callback_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let task_count = 8;
     let mut task_ids = Vec::new();
@@ -4238,7 +3828,7 @@ async fn e2e_concurrent_tasks_no_duplicate_processing() {
 #[tokio::test]
 async fn e2e_sqlite_concurrent_tasks_all_processed() {
     let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let task_count = 10;
     let mut task_ids = Vec::new();
@@ -4295,7 +3885,7 @@ async fn e2e_sqlite_concurrent_tasks_all_processed() {
 #[tokio::test]
 async fn e2e_concurrent_mixed_success_failure() {
     let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let mut ok_ids = Vec::new();
     let mut fail_ids = Vec::new();
@@ -4369,7 +3959,7 @@ fn assert_error_shape(body: &Value, expected_error: &str, context: &str) {
 #[tokio::test]
 async fn e2e_error_structure_not_found_responses() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Provider not found
     let resp = client
@@ -4448,7 +4038,7 @@ async fn e2e_error_structure_not_found_responses() {
 #[tokio::test]
 async fn e2e_error_structure_bad_request_responses() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Send with missing config (provider validation failure)
     let resp = client
@@ -4493,7 +4083,7 @@ async fn e2e_error_structure_bad_request_responses() {
 #[tokio::test]
 async fn e2e_error_structure_validation_responses() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -4518,7 +4108,7 @@ async fn e2e_error_structure_validation_responses() {
 #[tokio::test]
 async fn e2e_error_structure_invalid_json_response() {
     let base = spawn_server().await;
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send"))
@@ -4532,6 +4122,130 @@ async fn e2e_error_structure_invalid_json_response() {
     assert_error_shape(&body, "invalid_json", "invalid json body");
 }
 
+// ───────────────────── Granular error codes (e2e) ─────────────────────
+
+/// Verify that 404 error responses include the granular `code` field.
+#[tokio::test]
+async fn e2e_error_codes_not_found_responses_have_code() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    // Provider not found → PROVIDER_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/providers/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "PROVIDER_NOT_FOUND");
+
+    // Template not found → TEMPLATE_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/templates/nonexistent"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "TEMPLATE_NOT_FOUND");
+
+    // Notification status not found → NOTIFICATION_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/status/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "NOTIFICATION_NOT_FOUND");
+
+    // Queue task not found → TASK_NOT_FOUND
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks/nonexistent-id"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+    assert_eq!(body["code"], "TASK_NOT_FOUND");
+}
+
+/// Verify that 400 error responses include the granular `code` field.
+#[tokio::test]
+async fn e2e_error_codes_bad_request_responses_have_code() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    // Config validation failure → CONFIG_VALIDATION_FAILED
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .json(&json!({"provider": "slack", "text": "hello", "config": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "CONFIG_VALIDATION_FAILED");
+
+    // Invalid status filter → INVALID_PARAMETER
+    let resp = client
+        .get(format!("{base}/api/v1/queue/tasks?status=bogus"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "INVALID_PARAMETER");
+
+    // Template variable missing → TEMPLATE_VARIABLE_MISSING
+    client
+        .post(format!("{base}/api/v1/templates"))
+        .json(&json!({"name": "code-test-tpl", "body": "{{a}} and {{b}}"}))
+        .send()
+        .await
+        .unwrap();
+    let resp = client
+        .post(format!("{base}/api/v1/templates/code-test-tpl/render"))
+        .json(&json!({"variables": {"a": "hello"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "TEMPLATE_VARIABLE_MISSING");
+}
+
+/// Verify that error responses without a code omit the field entirely (backward compat).
+#[tokio::test]
+async fn e2e_error_codes_absent_when_not_applicable() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    // Invalid JSON body → no code field (handled by ValidatedJsonRejection, not ApiError)
+    let resp = client
+        .post(format!("{base}/api/v1/send"))
+        .header("content-type", "application/json")
+        .body("not valid json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "invalid_json");
+    assert!(
+        body.get("code").is_none() || body["code"].is_null(),
+        "invalid_json error should not have a code field"
+    );
+}
+
 // ───────────────────── Batch async: mixed valid/invalid providers + priorities ─────────────────────
 
 /// Batch-enqueue items with a mix of valid and invalid providers at different priorities.
@@ -4541,23 +4255,9 @@ async fn e2e_error_structure_invalid_json_response() {
 async fn e2e_batch_async_mixed_providers_and_priorities() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Mix of valid (mock-ok) and invalid (nonexistent) providers at various priorities.
@@ -4678,25 +4378,9 @@ async fn e2e_batch_async_mixed_providers_and_priorities() {
 async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
+    let (base, state) = spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Same mix: valid (mock-ok) and invalid (nonexistent) at various priorities
@@ -4796,23 +4480,9 @@ async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
 /// Batch async with ALL invalid providers — verify 202 response with all items failed.
 #[tokio::test]
 async fn e2e_batch_async_all_invalid_providers_returns_202() {
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
+    let (base, _state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async/batch"))
@@ -4868,7 +4538,7 @@ async fn e2e_batch_async_mock_fail_provider_with_priorities() {
     // Use the serial helper which already registers MockOkProvider + MockFailProvider
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Batch: mix of mock-ok (always succeeds) and mock-fail (always fails at send time)
@@ -4881,6 +4551,7 @@ async fn e2e_batch_async_mock_fail_provider_with_priorities() {
                     "provider": "mock-fail",
                     "text": "fail-urgent",
                     "priority": "urgent",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-urgent"}
                 },
@@ -4895,6 +4566,7 @@ async fn e2e_batch_async_mock_fail_provider_with_priorities() {
                     "provider": "mock-fail",
                     "text": "fail-low",
                     "priority": "low",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-low"}
                 },
@@ -4983,7 +4655,7 @@ async fn e2e_sqlite_batch_async_mock_fail_provider_with_priorities() {
 
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5001,6 +4673,7 @@ async fn e2e_sqlite_batch_async_mock_fail_provider_with_priorities() {
                     "provider": "mock-fail",
                     "text": "sqlite-fail-urgent",
                     "priority": "urgent",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-urgent"}
                 },
@@ -5084,7 +4757,7 @@ async fn e2e_batch_async_mock_fail_mixed_with_nonexistent() {
 
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5095,6 +4768,7 @@ async fn e2e_batch_async_mock_fail_mixed_with_nonexistent() {
                     "provider": "mock-fail",
                     "text": "fail-at-send",
                     "priority": "urgent",
+                    "retry": {"max_retries": 0},
                     "callback_url": &callback_url,
                     "metadata": {"order": "fail-at-send"}
                 },
@@ -5183,7 +4857,7 @@ async fn e2e_concurrent_batch_async_requests_all_accepted() {
 
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Fire 5 concurrent batch requests, each with 2 items
@@ -5276,7 +4950,7 @@ async fn e2e_concurrent_batch_async_requests_all_accepted() {
 async fn e2e_concurrent_batch_async_with_mixed_providers() {
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
 
     // Fire 3 concurrent batches: each has 1 mock-ok and 1 mock-fail item
     let mut handles = Vec::new();
@@ -5343,7 +5017,7 @@ async fn e2e_sqlite_concurrent_batch_async_requests() {
 
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![]).await;
 
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     // Fire 4 concurrent batch requests, each with 3 items
@@ -5447,7 +5121,7 @@ async fn e2e_batch_async_flaky_with_retry_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5520,7 +5194,7 @@ async fn e2e_batch_async_flaky_retry_exhausted_fails() {
     // MockFlakyProvider fails first 5 calls — with max_retries=1, only 2 total attempts → fails
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5596,7 +5270,7 @@ async fn e2e_batch_async_mixed_retry_policies() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5696,212 +5370,229 @@ async fn e2e_batch_async_mixed_retry_policies() {
 
 // ───────────────────── Concurrent batch async with rate limiting ─────────────────────
 
-/// Send multiple concurrent batch requests with rate limiting enabled.
-/// Some requests should be accepted and some rejected per rate limit quota.
-#[tokio::test]
-async fn e2e_concurrent_batch_async_with_rate_limit_partial_reject() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
-    let (base, worker_handle, _max_requests) =
-        spawn_server_with_workers_and_rate_limit(vec![], 3, 60).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
+// Send multiple concurrent batch requests with rate limiting enabled.
+// Some requests should be accepted and some rejected per rate limit quota.
+common::dual_backend_test!(
+    with_workers_and_rate_limit,
+    e2e_concurrent_batch_async_with_rate_limit_partial_reject,
+    e2e_sqlite_concurrent_batch_async_with_rate_limit_partial_reject,
+    |spawn_fn, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
+        let (base, worker_handle, _max_requests) = spawn_fn(vec![], 3, 60).await;
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
 
-    let mut handles = Vec::new();
-    for i in 0..5 {
-        let client = client.clone();
-        let base = base.clone();
-        let cb_url = callback_url.clone();
-        handles.push(tokio::spawn(async move {
-            let resp = client
-                .post(format!("{base}/api/v1/send/async/batch"))
-                .json(&json!({
-                    "items": [
-                        {
-                            "provider": "mock-ok",
-                            "text": format!("rate-limited batch item {i}"),
-                            "callback_url": &cb_url,
-                        }
-                    ]
-                }))
-                .send()
-                .await
-                .unwrap();
-            resp.status()
-        }));
-    }
-
-    let mut accepted = 0u32;
-    let mut rate_limited = 0u32;
-    for handle in handles {
-        let status = handle.await.unwrap();
-        match status {
-            StatusCode::ACCEPTED => accepted += 1,
-            StatusCode::TOO_MANY_REQUESTS => rate_limited += 1,
-            other => panic!("unexpected status: {other}"),
+        let mut handles = Vec::new();
+        for i in 0..5 {
+            let client = client.clone();
+            let base = base.clone();
+            let cb_url = callback_url.clone();
+            handles.push(tokio::spawn(async move {
+                let resp = client
+                    .post(format!("{base}/api/v1/send/async/batch"))
+                    .json(&json!({
+                        "items": [
+                            {
+                                "provider": "mock-ok",
+                                "text": format!("rate-limited batch item {i}"),
+                                "callback_url": &cb_url,
+                            }
+                        ]
+                    }))
+                    .send()
+                    .await
+                    .unwrap();
+                resp.status()
+            }));
         }
-    }
 
-    // At most 3 should be accepted (rate limit), at least 2 should be rejected
-    assert!(
-        accepted <= 3,
-        "at most 3 requests should pass rate limit, got {accepted}"
-    );
-    assert!(
-        rate_limited >= 2,
-        "at least 2 requests should be rate limited, got {rate_limited}"
-    );
+        let mut accepted = 0u32;
+        let mut rate_limited = 0u32;
+        for handle in handles {
+            let status = handle.await.unwrap();
+            match status {
+                StatusCode::ACCEPTED => accepted += 1,
+                StatusCode::TOO_MANY_REQUESTS => rate_limited += 1,
+                other => panic!("{label}unexpected status: {other}"),
+            }
+        }
 
-    // Wait for accepted tasks to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len() as u32,
-            accepted,
-            "callbacks should match accepted count: expected {accepted}, got {}",
-            received.len()
+        // At most 3 should be accepted (rate limit), at least 2 should be rejected
+        assert!(
+            accepted <= 3,
+            "{label}at most 3 requests should pass rate limit, got {accepted}"
         );
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// Rate limited server: a single batch request within quota should succeed normally.
-#[tokio::test]
-async fn e2e_batch_async_within_rate_limit_succeeds() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle, _max) =
-        spawn_server_with_workers_and_rate_limit(vec![], 10, 60).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "rate limited batch 1",
-                    "callback_url": &callback_url,
-                },
-                {
-                    "provider": "mock-ok",
-                    "text": "rate limited batch 2",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["enqueued"], 2);
-    assert_eq!(body["failed"], 0);
-
-    // Verify rate limit headers are present on a separate request
-    let health_resp = client.get(format!("{base}/health")).send().await.unwrap();
-    assert!(health_resp.headers().contains_key("x-ratelimit-limit"));
-
-    let task_ids: Vec<String> = (0..2)
-        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
-        .collect();
-
-    for tid in &task_ids {
-        let task = wait_for_terminal_status(&client, &base, tid).await;
-        assert_eq!(task["status"], "completed");
-    }
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(received.len(), 2);
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// Rate limit exhausted mid-sequence: first batch goes through, second batch gets 429.
-#[tokio::test]
-async fn e2e_sequential_batch_async_rate_limit_exhaustion() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    // Only 2 requests allowed per 60s
-    let (base, worker_handle, _max) = spawn_server_with_workers_and_rate_limit(vec![], 2, 60).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
-
-    // First batch — should succeed (request 1)
-    let resp1 = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "first batch",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp1.status(), StatusCode::ACCEPTED);
-
-    // Second batch — should succeed (request 2)
-    let resp2 = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "second batch",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp2.status(), StatusCode::ACCEPTED);
-
-    // Third batch — should be rate limited (request 3 > quota 2)
-    let resp3 = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "third batch - should be rejected",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        resp3.status(),
-        StatusCode::TOO_MANY_REQUESTS,
-        "third request should be rate limited"
-    );
-    let body_429: Value = resp3.json().await.unwrap();
-    assert_eq!(body_429["error"], "rate limit exceeded");
-
-    // Wait for the 2 accepted tasks to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len(),
-            2,
-            "only 2 accepted tasks should produce callbacks"
+        assert!(
+            rate_limited >= 2,
+            "{label}at least 2 requests should be rate limited, got {rate_limited}"
         );
-    }
 
-    worker_handle.shutdown_and_join().await;
-}
+        // Wait for accepted tasks to complete
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        {
+            let received = payloads.lock().unwrap();
+            assert_eq!(
+                received.len() as u32,
+                accepted,
+                "{label}callbacks should match accepted count: expected {accepted}, got {}",
+                received.len()
+            );
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+// Rate limited server: a single batch request within quota should succeed normally.
+common::dual_backend_test!(
+    with_workers_and_rate_limit,
+    e2e_batch_async_within_rate_limit_succeeds,
+    e2e_sqlite_batch_async_within_rate_limit_succeeds,
+    |spawn_fn, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        let (base, worker_handle, _max) = spawn_fn(vec![], 10, 60).await;
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-ok",
+                        "text": "rate limited batch 1",
+                        "callback_url": &callback_url,
+                    },
+                    {
+                        "provider": "mock-ok",
+                        "text": "rate limited batch 2",
+                        "callback_url": &callback_url,
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(body["enqueued"], 2);
+        assert_eq!(body["failed"], 0);
+
+        // Verify rate limit headers are present on a separate request
+        let health_resp = client.get(format!("{base}/health")).send().await.unwrap();
+        assert!(
+            health_resp.headers().contains_key("x-ratelimit-limit"),
+            "{label}expected rate limit headers on health response"
+        );
+
+        let task_ids: Vec<String> = (0..2)
+            .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
+            .collect();
+
+        for tid in &task_ids {
+            let task = wait_for_terminal_status(&client, &base, tid).await;
+            assert_eq!(task["status"], "completed");
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        {
+            let received = payloads.lock().unwrap();
+            assert_eq!(
+                received.len(),
+                2,
+                "{label}expected two callbacks for accepted batch items"
+            );
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+// Rate limit exhausted mid-sequence: first batch goes through, second batch gets 429.
+common::dual_backend_test!(
+    with_workers_and_rate_limit,
+    e2e_sequential_batch_async_rate_limit_exhaustion,
+    e2e_sqlite_sequential_batch_async_rate_limit_exhaustion,
+    |spawn_fn, label| {
+        let (callback_base, payloads) = spawn_callback_server().await;
+        // Only 2 requests allowed per 60s
+        let (base, worker_handle, _max) = spawn_fn(vec![], 2, 60).await;
+        let client = test_client();
+        let callback_url = format!("{callback_base}/callback");
+
+        // First batch — should succeed (request 1)
+        let resp1 = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-ok",
+                        "text": "first batch",
+                        "callback_url": &callback_url,
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp1.status(), StatusCode::ACCEPTED);
+
+        // Second batch — should succeed (request 2)
+        let resp2 = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-ok",
+                        "text": "second batch",
+                        "callback_url": &callback_url,
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp2.status(), StatusCode::ACCEPTED);
+
+        // Third batch — should be rate limited (request 3 > quota 2)
+        let resp3 = client
+            .post(format!("{base}/api/v1/send/async/batch"))
+            .json(&json!({
+                "items": [
+                    {
+                        "provider": "mock-ok",
+                        "text": "third batch - should be rejected",
+                        "callback_url": &callback_url,
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp3.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "{label}third request should be rate limited"
+        );
+        let body_429: Value = resp3.json().await.unwrap();
+        assert_eq!(body_429["error"], "rate limit exceeded");
+
+        // Wait for the 2 accepted tasks to complete
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        {
+            let received = payloads.lock().unwrap();
+            assert_eq!(
+                received.len(),
+                2,
+                "{label}only 2 accepted tasks should produce callbacks"
+            );
+        }
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
 // ───────────────────── SQLite batch async retry policy tests ─────────────────────
 
@@ -5913,7 +5604,7 @@ async fn e2e_sqlite_batch_async_flaky_with_retry_succeeds() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -5985,7 +5676,7 @@ async fn e2e_sqlite_batch_async_flaky_retry_exhausted_fails() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(5));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6061,7 +5752,7 @@ async fn e2e_sqlite_batch_async_mixed_retry_policies() {
     let (callback_base, payloads) = spawn_callback_server().await;
     let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
     let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
-    let client = reqwest::Client::new();
+    let client = test_client();
     let callback_url = format!("{callback_base}/callback");
 
     let resp = client
@@ -6155,87 +5846,867 @@ async fn e2e_sqlite_batch_async_mixed_retry_policies() {
 
 // ───────────────────── SQLite concurrent batch async with rate limiting ─────────────────────
 
-/// SQLite mirror of `e2e_concurrent_batch_async_with_rate_limit_partial_reject`.
-/// Send multiple concurrent batch requests with rate limiting enabled on SQLite backend.
-/// Some requests should be accepted and some rejected per rate limit quota.
+// ───────────────────── Backoff delay timing (e2e) ─────────────────────
+
 #[tokio::test]
-async fn e2e_sqlite_concurrent_batch_async_with_rate_limit_partial_reject() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    // Rate limit: 3 requests per 60s window. We'll send 5 concurrent batch requests.
-    let (base, worker_handle, _max_requests) =
-        spawn_server_sqlite_with_workers_and_rate_limit(vec![], 3, 60).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
+async fn e2e_backoff_delay_timing_flaky_task() {
+    // MockFlakyProvider fails first 2 calls, then succeeds on the 3rd.
+    // With delay_ms=200 (fixed), the queue should hold the task for ~200ms per retry.
+    // Total expected wall-clock time >= 200ms * 2 retries = 400ms.
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
 
-    let mut handles = Vec::new();
-    for i in 0..5 {
-        let client = client.clone();
-        let base = base.clone();
-        let cb_url = callback_url.clone();
-        handles.push(tokio::spawn(async move {
-            let resp = client
-                .post(format!("{base}/api/v1/send/async/batch"))
-                .json(&json!({
-                    "items": [
-                        {
-                            "provider": "mock-ok",
-                            "text": format!("sqlite rate-limited batch item {i}"),
-                            "callback_url": &cb_url,
-                        }
-                    ]
-                }))
-                .send()
-                .await
-                .unwrap();
-            resp.status()
-        }));
-    }
+    let start = std::time::Instant::now();
 
-    let mut accepted = 0u32;
-    let mut rate_limited = 0u32;
-    for handle in handles {
-        let status = handle.await.unwrap();
-        match status {
-            StatusCode::ACCEPTED => accepted += 1,
-            StatusCode::TOO_MANY_REQUESTS => rate_limited += 1,
-            other => panic!("SQLite: unexpected status: {other}"),
-        }
-    }
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "backoff timing test",
+            "retry": {"max_retries": 3, "delay_ms": 200}
+        }))
+        .send()
+        .await
+        .unwrap();
 
-    // At most 3 should be accepted (rate limit), at least 2 should be rejected
-    assert!(
-        accepted <= 3,
-        "SQLite: at most 3 requests should pass rate limit, got {accepted}"
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        task["status"], "completed",
+        "flaky task should eventually succeed after retries"
     );
     assert!(
-        rate_limited >= 2,
-        "SQLite: at least 2 requests should be rate limited, got {rate_limited}"
+        task["attempts"].as_u64().unwrap() >= 3,
+        "expected at least 3 attempts, got {}",
+        task["attempts"]
     );
-
-    // Wait for accepted tasks to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len() as u32,
-            accepted,
-            "SQLite: callbacks should match accepted count: expected {accepted}, got {}",
-            received.len()
-        );
-    }
+    // 2 retries × 200ms delay = 400ms minimum (allow some slack for poll interval)
+    assert!(
+        elapsed >= Duration::from_millis(350),
+        "backoff delay should enforce at least ~400ms total delay, but elapsed was {elapsed:?}"
+    );
 
     worker_handle.shutdown_and_join().await;
 }
 
-/// SQLite mirror of `e2e_batch_async_within_rate_limit_succeeds`.
-/// Rate limited server with SQLite backend: a single batch request within quota should succeed.
 #[tokio::test]
-async fn e2e_sqlite_batch_async_within_rate_limit_succeeds() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    let (base, worker_handle, _max) =
-        spawn_server_sqlite_with_workers_and_rate_limit(vec![], 10, 60).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
+async fn e2e_backoff_delay_timing_exhausted_retries() {
+    // MockFailProvider always fails. With max_retries=2, delay_ms=150,
+    // the task should fail after 3 attempts with >= 300ms total delay.
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "backoff exhaustion timing test",
+            "retry": {"max_retries": 2, "delay_ms": 150}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "failed");
+    // 2 retries × 150ms = 300ms minimum
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_backoff_delay_zero_delay_is_fast() {
+    // With delay_ms=0, retries should happen immediately (no backoff delay).
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "zero delay test",
+            "retry": {"max_retries": 3, "delay_ms": 0}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "completed");
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "expected at least 3 attempts"
+    );
+    // With zero delay, should complete well under 2 seconds (just poll intervals)
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "zero delay retries should be fast, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_backoff_delay_timing_flaky_task() {
+    // Same as e2e_backoff_delay_timing_flaky_task but with SQLite queue backend.
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "sqlite backoff timing test",
+            "retry": {"max_retries": 3, "delay_ms": 200}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        task["status"], "completed",
+        "SQLite: flaky task should eventually succeed after retries"
+    );
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+    assert!(
+        elapsed >= Duration::from_millis(350),
+        "SQLite: backoff delay should enforce at least ~400ms total, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_backoff_delay_timing_exhausted_retries() {
+    // Same as e2e_backoff_delay_timing_exhausted_retries but with SQLite queue backend.
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "sqlite backoff exhaustion timing test",
+            "retry": {"max_retries": 2, "delay_ms": 150}
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "failed");
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "SQLite: backoff delay should enforce at least ~300ms before final failure, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ───────────────────── Exponential backoff via API (e2e) ─────────────────────
+
+#[tokio::test]
+async fn e2e_exponential_backoff_api_flaky_task() {
+    // Test that backoff_multiplier in the API request produces exponential delays.
+    // MockFlakyProvider fails first 2 calls, succeeds on 3rd.
+    // With delay_ms=100 and backoff_multiplier=2.0:
+    //   attempt 1 fails → wait 100ms
+    //   attempt 2 fails → wait 200ms
+    //   attempt 3 succeeds
+    // Total backoff ≥ 250ms (100 + 200 = 300, minus timing slack)
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "exponential backoff test",
+            "retry": {
+                "max_retries": 3,
+                "delay_ms": 100,
+                "backoff_multiplier": 2.0,
+                "max_delay_ms": 5000
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        task["status"], "completed",
+        "flaky task with exponential backoff should eventually succeed"
+    );
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+    // 100ms + 200ms = 300ms minimum backoff
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "exponential backoff should take at least ~300ms, but elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_exponential_backoff_api_exhausted() {
+    // Test exponential backoff with max_retries=2, always-fail provider.
+    // delay_ms=100, backoff_multiplier=2.0 → waits 100ms + 200ms = 300ms total.
+    let (base, worker_handle) = spawn_server_with_workers().await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-fail",
+            "text": "exponential exhaustion test",
+            "retry": {
+                "max_retries": 2,
+                "delay_ms": 100,
+                "backoff_multiplier": 2.0
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "failed");
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "exponential backoff exhaustion should take at least ~300ms, elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_exponential_backoff_api_max_delay_caps() {
+    // Test that max_delay_ms caps the exponential growth.
+    // delay_ms=200, backoff_multiplier=10.0, max_delay_ms=300
+    // attempt 1 fails → wait 200ms
+    // attempt 2 fails → would be 2000ms but capped at 300ms → wait 300ms
+    // Total ≥ 450ms (200 + 300 = 500, minus timing slack)
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "max delay cap test",
+            "retry": {
+                "max_retries": 3,
+                "delay_ms": 200,
+                "backoff_multiplier": 10.0,
+                "max_delay_ms": 300
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "completed");
+    // 200ms + 300ms (capped) = 500ms minimum
+    assert!(
+        elapsed >= Duration::from_millis(450),
+        "max_delay_ms should cap growth, expected ≥450ms, elapsed was {elapsed:?}"
+    );
+    // Without the cap it would be 200+2000=2200ms, so verify it was fast enough
+    assert!(
+        elapsed < Duration::from_millis(2000),
+        "max_delay_ms cap should prevent 2s+ delays, elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_sqlite_exponential_backoff_api_flaky_task() {
+    // Same as e2e_exponential_backoff_api_flaky_task but with SQLite queue backend.
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_sqlite_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "sqlite exponential backoff test",
+            "retry": {
+                "max_retries": 3,
+                "delay_ms": 100,
+                "backoff_multiplier": 2.0,
+                "max_delay_ms": 5000
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        task["status"], "completed",
+        "SQLite: flaky task with exponential backoff should succeed"
+    );
+    assert!(
+        task["attempts"].as_u64().unwrap() >= 3,
+        "SQLite: expected at least 3 attempts, got {}",
+        task["attempts"]
+    );
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "SQLite: exponential backoff should take at least ~300ms, elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+#[tokio::test]
+async fn e2e_backoff_multiplier_1_is_fixed() {
+    // Verify that backoff_multiplier=1.0 behaves the same as fixed delay.
+    // MockFlakyProvider fails first 2 calls, succeeds on 3rd.
+    // With delay_ms=100 and backoff_multiplier=1.0 → fixed 100ms each retry.
+    // Total backoff = 100ms + 100ms = 200ms
+    let flaky: Arc<dyn noti_core::NotifyProvider> = Arc::new(MockFlakyProvider::new(2));
+    let (base, worker_handle) = spawn_server_with_workers_serial(vec![flaky]).await;
+    let client = test_client();
+
+    let start = std::time::Instant::now();
+    let resp = client
+        .post(format!("{base}/api/v1/send/async"))
+        .json(&json!({
+            "provider": "mock-flaky",
+            "text": "fixed delay via multiplier=1 test",
+            "retry": {
+                "max_retries": 3,
+                "delay_ms": 100,
+                "backoff_multiplier": 1.0
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let task_id = resp.json::<Value>().await.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let task = wait_for_terminal_status(&client, &base, &task_id).await;
+    let elapsed = start.elapsed();
+
+    assert_eq!(task["status"], "completed");
+    // Fixed 100ms × 2 retries = 200ms minimum
+    assert!(
+        elapsed >= Duration::from_millis(150),
+        "fixed delay (multiplier=1) should take at least ~200ms, elapsed was {elapsed:?}"
+    );
+    // Should NOT grow beyond 200ms + overhead (not exponential)
+    assert!(
+        elapsed < Duration::from_millis(1000),
+        "fixed delay should not grow exponentially, elapsed was {elapsed:?}"
+    );
+
+    worker_handle.shutdown_and_join().await;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Health Check structure e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Verify `/health` returns expected JSON structure with all documented fields.
+#[tokio::test]
+async fn e2e_health_response_has_documented_structure() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client.get(format!("{base}/health")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: Value = resp.json().await.unwrap();
+    // Top-level fields
+    assert!(body["status"].is_string(), "missing 'status' field");
+    assert!(body["version"].is_string(), "missing 'version' field");
+    assert!(
+        body["uptime_seconds"].is_number(),
+        "missing 'uptime_seconds' field"
+    );
+    // Dependencies
+    let deps = &body["dependencies"];
+    assert!(deps["queue"]["status"].is_string(), "missing queue.status");
+    assert!(
+        deps["providers"]["status"].is_string(),
+        "missing providers.status"
+    );
+    // Providers should be "up" (125+ registered)
+    assert_eq!(deps["providers"]["status"], "up");
+    assert_eq!(body["status"], "ok");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Request ID generation e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Verify the server generates a UUID v4 request ID when none is provided.
+#[tokio::test]
+async fn e2e_request_id_generated_is_valid_uuid() {
+    let base = spawn_server_with_request_id().await;
+    let client = test_client();
+
+    let resp = client.get(format!("{base}/health")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let id_header = resp
+        .headers()
+        .get("x-request-id")
+        .expect("response should have x-request-id header");
+    let id_str = id_header.to_str().unwrap();
+    // UUID v4 format: 8-4-4-4-12 hex chars
+    assert_eq!(id_str.len(), 36, "UUID should be 36 chars");
+    assert!(id_str.contains('-'), "UUID should contain dashes");
+}
+
+/// Verify the server preserves a client-provided request ID.
+#[tokio::test]
+async fn e2e_request_id_preserves_client_provided() {
+    let base = spawn_server_with_request_id().await;
+    let client = test_client();
+    let custom_id = "my-custom-trace-id-abc";
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("X-Request-Id", custom_id)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let id_header = resp
+        .headers()
+        .get("x-request-id")
+        .expect("response should echo x-request-id");
+    assert_eq!(id_header.to_str().unwrap(), custom_id);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CORS middleware e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Verify permissive CORS returns wildcard origin and allows arbitrary origin header.
+#[tokio::test]
+async fn e2e_cors_permissive_returns_wildcard_for_arbitrary_origin() {
+    let base = spawn_server_with_cors_permissive().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .header("Origin", "https://arbitrary.example.com")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let allow_origin = resp
+        .headers()
+        .get("access-control-allow-origin")
+        .expect("should have CORS allow-origin header");
+    assert_eq!(allow_origin.to_str().unwrap(), "*");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Scheduled / delayed send e2e tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Verify that `delay_seconds` causes the task to be held in the queue.
+// A delay of 2 seconds should prevent immediate processing.
+common::dual_backend_test!(
+    with_workers,
+    e2e_scheduled_send_delay_seconds_holds_task,
+    e2e_sqlite_scheduled_send_delay_seconds_holds_task,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
+
+        let start = std::time::Instant::now();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "delayed notification",
+                "delay_seconds": 2
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["message"].as_str().unwrap().contains("scheduled"));
+
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+
+        // The task should still be queued immediately after enqueueing
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let task_resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let task: Value = task_resp.json().await.unwrap();
+        assert!(
+            task["scheduled_at"].is_string(),
+            "{label}delayed task should have scheduled_at in response"
+        );
+
+        // Wait for the task to complete (should take ~2 seconds)
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(task["status"], "completed");
+        assert!(
+            elapsed >= Duration::from_millis(1800),
+            "{label}delayed task should wait at least ~2s, but elapsed was {elapsed:?}"
+        );
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+// Verify that `delay_seconds=0` is treated as immediate (no delay).
+common::dual_backend_test!(
+    with_workers,
+    e2e_scheduled_send_delay_zero_is_immediate,
+    e2e_sqlite_scheduled_send_delay_zero_is_immediate,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
+
+        let start = std::time::Instant::now();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "immediate notification",
+                "delay_seconds": 0
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        // Should say "enqueued" not "scheduled"
+        assert!(body["message"].as_str().unwrap().contains("enqueued"));
+
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(task["status"], "completed");
+        // Should complete quickly (well under 2s)
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "{label}delay_seconds=0 should not cause delay, elapsed was {elapsed:?}"
+        );
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+// Verify that `scheduled_at` with an RFC 3339 timestamp works.
+common::dual_backend_test!(
+    with_workers,
+    e2e_scheduled_send_rfc3339_timestamp,
+    e2e_sqlite_scheduled_send_rfc3339_timestamp,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
+
+        // Schedule 2 seconds from now
+        let scheduled_time = std::time::SystemTime::now() + Duration::from_secs(2);
+        let ts = humantime::format_rfc3339(scheduled_time).to_string();
+
+        let start = std::time::Instant::now();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "scheduled at timestamp",
+                "scheduled_at": ts
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(task["status"], "completed");
+        assert!(
+            elapsed >= Duration::from_millis(1800),
+            "{label}scheduled_at task should wait at least ~2s, but elapsed was {elapsed:?}"
+        );
+
+        worker_handle.shutdown_and_join().await;
+    }
+);
+
+// Verify that providing both `delay_seconds` and `scheduled_at` returns 400.
+common::dual_backend_test!(
+    basic,
+    e2e_scheduled_send_mutually_exclusive_error,
+    e2e_sqlite_scheduled_send_mutually_exclusive_error,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": "conflicting schedule params",
+                "config": {"webhook_url": "https://hooks.slack.com/services/test"},
+                "delay_seconds": 60,
+                "scheduled_at": "2030-01-15T10:30:00Z"
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("mutually exclusive"),
+            "{label}expected mutually exclusive error"
+        );
+    }
+);
+
+// Verify that an invalid `scheduled_at` format returns 400.
+common::dual_backend_test!(
+    basic,
+    e2e_scheduled_send_invalid_timestamp_format,
+    e2e_sqlite_scheduled_send_invalid_timestamp_format,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": "bad timestamp",
+                "config": {"webhook_url": "https://hooks.slack.com/services/test"},
+                "scheduled_at": "not-a-valid-timestamp"
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid scheduled_at"),
+            "{label}expected invalid scheduled_at error"
+        );
+    }
+);
+
+// Verify that `task_info.scheduled_at` is absent for non-delayed tasks.
+common::dual_backend_test!(
+    basic,
+    e2e_scheduled_send_no_scheduled_at_for_immediate,
+    e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
+
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": "immediate task",
+                "config": {"webhook_url": "https://hooks.slack.com/services/test"}
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap();
+
+        let task_resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let task: Value = task_resp.json().await.unwrap();
+        assert!(
+            task["scheduled_at"].is_null()
+                || !task.as_object().unwrap().contains_key("scheduled_at"),
+            "{label}immediate task should not have scheduled_at"
+        );
+    }
+);
+
+/// Verify OpenAPI schema includes delay_seconds and scheduled_at fields.
+#[tokio::test]
+async fn e2e_openapi_schema_has_scheduled_send_fields() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let spec: Value = resp.json().await.unwrap();
+    let async_schema = &spec["components"]["schemas"]["AsyncSendRequest"]["properties"];
+    assert!(
+        async_schema["delay_seconds"].is_object(),
+        "AsyncSendRequest should have delay_seconds field in OpenAPI schema"
+    );
+    assert!(
+        async_schema["scheduled_at"].is_object(),
+        "AsyncSendRequest should have scheduled_at field in OpenAPI schema"
+    );
+
+    let task_schema = &spec["components"]["schemas"]["TaskInfo"]["properties"];
+    assert!(
+        task_schema["scheduled_at"].is_object(),
+        "TaskInfo should have scheduled_at field in OpenAPI schema"
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Scheduled / delayed send e2e tests — SQLite-only
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// SQLite: Verify batch async with mixed delay_seconds per item.
+#[tokio::test]
+async fn e2e_sqlite_scheduled_send_batch_mixed_delays() {
+    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
+    let client = test_client();
 
     let resp = client
         .post(format!("{base}/api/v1/send/async/batch"))
@@ -6243,13 +6714,13 @@ async fn e2e_sqlite_batch_async_within_rate_limit_succeeds() {
             "items": [
                 {
                     "provider": "mock-ok",
-                    "text": "sqlite rate limited batch 1",
-                    "callback_url": &callback_url,
+                    "text": "immediate item",
+                    "delay_seconds": 0
                 },
                 {
                     "provider": "mock-ok",
-                    "text": "sqlite rate limited batch 2",
-                    "callback_url": &callback_url,
+                    "text": "delayed item",
+                    "delay_seconds": 1
                 }
             ]
         }))
@@ -6259,109 +6730,19 @@ async fn e2e_sqlite_batch_async_within_rate_limit_succeeds() {
 
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["enqueued"], 2);
-    assert_eq!(body["failed"], 0);
+    assert_eq!(body["enqueued"].as_u64().unwrap(), 2);
+    assert_eq!(body["failed"].as_u64().unwrap(), 0);
 
-    // Verify rate limit headers are present on a separate request
-    let health_resp = client.get(format!("{base}/health")).send().await.unwrap();
-    assert!(health_resp.headers().contains_key("x-ratelimit-limit"));
+    let immediate_id = body["results"][0]["task_id"].as_str().unwrap().to_string();
+    let delayed_id = body["results"][1]["task_id"].as_str().unwrap().to_string();
 
-    let task_ids: Vec<String> = (0..2)
-        .map(|i| body["results"][i]["task_id"].as_str().unwrap().to_string())
-        .collect();
+    // The immediate task should complete first
+    let immediate_task = wait_for_terminal_status(&client, &base, &immediate_id).await;
+    assert_eq!(immediate_task["status"], "completed");
 
-    for tid in &task_ids {
-        let task = wait_for_terminal_status(&client, &base, tid).await;
-        assert_eq!(task["status"], "completed");
-    }
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(received.len(), 2);
-    }
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// SQLite mirror of `e2e_sequential_batch_async_rate_limit_exhaustion`.
-/// Rate limit exhausted mid-sequence on SQLite backend: first batch goes through, second batch gets 429.
-#[tokio::test]
-async fn e2e_sqlite_sequential_batch_async_rate_limit_exhaustion() {
-    let (callback_base, payloads) = spawn_callback_server().await;
-    // Only 2 requests allowed per 60s
-    let (base, worker_handle, _max) =
-        spawn_server_sqlite_with_workers_and_rate_limit(vec![], 2, 60).await;
-    let client = reqwest::Client::new();
-    let callback_url = format!("{callback_base}/callback");
-
-    // First batch — should succeed (request 1)
-    let resp1 = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite first batch",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp1.status(), StatusCode::ACCEPTED);
-
-    // Second batch — should succeed (request 2)
-    let resp2 = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite second batch",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp2.status(), StatusCode::ACCEPTED);
-
-    // Third batch — should be rate limited (request 3 > quota 2)
-    let resp3 = client
-        .post(format!("{base}/api/v1/send/async/batch"))
-        .json(&json!({
-            "items": [
-                {
-                    "provider": "mock-ok",
-                    "text": "sqlite third batch - should be rejected",
-                    "callback_url": &callback_url,
-                }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        resp3.status(),
-        StatusCode::TOO_MANY_REQUESTS,
-        "SQLite: third request should be rate limited"
-    );
-    let body_429: Value = resp3.json().await.unwrap();
-    assert_eq!(body_429["error"], "rate limit exceeded");
-
-    // Wait for the 2 accepted tasks to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    {
-        let received = payloads.lock().unwrap();
-        assert_eq!(
-            received.len(),
-            2,
-            "SQLite: only 2 accepted tasks should produce callbacks"
-        );
-    }
+    // The delayed task should also eventually complete
+    let delayed_task = wait_for_terminal_status(&client, &base, &delayed_id).await;
+    assert_eq!(delayed_task["status"], "completed");
 
     worker_handle.shutdown_and_join().await;
 }

@@ -19,12 +19,13 @@ use crate::handlers::{
         self, BatchSendApiResponse, BatchSendRequest, BatchTarget, SendApiResponse, SendRequest,
         TargetApiResult,
     },
-    status::{self, AllStatusesResponse, StatusResponse},
+    status::{self, AllStatusesResponse, PurgeStatusResponse, StatusResponse},
     templates::{
         self, CreateTemplateRequest, DeleteTemplateResponse, RenderTemplateRequest,
         RenderedTemplateResponse, TemplateListResponse, TemplateResponse, UpdateTemplateRequest,
     },
 };
+use crate::routes::{self, ApiVersion, ApiVersionsResponse};
 
 /// Auto-generated OpenAPI documentation for the noti notification service.
 #[derive(OpenApi)]
@@ -32,13 +33,14 @@ use crate::handlers::{
     info(
         title = "noti — Notification Service API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "A unified notification service supporting 130+ providers with sync/async delivery, \
+        description = "A unified notification service supporting 125+ providers with sync/async delivery, \
             message templates, priority queuing, and delivery status tracking.",
         license(name = "MIT", url = "https://github.com/loonghao/noti/blob/main/LICENSE"),
         contact(name = "noti", url = "https://github.com/loonghao/noti"),
     ),
     tags(
         (name = "Health", description = "Health check endpoints"),
+        (name = "Meta", description = "API version discovery and metadata"),
         (name = "Notifications", description = "Synchronous notification sending"),
         (name = "Async Queue", description = "Asynchronous queue-based notification processing"),
         (name = "Status", description = "Delivery status tracking"),
@@ -49,6 +51,8 @@ use crate::handlers::{
     paths(
         // Health
         health::health_check,
+        // Meta
+        routes::list_api_versions,
         // Notifications
         send::send_notification,
         send::send_batch,
@@ -63,6 +67,7 @@ use crate::handlers::{
         // Status
         status::get_status,
         status::get_all_statuses,
+        status::purge_statuses,
         // Templates
         templates::create_template,
         templates::list_templates,
@@ -83,6 +88,8 @@ use crate::handlers::{
         HealthResponse, DependencyHealth, ComponentHealth,
         // Common
         RetryConfig,
+        // Meta
+        ApiVersion, ApiVersionsResponse,
         // Send
         SendRequest, SendApiResponse,
         BatchSendRequest, BatchTarget, BatchSendApiResponse, TargetApiResult,
@@ -91,7 +98,7 @@ use crate::handlers::{
         BatchAsyncRequest, BatchEnqueueResponse, BatchEnqueueItemResult,
         TaskInfo, StatsResponse, CancelResponse, PurgeResponse,
         // Status
-        StatusResponse, AllStatusesResponse,
+        StatusResponse, AllStatusesResponse, PurgeStatusResponse,
         // Templates
         CreateTemplateRequest, TemplateResponse, TemplateListResponse,
         UpdateTemplateRequest, DeleteTemplateResponse,

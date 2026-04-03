@@ -137,21 +137,43 @@ impl QueueBackend for InMemoryQueue {
 
     async fn dequeue(&self) -> Result<Option<NotificationTask>, QueueError> {
         let mut heap = self.heap.lock().await;
+        let now = std::time::SystemTime::now();
+        let mut deferred = Vec::new();
+
         // Skip cancelled (or otherwise non-queued) tasks that remain in the heap
         // after being cancelled via the `cancel()` method.
+        // Also skip tasks with a future `available_at` (retry backoff delay).
         while let Some(entry) = heap.pop() {
             let task_id = &entry.task.id;
 
             let tasks = self.tasks.lock().await;
-            let current_status = tasks.get(task_id).map(|t| t.status.clone());
+            let task_info = tasks
+                .get(task_id)
+                .map(|t| (t.status.clone(), t.available_at));
             drop(tasks);
 
-            if current_status != Some(TaskStatus::Queued) {
-                // Task was cancelled (or otherwise modified) after enqueue — skip it.
-                continue;
+            match task_info {
+                Some((TaskStatus::Queued, Some(available_at))) if available_at > now => {
+                    // Task is queued but not yet available — defer and re-push later.
+                    deferred.push(entry);
+                    continue;
+                }
+                Some((TaskStatus::Queued, _)) => {
+                    // Task is available for processing.
+                }
+                _ => {
+                    // Task was cancelled (or otherwise modified) after enqueue — skip it.
+                    continue;
+                }
+            }
+
+            // Re-push deferred entries back into the heap before returning.
+            for d in deferred {
+                heap.push(d);
             }
 
             let mut task = entry.task;
+            task.available_at = None;
             task.mark_processing();
 
             let mut tasks = self.tasks.lock().await;
@@ -165,6 +187,12 @@ impl QueueBackend for InMemoryQueue {
 
             return Ok(Some(task));
         }
+
+        // Re-push deferred entries back into the heap.
+        for d in deferred {
+            heap.push(d);
+        }
+
         Ok(None)
     }
 
@@ -190,10 +218,20 @@ impl QueueBackend for InMemoryQueue {
             .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
 
         if task.should_retry() {
-            // Re-queue for retry
+            // Compute backoff delay before re-queuing
+            let delay = task.retry_delay();
+            let now = std::time::SystemTime::now();
+            let available_at = if delay.is_zero() {
+                None
+            } else {
+                Some(now + delay)
+            };
+
+            // Re-queue for retry with backoff delay
             task.status = TaskStatus::Queued;
             task.last_error = Some(error.to_string());
-            task.updated_at = std::time::SystemTime::now();
+            task.updated_at = now;
+            task.available_at = available_at;
 
             let requeue_task = task.clone();
             drop(tasks);
@@ -286,13 +324,9 @@ impl QueueBackend for InMemoryQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use noti_core::{Message, Priority, ProviderConfig, RetryPolicy};
+    use crate::test_utils::make_task;
+    use noti_core::{Priority, RetryPolicy};
     use std::time::Duration;
-
-    fn make_task(provider: &str, priority: Priority) -> NotificationTask {
-        let msg = Message::text("test").with_priority(priority);
-        NotificationTask::new(provider, ProviderConfig::new(), msg)
-    }
 
     #[tokio::test]
     async fn test_enqueue_dequeue() {
@@ -366,6 +400,9 @@ mod tests {
         let stats = queue.stats().await.unwrap();
         assert_eq!(stats.queued, 1);
         assert_eq!(stats.processing, 0);
+
+        // Wait for retry backoff delay to elapse
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // Dequeue again
         let task = queue.dequeue().await.unwrap().unwrap();

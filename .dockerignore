@@ -1,0 +1,14 @@
+target/
+.git/
+.github/
+.codebuddy/
+docs/
+scripts/
+skills/
+*.md
+!README.md
+LICENSE
+justfile
+vx.toml
+release-please-config.json
+.gitignore

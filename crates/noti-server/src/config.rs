@@ -38,10 +38,23 @@ pub enum QueueBackendType {
 
 impl QueueBackendType {
     /// Parse from string, defaulting to [`QueueBackendType::Memory`].
+    ///
+    /// Recognised values (case-insensitive):
+    /// - Memory: `"memory"`, `"mem"`, `"in-memory"`
+    /// - Sqlite: `"sqlite"`, `"sql"`, `"db"`
+    ///
+    /// Any other value falls back to `Memory` with a warning log.
     pub fn from_str_lossy(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
+            "memory" | "mem" | "in-memory" => Self::Memory,
             "sqlite" | "sql" | "db" => Self::Sqlite,
-            _ => Self::Memory,
+            other => {
+                tracing::warn!(
+                    input = other,
+                    "unrecognised NOTI_QUEUE_BACKEND value, defaulting to memory"
+                );
+                Self::Memory
+            }
         }
     }
 }
@@ -347,6 +360,26 @@ mod tests {
         assert_eq!(err.input, "redis");
         assert!(err.to_string().contains("redis"));
         assert!(err.to_string().contains("expected"));
+    }
+
+    #[test]
+    fn test_queue_backend_type_from_str_lossy() {
+        // Explicit memory variants
+        assert_eq!(QueueBackendType::from_str_lossy("memory"), QueueBackendType::Memory);
+        assert_eq!(QueueBackendType::from_str_lossy("mem"), QueueBackendType::Memory);
+        assert_eq!(QueueBackendType::from_str_lossy("in-memory"), QueueBackendType::Memory);
+        assert_eq!(QueueBackendType::from_str_lossy("MEMORY"), QueueBackendType::Memory);
+        assert_eq!(QueueBackendType::from_str_lossy("In-Memory"), QueueBackendType::Memory);
+
+        // SQLite variants
+        assert_eq!(QueueBackendType::from_str_lossy("sqlite"), QueueBackendType::Sqlite);
+        assert_eq!(QueueBackendType::from_str_lossy("sql"), QueueBackendType::Sqlite);
+        assert_eq!(QueueBackendType::from_str_lossy("db"), QueueBackendType::Sqlite);
+        assert_eq!(QueueBackendType::from_str_lossy("SQLITE"), QueueBackendType::Sqlite);
+
+        // Unknown values default to Memory (with warning)
+        assert_eq!(QueueBackendType::from_str_lossy("redis"), QueueBackendType::Memory);
+        assert_eq!(QueueBackendType::from_str_lossy(""), QueueBackendType::Memory);
     }
 
     #[test]

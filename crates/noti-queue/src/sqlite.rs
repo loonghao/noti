@@ -129,12 +129,16 @@ impl SqliteQueue {
                 updated_at INTEGER NOT NULL,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 callback_url TEXT,
-                priority INTEGER NOT NULL DEFAULT 1
+                priority INTEGER NOT NULL DEFAULT 1,
+                available_at INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_status_priority
                 ON tasks(status, priority DESC, created_at ASC);",
         )
         .backend_err()?;
+
+        // Migration: add available_at column if upgrading from an older schema.
+        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN available_at INTEGER;");
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -168,6 +172,7 @@ impl SqliteQueue {
             metadata_json,
             callback_url: task.callback_url.clone(),
             priority: task.priority().as_numeric() as i64,
+            available_at: task.available_at.map(system_time_to_epoch_ms),
         })
     }
 
@@ -190,6 +195,7 @@ impl SqliteQueue {
             updated_at: epoch_ms_to_system_time(row.updated_at),
             metadata,
             callback_url: row.callback_url.clone(),
+            available_at: row.available_at.map(epoch_ms_to_system_time),
         })
     }
 }
@@ -208,6 +214,7 @@ struct TaskRow {
     metadata_json: String,
     callback_url: Option<String>,
     priority: i64,
+    available_at: Option<i64>,
 }
 
 impl TaskRow {
@@ -226,6 +233,7 @@ impl TaskRow {
             metadata_json: row.get("metadata_json")?,
             callback_url: row.get("callback_url")?,
             priority: row.get("priority")?,
+            available_at: row.get("available_at")?,
         })
     }
 }
@@ -255,12 +263,13 @@ impl QueueBackend for SqliteQueue {
 
         conn.execute(
             "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
-             status, attempts, last_error, created_at, updated_at, metadata_json, callback_url, priority)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+             status, attempts, last_error, created_at, updated_at, metadata_json, callback_url, priority, available_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 row.id, row.provider, row.config_json, row.message_json,
                 row.retry_policy_json, row.status, row.attempts, row.last_error,
-                row.created_at, row.updated_at, row.metadata_json, row.callback_url, row.priority
+                row.created_at, row.updated_at, row.metadata_json, row.callback_url, row.priority,
+                row.available_at
             ],
         )
         .backend_err()?;
@@ -276,8 +285,9 @@ impl QueueBackend for SqliteQueue {
 
         let result = conn.query_row(
             "SELECT * FROM tasks WHERE status = 'queued'
+             AND (available_at IS NULL OR available_at <= ?1)
              ORDER BY priority DESC, created_at ASC LIMIT 1",
-            [],
+            params![now],
             TaskRow::from_rusqlite_row,
         );
 
@@ -335,9 +345,16 @@ impl QueueBackend for SqliteQueue {
         let task = Self::deserialize_task(&row)?;
 
         if task.should_retry() {
+            let delay = task.retry_delay();
+            let available_at: Option<i64> = if delay.is_zero() {
+                None
+            } else {
+                Some(now + delay.as_millis() as i64)
+            };
+
             conn.execute(
-                "UPDATE tasks SET status = 'queued', last_error = ?1, updated_at = ?2 WHERE id = ?3",
-                params![error, now, task_id],
+                "UPDATE tasks SET status = 'queued', last_error = ?1, updated_at = ?2, available_at = ?3 WHERE id = ?4",
+                params![error, now, available_at, task_id],
             )
             .backend_err()?;
 
@@ -483,13 +500,9 @@ impl QueueBackend for SqliteQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::make_task;
     use noti_core::{Message, Priority, ProviderConfig, RetryPolicy};
     use std::time::Duration;
-
-    fn make_task(provider: &str, priority: Priority) -> NotificationTask {
-        let msg = Message::text("test").with_priority(priority);
-        NotificationTask::new(provider, ProviderConfig::new(), msg)
-    }
 
     #[tokio::test]
     async fn test_sqlite_enqueue_dequeue() {
@@ -557,6 +570,9 @@ mod tests {
         let stats = queue.stats().await.unwrap();
         assert_eq!(stats.queued, 1);
         assert_eq!(stats.processing, 0);
+
+        // Wait for retry backoff delay to elapse
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         let task = queue.dequeue().await.unwrap().unwrap();
         assert_eq!(task.attempts, 2);

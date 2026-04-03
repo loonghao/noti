@@ -19,7 +19,7 @@ export default defineConfig({
       { text: 'Providers', link: '/providers/overview' },
       { text: 'Reference', link: '/reference/cli' },
       {
-        text: 'v0.1.4',
+        text: 'v0.1.5',
         items: [
           { text: 'Changelog', link: 'https://github.com/loonghao/noti/blob/main/CHANGELOG.md' },
           { text: 'Releases', link: 'https://github.com/loonghao/noti/releases' },
@@ -41,8 +41,26 @@ export default defineConfig({
           items: [
             { text: 'Sending Notifications', link: '/guide/sending-notifications' },
             { text: 'Core Features', link: '/guide/core-features' },
+            { text: 'Queue Management', link: '/guide/queue-management' },
+            { text: 'Scheduled & Delayed Send', link: '/guide/scheduled-send' },
             { text: 'Configuration & Profiles', link: '/guide/configuration' },
+            { text: 'Authentication', link: '/guide/authentication' },
+            { text: 'Rate Limiting', link: '/guide/rate-limiting' },
+            { text: 'Webhook Callbacks', link: '/guide/webhook-callbacks' },
             { text: 'AI Agent Integration', link: '/guide/agent-integration' },
+            { text: 'API Versioning', link: '/guide/api-versioning' },
+            { text: 'OpenAPI & Swagger UI', link: '/guide/openapi' },
+            { text: 'Error Codes', link: '/guide/error-codes' },
+          ],
+        },
+        {
+          text: 'Operations',
+          items: [
+            { text: 'Health Check', link: '/guide/health-check' },
+            { text: 'Deployment', link: '/guide/deployment' },
+            { text: 'Logging & Observability', link: '/guide/logging' },
+            { text: 'Metrics & Monitoring', link: '/guide/metrics-monitoring' },
+            { text: 'CI/CD Pipeline', link: '/guide/ci-cd' },
           ],
         },
         {

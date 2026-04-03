@@ -80,14 +80,30 @@ async fn main() {
             .allow_methods(Any)
             .allow_headers(Any)
     } else {
-        let origins: Vec<axum::http::HeaderValue> = config
-            .cors_allowed_origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
-        tracing::info!(origins = ?config.cors_allowed_origins, "CORS: restricted origins");
+        let mut valid_origins: Vec<axum::http::HeaderValue> = Vec::new();
+        for origin in &config.cors_allowed_origins {
+            match origin.parse::<axum::http::HeaderValue>() {
+                Ok(hv) => valid_origins.push(hv),
+                Err(_) => {
+                    tracing::warn!(origin = %origin, "CORS: dropping invalid origin (could not parse as header value)");
+                }
+            }
+        }
+        if valid_origins.is_empty() {
+            tracing::warn!(
+                configured = config.cors_allowed_origins.len(),
+                "CORS: all configured origins are invalid; no origin will be allowed"
+            );
+        } else {
+            tracing::info!(
+                configured = config.cors_allowed_origins.len(),
+                valid = valid_origins.len(),
+                origins = ?config.cors_allowed_origins,
+                "CORS: restricted origins"
+            );
+        }
         CorsLayer::new()
-            .allow_origin(AllowOrigin::list(origins))
+            .allow_origin(AllowOrigin::list(valid_origins))
             .allow_methods(Any)
             .allow_headers(Any)
     };

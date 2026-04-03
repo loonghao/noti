@@ -85,27 +85,49 @@ rounds or require coordination with the iteration agent.
 
 ## Code — Minor (noti-server)
 
-- [ ] `config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches — `from_str_lossy` accepts any unknown as Memory, `TryFrom` additionally recognizes `"memory"/"mem"/"in-memory"`; consider aligning or documenting the difference
+- [x] ~~`config.rs`: `from_str_lossy` and `TryFrom<&str>` for `QueueBackendType` have asymmetric match branches~~ — aligned: `from_str_lossy` now explicitly matches `"memory"/"mem"/"in-memory"` and logs `tracing::warn!` for unknown values; added `test_queue_backend_type_from_str_lossy` unit test
 - [x] ~~`e2e_test.rs`: 10 `spawn_server*` variants share ~10 lines of boilerplate (registry+state+listener+spawn) — extract a core `start_server(Router) -> String` helper~~ — extracted to `tests/common/mod.rs` with `bind_and_serve()` core helper (e9846ee)
-- [ ] `e2e_test.rs`: `reqwest::Client::new()` repeated 130 times (was 121 before 157cf8d–64d421c) — low-impact boilerplate; each test independently creates a client
+- [x] ~~`e2e_test.rs`: `reqwest::Client::new()` repeated 171 times~~ — extracted `test_client()` helper to `common/mod.rs`, replaced all 171 call sites (cbb3a9b)
 - [x] ~~`e2e_test.rs`: spawn helpers scattered across file (lines 22-134, 906, 1021, 1160-1211, 1659-1707) — consolidate all spawn helpers at file top~~ — all spawn helpers extracted to `tests/common/mod.rs` (e9846ee)
 - [x] ~~`e2e_test.rs`: `use` statements split between file top (lines 7-19) and mid-file (lines 1578-1582) — move all imports to file top~~ — all `use` statements now at file top (lines 10-24); no mid-file imports (e9846ee)
 
 ## Tests — E2E Test Quality (noti-server)
 
 - [x] ~~`e2e_priority_ordering_urgent_before_low` — name claims to verify ordering but only asserts all tasks completed~~ — iteration agent rewrote to verify all tasks completed; `e2e_priority_ordering_verified_by_completion_order` now verifies callback arrival order (e9846ee)
-- [ ] `e2e_priority_high_tasks_processed_before_normal` (line 2060) — name claims ordering verification but only checks `stats.completed >= 4`; functionally identical to `e2e_worker_multiple_tasks_processed`
-- [ ] `e2e_retry_zero_retries_fails_immediately` (line 2025) — near-duplicate of `e2e_worker_handles_failed_task` (line 1409); only unique assertion is `attempts == 1`, which should be added to the existing test instead
-- [ ] **13 tests use inline server setup** (~15-21 lines each) instead of common helpers — up from 10 in prior round. The inline pattern (registry+AppState+build_router+TcpListener+bind+axum::serve+tokio::spawn) appears at lines: 1754, 1826, 2592, 2866, 2981, 3099, 3180, 3271, 3354, 3430, 4549, 4688, 4804. Should extract `spawn_server_without_workers() -> (String, AppState)` and `spawn_server_sqlite_without_workers() -> (String, AppState)` to `common/mod.rs`
-- [ ] `e2e_batch_async_mixed_priorities_processed_in_order` (line 2853) ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order` (line 2968) — ~95% identical, only queue backend type and diagnostic string prefixes differ; consider a parameterized helper or macro
-- [ ] `e2e_graceful_shutdown_waits_for_inflight_task` (line 3088) ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task` (line 3339) — ~95% identical, same pattern
-- [ ] `e2e_batch_async_mixed_providers_and_priorities` (line 4540) ≈ `e2e_sqlite_batch_async_mixed_providers_and_priorities` (line 4677) — ~95% identical, same InMemory vs SQLite pattern
-- [ ] `e2e_batch_async_mock_fail_provider_with_priorities` (line 4864) ≈ `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` (line 4980) — ~95% identical, same pattern
-- [ ] `e2e_batch_async_flaky_with_retry_succeeds` (line 5446) ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds` (line 5912) — ~95% identical, same InMemory vs SQLite pattern (added 157cf8d–64d421c)
-- [ ] `e2e_batch_async_flaky_retry_exhausted_fails` (line 5518) ≈ `e2e_sqlite_batch_async_flaky_retry_exhausted_fails` (line 5984) — ~95% identical, same pattern (added 157cf8d–64d421c)
-- [ ] `e2e_batch_async_mixed_retry_policies` (line 5595) ≈ `e2e_sqlite_batch_async_mixed_retry_policies` (line 6060) — ~95% identical, same pattern (added 157cf8d–64d421c)
+- [x] ~~`e2e_priority_high_tasks_processed_before_normal` (line 2064) — name claims ordering verification but only checks `stats.completed >= 4`~~ — rewritten: enqueues 3 normal + 1 high on server without workers, starts single worker, verifies via callback arrival order that high is processed first
+- [x] ~~`e2e_retry_zero_retries_fails_immediately` — near-duplicate of `e2e_worker_handles_failed_task`; only unique assertion is `attempts == 1`, which should be added to the existing test instead~~ — obsolete: duplicate test was removed and `e2e_worker_handles_failed_task` now covers `attempts == 1`
+- [x] ~~`e2e_test.rs`: 13 tests use inline server setup (~15-21 lines each) instead of common helpers~~ — extracted `spawn_server_without_workers()` and `spawn_server_sqlite_without_workers()` to `tests/common/mod.rs`; all 14 inline `TcpListener::bind` sites replaced
+- [x] ~~`e2e_batch_async_mixed_priorities_processed_in_order` ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order`~~ — deduplicated via `common::dual_backend_test!` macro; backend-specific spawn function + label are now parameterized in one shared test body
+- [x] ~~`e2e_graceful_shutdown_waits_for_inflight_task` ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task`~~ — deduplicated via `common::dual_backend_test!` macro; preserves the same assertions for both backends from one shared test body
+- [x] ~~`e2e_concurrent_batch_async_with_rate_limit_partial_reject` ≈ `e2e_sqlite_concurrent_batch_async_with_rate_limit_partial_reject`~~ — deduplicated via `common::dual_backend_test!` macro
+- [x] ~~`e2e_batch_async_within_rate_limit_succeeds` ≈ `e2e_sqlite_batch_async_within_rate_limit_succeeds`~~ — deduplicated via `common::dual_backend_test!` macro
+- [x] ~~`e2e_sequential_batch_async_rate_limit_exhaustion` ≈ `e2e_sqlite_sequential_batch_async_rate_limit_exhaustion`~~ — deduplicated via `common::dual_backend_test!` macro
+
+- [ ] `e2e_batch_async_mixed_providers_and_priorities` / `e2e_sqlite_batch_async_mixed_providers_and_priorities` — same dual-backend scenario; still a good `common::dual_backend_test!` candidate, but current inputs and ordering assertions diverge slightly
+- [ ] `e2e_batch_async_mock_fail_provider_with_priorities` / `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` — same dual-backend scenario; still a good shared-body candidate, but callback-order assertions are not fully aligned yet
+- [ ] `e2e_batch_async_flaky_with_retry_succeeds` ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds` — ~95% identical, same InMemory vs SQLite pattern (added 157cf8d–64d421c)
+- [ ] `e2e_batch_async_flaky_retry_exhausted_fails` ≈ `e2e_sqlite_batch_async_flaky_retry_exhausted_fails` — ~95% identical, same pattern (added 157cf8d–64d421c)
+- [ ] `e2e_batch_async_mixed_retry_policies` ≈ `e2e_sqlite_batch_async_mixed_retry_policies` — ~95% identical, same pattern (added 157cf8d–64d421c)
+- [ ] `e2e_backoff_delay_timing_flaky_task` ≈ `e2e_sqlite_backoff_delay_timing_flaky_task` — ~95% identical, same InMemory vs SQLite pattern (added 251aca6)
+- [ ] `e2e_backoff_delay_timing_exhausted_retries` ≈ `e2e_sqlite_backoff_delay_timing_exhausted_retries` — ~95% identical, same pattern (added 251aca6)
+- [ ] `e2e_exponential_backoff_api_flaky_task` ≈ `e2e_sqlite_exponential_backoff_api_flaky_task` — ~95% identical, same pattern (added 481e7cf)
+- [x] ~~`e2e_scheduled_send_delay_seconds_holds_task` ≈ `e2e_sqlite_scheduled_send_delay_seconds_holds_task` — ~95% identical, same InMemory vs SQLite pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_delay_zero_is_immediate` ≈ `e2e_sqlite_scheduled_send_delay_zero_is_immediate` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_rfc3339_timestamp` ≈ `e2e_sqlite_scheduled_send_rfc3339_timestamp` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_mutually_exclusive_error` ≈ `e2e_sqlite_scheduled_send_mutually_exclusive_error` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_invalid_timestamp_format` ≈ `e2e_sqlite_scheduled_send_invalid_timestamp_format` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+- [x] ~~`e2e_scheduled_send_no_scheduled_at_for_immediate` ≈ `e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
+
 - [x] ~~`spawn_server_with_workers_serial` — near-duplicate of `spawn_server_with_workers`~~ — both extracted to `common/mod.rs` with distinct parameters: `spawn_server_with_workers()` (concurrency=2) and `spawn_server_with_workers_serial(extra_providers)` (concurrency=1) (e9846ee)
+
+## Structural Assessment — Deferred
+
+- [ ] `crates/noti-core/src/url.rs` — `parse_notification_url()` still spans nearly the entire file and mixes scheme dispatch, validation, alias normalization, and config assembly; split by provider family or dispatch table in a future refactor
+- [ ] `crates/noti-server/tests/e2e_test.rs` — the file is still monolithic and mixes health/auth/CORS/body-limit/queue/retry/scheduling scenarios; split by concern while keeping shared helpers in `tests/common/mod.rs`
+- [ ] `crates/noti-providers/tests/provider_send_test.rs` + `provider_send_extended_test.rs` — many provider send-path tests repeat the same success/failure/metadata contract shape; consider a shared contract-test macro/DSL and family-based file splits
+- [ ] `crates/noti-server/src/handlers/queue.rs` — request/response DTOs, schedule parsing, queue error mapping, HTTP handlers, and unit tests still live in one module; extract `dto`/`service`/`handlers` seams when safe
+- [ ] `crates/noti-providers/src/lib.rs` — `register_all_providers()` is a long manual registry list; consider a list-driven or macro-driven registration table to reduce drift risk as providers keep growing
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
-- [ ] `make_task()` helper defined identically in both `sqlite.rs:489` and `memory.rs:292` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module
+- [x] ~~`make_task()` helper defined identically in both `sqlite.rs:506` and `memory.rs:330` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module~~ — extracted to `crates/noti-queue/src/test_utils.rs` with `#[cfg(test)] pub(crate) mod test_utils` in lib.rs; both `memory.rs` and `sqlite.rs` now import via `crate::test_utils::make_task`
