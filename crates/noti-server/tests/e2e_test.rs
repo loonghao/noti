@@ -6848,224 +6848,251 @@ async fn e2e_cors_permissive_returns_wildcard_for_arbitrary_origin() {
 // Scheduled / delayed send e2e tests
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Verify that `delay_seconds` causes the task to be held in the queue.
-/// A delay of 2 seconds should prevent immediate processing.
-#[tokio::test]
-async fn e2e_scheduled_send_delay_seconds_holds_task() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+// Verify that `delay_seconds` causes the task to be held in the queue.
+// A delay of 2 seconds should prevent immediate processing.
+common::dual_backend_test!(
+    with_workers,
+    e2e_scheduled_send_delay_seconds_holds_task,
+    e2e_sqlite_scheduled_send_delay_seconds_holds_task,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "delayed notification",
-            "delay_seconds": 2
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "delayed notification",
+                "delay_seconds": 2
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["message"].as_str().unwrap().contains("scheduled"));
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        assert!(body["message"].as_str().unwrap().contains("scheduled"));
 
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    // The task should still be queued immediately after enqueueing
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let task_resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-    let task: Value = task_resp.json().await.unwrap();
-    assert!(
-        task["scheduled_at"].is_string(),
-        "delayed task should have scheduled_at in response"
-    );
+        // The task should still be queued immediately after enqueueing
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let task_resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let task: Value = task_resp.json().await.unwrap();
+        assert!(
+            task["scheduled_at"].is_string(),
+            "{label}delayed task should have scheduled_at in response"
+        );
 
-    // Wait for the task to complete (should take ~2 seconds)
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
+        // Wait for the task to complete (should take ~2 seconds)
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
 
-    assert_eq!(task["status"], "completed");
-    assert!(
-        elapsed >= Duration::from_millis(1800),
-        "delayed task should wait at least ~2s, but elapsed was {elapsed:?}"
-    );
+        assert_eq!(task["status"], "completed");
+        assert!(
+            elapsed >= Duration::from_millis(1800),
+            "{label}delayed task should wait at least ~2s, but elapsed was {elapsed:?}"
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
-/// Verify that `delay_seconds=0` is treated as immediate (no delay).
-#[tokio::test]
-async fn e2e_scheduled_send_delay_zero_is_immediate() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+// Verify that `delay_seconds=0` is treated as immediate (no delay).
+common::dual_backend_test!(
+    with_workers,
+    e2e_scheduled_send_delay_zero_is_immediate,
+    e2e_sqlite_scheduled_send_delay_zero_is_immediate,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "immediate notification",
-            "delay_seconds": 0
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "immediate notification",
+                "delay_seconds": 0
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    // Should say "enqueued" not "scheduled"
-    assert!(body["message"].as_str().unwrap().contains("enqueued"));
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        // Should say "enqueued" not "scheduled"
+        assert!(body["message"].as_str().unwrap().contains("enqueued"));
 
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
 
-    assert_eq!(task["status"], "completed");
-    // Should complete quickly (well under 2s)
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "delay_seconds=0 should not cause delay, elapsed was {elapsed:?}"
-    );
+        assert_eq!(task["status"], "completed");
+        // Should complete quickly (well under 2s)
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "{label}delay_seconds=0 should not cause delay, elapsed was {elapsed:?}"
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
-/// Verify that `scheduled_at` with an RFC 3339 timestamp works.
-#[tokio::test]
-async fn e2e_scheduled_send_rfc3339_timestamp() {
-    let (base, worker_handle) = spawn_server_with_workers().await;
-    let client = test_client();
+// Verify that `scheduled_at` with an RFC 3339 timestamp works.
+common::dual_backend_test!(
+    with_workers,
+    e2e_scheduled_send_rfc3339_timestamp,
+    e2e_sqlite_scheduled_send_rfc3339_timestamp,
+    |spawn_fn, label| {
+        let (base, worker_handle) = spawn_fn().await;
+        let client = test_client();
 
-    // Schedule 2 seconds from now
-    let scheduled_time = std::time::SystemTime::now() + Duration::from_secs(2);
-    let ts = humantime::format_rfc3339(scheduled_time).to_string();
+        // Schedule 2 seconds from now
+        let scheduled_time = std::time::SystemTime::now() + Duration::from_secs(2);
+        let ts = humantime::format_rfc3339(scheduled_time).to_string();
 
-    let start = std::time::Instant::now();
+        let start = std::time::Instant::now();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "scheduled at timestamp",
-            "scheduled_at": ts
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "mock-ok",
+                "text": "scheduled at timestamp",
+                "scheduled_at": ts
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
 
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
+        let task = wait_for_terminal_status(&client, &base, &task_id).await;
+        let elapsed = start.elapsed();
 
-    assert_eq!(task["status"], "completed");
-    assert!(
-        elapsed >= Duration::from_millis(1800),
-        "scheduled_at task should wait at least ~2s, but elapsed was {elapsed:?}"
-    );
+        assert_eq!(task["status"], "completed");
+        assert!(
+            elapsed >= Duration::from_millis(1800),
+            "{label}scheduled_at task should wait at least ~2s, but elapsed was {elapsed:?}"
+        );
 
-    worker_handle.shutdown_and_join().await;
-}
+        worker_handle.shutdown_and_join().await;
+    }
+);
 
-/// Verify that providing both `delay_seconds` and `scheduled_at` returns 400.
-#[tokio::test]
-async fn e2e_scheduled_send_mutually_exclusive_error() {
-    let base = spawn_server().await;
-    let client = test_client();
+// Verify that providing both `delay_seconds` and `scheduled_at` returns 400.
+common::dual_backend_test!(
+    basic,
+    e2e_scheduled_send_mutually_exclusive_error,
+    e2e_sqlite_scheduled_send_mutually_exclusive_error,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "conflicting schedule params",
-            "config": {"webhook_url": "https://hooks.slack.com/services/test"},
-            "delay_seconds": 60,
-            "scheduled_at": "2030-01-15T10:30:00Z"
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": "conflicting schedule params",
+                "config": {"webhook_url": "https://hooks.slack.com/services/test"},
+                "delay_seconds": 60,
+                "scheduled_at": "2030-01-15T10:30:00Z"
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: Value = resp.json().await.unwrap();
-    assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .contains("mutually exclusive")
-    );
-}
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("mutually exclusive"),
+            "{label}expected mutually exclusive error"
+        );
+    }
+);
 
-/// Verify that an invalid `scheduled_at` format returns 400.
-#[tokio::test]
-async fn e2e_scheduled_send_invalid_timestamp_format() {
-    let base = spawn_server().await;
-    let client = test_client();
+// Verify that an invalid `scheduled_at` format returns 400.
+common::dual_backend_test!(
+    basic,
+    e2e_scheduled_send_invalid_timestamp_format,
+    e2e_sqlite_scheduled_send_invalid_timestamp_format,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "bad timestamp",
-            "config": {"webhook_url": "https://hooks.slack.com/services/test"},
-            "scheduled_at": "not-a-valid-timestamp"
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": "bad timestamp",
+                "config": {"webhook_url": "https://hooks.slack.com/services/test"},
+                "scheduled_at": "not-a-valid-timestamp"
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: Value = resp.json().await.unwrap();
-    assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .contains("invalid scheduled_at")
-    );
-}
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid scheduled_at"),
+            "{label}expected invalid scheduled_at error"
+        );
+    }
+);
 
-/// Verify that `task_info.scheduled_at` is absent for non-delayed tasks.
-#[tokio::test]
-async fn e2e_scheduled_send_no_scheduled_at_for_immediate() {
-    let base = spawn_server().await;
-    let client = test_client();
+// Verify that `task_info.scheduled_at` is absent for non-delayed tasks.
+common::dual_backend_test!(
+    basic,
+    e2e_scheduled_send_no_scheduled_at_for_immediate,
+    e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate,
+    |spawn_fn, label| {
+        let base = spawn_fn().await;
+        let client = test_client();
 
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "immediate task",
-            "config": {"webhook_url": "https://hooks.slack.com/services/test"}
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = client
+            .post(format!("{base}/api/v1/send/async"))
+            .json(&json!({
+                "provider": "slack",
+                "text": "immediate task",
+                "config": {"webhook_url": "https://hooks.slack.com/services/test"}
+            }))
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let body: Value = resp.json().await.unwrap();
+        let task_id = body["task_id"].as_str().unwrap();
 
-    let task_resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-    let task: Value = task_resp.json().await.unwrap();
-    assert!(
-        task["scheduled_at"].is_null() || !task.as_object().unwrap().contains_key("scheduled_at"),
-        "immediate task should not have scheduled_at"
-    );
-}
+        let task_resp = client
+            .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
+            .send()
+            .await
+            .unwrap();
+        let task: Value = task_resp.json().await.unwrap();
+        assert!(
+            task["scheduled_at"].is_null()
+                || !task.as_object().unwrap().contains_key("scheduled_at"),
+            "{label}immediate task should not have scheduled_at"
+        );
+    }
+);
 
 /// Verify OpenAPI schema includes delay_seconds and scheduled_at fields.
 #[tokio::test]
@@ -7099,226 +7126,8 @@ async fn e2e_openapi_schema_has_scheduled_send_fields() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Scheduled / delayed send e2e tests — SQLite backend
+// Scheduled / delayed send e2e tests — SQLite-only
 // ═════════════════════════════════════════════════════════════════════════════
-
-/// SQLite: Verify that `delay_seconds` causes the task to be held in the queue.
-#[tokio::test]
-async fn e2e_sqlite_scheduled_send_delay_seconds_holds_task() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let start = std::time::Instant::now();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite delayed notification",
-            "delay_seconds": 2
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["message"].as_str().unwrap().contains("scheduled"));
-
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    // The task should still be queued immediately after enqueueing
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let task_resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-    let task: Value = task_resp.json().await.unwrap();
-    assert!(
-        task["scheduled_at"].is_string(),
-        "delayed task should have scheduled_at in response (SQLite)"
-    );
-
-    // Wait for the task to complete (should take ~2 seconds)
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
-
-    assert_eq!(task["status"], "completed");
-    assert!(
-        elapsed >= Duration::from_millis(1800),
-        "delayed task should wait at least ~2s (SQLite), but elapsed was {elapsed:?}"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// SQLite: Verify that `delay_seconds=0` is treated as immediate (no delay).
-#[tokio::test]
-async fn e2e_sqlite_scheduled_send_delay_zero_is_immediate() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    let start = std::time::Instant::now();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite immediate notification",
-            "delay_seconds": 0
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    // Should say "enqueued" not "scheduled"
-    assert!(body["message"].as_str().unwrap().contains("enqueued"));
-
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
-
-    assert_eq!(task["status"], "completed");
-    // Should complete quickly (well under 2s)
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "delay_seconds=0 should not cause delay (SQLite), elapsed was {elapsed:?}"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// SQLite: Verify that `scheduled_at` with an RFC 3339 timestamp works.
-#[tokio::test]
-async fn e2e_sqlite_scheduled_send_rfc3339_timestamp() {
-    let (base, worker_handle) = spawn_server_sqlite_with_workers().await;
-    let client = test_client();
-
-    // Schedule 2 seconds from now
-    let scheduled_time = std::time::SystemTime::now() + Duration::from_secs(2);
-    let ts = humantime::format_rfc3339(scheduled_time).to_string();
-
-    let start = std::time::Instant::now();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "mock-ok",
-            "text": "sqlite scheduled at timestamp",
-            "scheduled_at": ts
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap().to_string();
-
-    let task = wait_for_terminal_status(&client, &base, &task_id).await;
-    let elapsed = start.elapsed();
-
-    assert_eq!(task["status"], "completed");
-    assert!(
-        elapsed >= Duration::from_millis(1800),
-        "scheduled_at task should wait at least ~2s (SQLite), but elapsed was {elapsed:?}"
-    );
-
-    worker_handle.shutdown_and_join().await;
-}
-
-/// SQLite: Verify that providing both `delay_seconds` and `scheduled_at` returns 400.
-#[tokio::test]
-async fn e2e_sqlite_scheduled_send_mutually_exclusive_error() {
-    let base = spawn_server_sqlite().await;
-    let client = test_client();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "conflicting schedule params",
-            "config": {"webhook_url": "https://hooks.slack.com/services/test"},
-            "delay_seconds": 60,
-            "scheduled_at": "2030-01-15T10:30:00Z"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: Value = resp.json().await.unwrap();
-    assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .contains("mutually exclusive")
-    );
-}
-
-/// SQLite: Verify that an invalid `scheduled_at` format returns 400.
-#[tokio::test]
-async fn e2e_sqlite_scheduled_send_invalid_timestamp_format() {
-    let base = spawn_server_sqlite().await;
-    let client = test_client();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "bad timestamp",
-            "config": {"webhook_url": "https://hooks.slack.com/services/test"},
-            "scheduled_at": "not-a-valid-timestamp"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: Value = resp.json().await.unwrap();
-    assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .contains("invalid scheduled_at")
-    );
-}
-
-/// SQLite: Verify that `task_info.scheduled_at` is absent for non-delayed tasks.
-#[tokio::test]
-async fn e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate() {
-    let base = spawn_server_sqlite().await;
-    let client = test_client();
-
-    let resp = client
-        .post(format!("{base}/api/v1/send/async"))
-        .json(&json!({
-            "provider": "slack",
-            "text": "immediate task",
-            "config": {"webhook_url": "https://hooks.slack.com/services/test"}
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-    let body: Value = resp.json().await.unwrap();
-    let task_id = body["task_id"].as_str().unwrap();
-
-    let task_resp = client
-        .get(format!("{base}/api/v1/queue/tasks/{task_id}"))
-        .send()
-        .await
-        .unwrap();
-    let task: Value = task_resp.json().await.unwrap();
-    assert!(
-        task["scheduled_at"].is_null() || !task.as_object().unwrap().contains_key("scheduled_at"),
-        "immediate task should not have scheduled_at (SQLite)"
-    );
-}
 
 /// SQLite: Verify batch async with mixed delay_seconds per item.
 #[tokio::test]

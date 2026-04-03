@@ -669,6 +669,16 @@ pub fn test_client() -> reqwest::Client {
 ///
 /// # Variants
 ///
+/// ## `basic` — spawn returns `String` (no providers, no workers)
+/// ```ignore
+/// dual_backend_test!(
+///     basic,
+///     e2e_my_test,
+///     e2e_sqlite_my_test,
+///     |spawn_fn, label| { ... }
+/// );
+/// ```
+///
 /// ## `without_workers` — spawn returns `(String, AppState)`
 /// ```ignore
 /// dual_backend_test!(
@@ -709,6 +719,27 @@ pub fn test_client() -> reqwest::Client {
 /// );
 /// ```
 macro_rules! dual_backend_test {
+    // ── basic: spawn_fn() -> String ──
+    (basic, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
+        #[tokio::test]
+        async fn $mem_name() {
+            async fn $spawn() -> String {
+                $crate::common::spawn_server().await
+            }
+            let $label = "";
+            $body
+        }
+
+        #[tokio::test]
+        async fn $sql_name() {
+            async fn $spawn() -> String {
+                $crate::common::spawn_server_sqlite().await
+            }
+            let $label = "SQLite: ";
+            $body
+        }
+    };
+
     // ── without_workers: spawn_fn(providers) -> (String, AppState) ──
     (without_workers, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
         #[tokio::test]
