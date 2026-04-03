@@ -1,8 +1,10 @@
-name: Generate Skills
+name: Generate Skill Packages
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
     paths:
       - "skills/**"
       - "scripts/package_openclaw_skill.py"
@@ -10,6 +12,9 @@ on:
       - "justfile"
       - "vx.toml"
   push:
+    branches-ignore:
+      - main
+
     paths:
       - "skills/**"
       - "scripts/package_openclaw_skill.py"
@@ -27,7 +32,7 @@ concurrency:
 
 jobs:
   package-skills:
-    name: Package Skills
+    name: Package repository skills
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -36,14 +41,14 @@ jobs:
       - name: Setup vx
         uses: loonghao/vx@main
         with:
-          version: "0.8.15"
+          version: "0.8.18"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache-key-prefix: vx-0.8.15-${{ runner.os }}-${{ runner.arch }}
+          cache-key-prefix: vx-0.8.18-${{ runner.os }}-${{ runner.arch }}
 
       - name: Setup tools (vx)
         run: vx setup
 
-      - name: Package skills
+      - name: Package all skills
         run: vx just package-skills
 
       - name: Upload packaged skill artifacts
