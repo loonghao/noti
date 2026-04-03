@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/loonghao/noti/compare/v0.1.7...v0.1.8) (2026-04-03)
+
+
+### Miscellaneous Chores
+
+* merge origin/main into auto-improve (resolve conflicts) [iteration-done] ([1697b1c](https://github.com/loonghao/noti/commit/1697b1c772e5919afc70d96e4db98da2446c0e99))
+
 ## [0.1.7](https://github.com/loonghao/noti/compare/v0.1.6...v0.1.7) (2026-04-03)
 
 
