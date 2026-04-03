@@ -99,6 +99,9 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`e2e_test.rs`: 13 tests use inline server setup (~15-21 lines each) instead of common helpers~~ — extracted `spawn_server_without_workers()` and `spawn_server_sqlite_without_workers()` to `tests/common/mod.rs`; all 14 inline `TcpListener::bind` sites replaced
 - [x] ~~`e2e_batch_async_mixed_priorities_processed_in_order` ≈ `e2e_sqlite_batch_async_mixed_priorities_processed_in_order`~~ — deduplicated via `common::dual_backend_test!` macro; backend-specific spawn function + label are now parameterized in one shared test body
 - [x] ~~`e2e_graceful_shutdown_waits_for_inflight_task` ≈ `e2e_sqlite_graceful_shutdown_waits_for_inflight_task`~~ — deduplicated via `common::dual_backend_test!` macro; preserves the same assertions for both backends from one shared test body
+- [x] ~~`e2e_concurrent_batch_async_with_rate_limit_partial_reject` ≈ `e2e_sqlite_concurrent_batch_async_with_rate_limit_partial_reject`~~ — deduplicated via `common::dual_backend_test!` macro
+- [x] ~~`e2e_batch_async_within_rate_limit_succeeds` ≈ `e2e_sqlite_batch_async_within_rate_limit_succeeds`~~ — deduplicated via `common::dual_backend_test!` macro
+- [x] ~~`e2e_sequential_batch_async_rate_limit_exhaustion` ≈ `e2e_sqlite_sequential_batch_async_rate_limit_exhaustion`~~ — deduplicated via `common::dual_backend_test!` macro
 
 - [ ] `e2e_batch_async_mixed_providers_and_priorities` ≈ `e2e_sqlite_batch_async_mixed_providers_and_priorities` — ~95% identical, same InMemory vs SQLite pattern
 - [ ] `e2e_batch_async_mock_fail_provider_with_priorities` ≈ `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` — ~95% identical, same pattern
