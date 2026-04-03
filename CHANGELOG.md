@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/loonghao/noti/compare/v0.1.5...v0.1.6) (2026-04-03)
+
+
+### Bug Fixes
+
+* **ci:** correct clawhub publish command and improve Docker build robustness ([6fb881c](https://github.com/loonghao/noti/commit/6fb881c62d0777c8f23bdfe9fb91b023bb7e56fc))
+
 ## [0.1.5](https://github.com/loonghao/noti/compare/v0.1.4...v0.1.5) (2026-04-01)
 
 
