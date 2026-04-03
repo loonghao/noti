@@ -16,12 +16,12 @@ use common::{
     MockFlakyProvider, MockOkProvider, MockSlowProvider, spawn_callback_server, spawn_server,
     spawn_server_sqlite, spawn_server_sqlite_file, spawn_server_sqlite_file_with_workers,
     spawn_server_sqlite_with_workers, spawn_server_sqlite_with_workers_and_rate_limit,
-    spawn_server_sqlite_with_workers_serial, spawn_server_with_auth, spawn_server_with_body_limit,
-    spawn_server_with_cors_permissive, spawn_server_with_cors_restricted,
-    spawn_server_with_full_middleware, spawn_server_with_rate_limit,
-    spawn_server_with_rate_limit_per_ip, spawn_server_with_request_id, spawn_server_with_workers,
-    spawn_server_with_workers_and_rate_limit, spawn_server_with_workers_serial,
-    wait_for_terminal_status,
+    spawn_server_sqlite_with_workers_serial, spawn_server_sqlite_without_workers,
+    spawn_server_with_auth, spawn_server_with_body_limit, spawn_server_with_cors_permissive,
+    spawn_server_with_cors_restricted, spawn_server_with_full_middleware,
+    spawn_server_with_rate_limit, spawn_server_with_rate_limit_per_ip,
+    spawn_server_with_request_id, spawn_server_with_workers, spawn_server_with_workers_and_rate_limit,
+    spawn_server_with_workers_serial, spawn_server_without_workers, wait_for_terminal_status,
 };
 use noti_queue::QueueBackend;
 use reqwest::StatusCode;
@@ -1976,21 +1976,7 @@ async fn e2e_worker_task_with_metadata_preserved() {
 async fn e2e_priority_ordering_urgent_before_low() {
     // Enqueue tasks with different priorities on a server with NO workers,
     // then start a single worker so tasks are processed in priority order.
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
 
@@ -2048,21 +2034,7 @@ async fn e2e_priority_ordering_verified_by_completion_order() {
     // Enqueue low then urgent, verify urgent callback arrives before low
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -2298,21 +2270,7 @@ async fn e2e_priority_high_tasks_processed_before_normal() {
     // is processed before all normal tasks.
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -2862,23 +2820,8 @@ async fn e2e_sqlite_priority_ordering_urgent_before_low() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
     // Create AppState with SQLite queue but NO workers yet
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) =
+        spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -3138,21 +3081,7 @@ async fn e2e_batch_async_mixed_priorities_processed_in_order() {
     // Verify via callback order that urgent is processed first, then high, normal, low.
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -3251,23 +3180,8 @@ async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
     // Same as above but using SQLite queue backend.
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) =
+        spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -3369,23 +3283,10 @@ async fn e2e_sqlite_batch_async_mixed_priorities_processed_in_order() {
 async fn e2e_graceful_shutdown_waits_for_inflight_task() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
-    registry.register(slow);
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![slow]).await;
 
     // Start a single worker
     let worker_config = noti_queue::WorkerConfig::default()
@@ -3449,24 +3350,11 @@ async fn e2e_graceful_shutdown_waits_for_inflight_task() {
 /// Uses a slow provider so the single worker can only process one task before shutdown.
 #[tokio::test]
 async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
-    let mut registry = noti_core::ProviderRegistry::new();
     // Each task takes 200ms to complete
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(200)));
-    registry.register(slow);
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![slow]).await;
 
     let client = reqwest::Client::new();
 
@@ -3540,24 +3428,11 @@ async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
 /// (Workers shutting down should not affect the server's ability to serve requests.)
 #[tokio::test]
 async fn e2e_http_server_responsive_during_worker_shutdown() {
-    let mut registry = noti_core::ProviderRegistry::new();
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(300)));
-    registry.register(slow);
-    registry.register(Arc::new(MockOkProvider));
 
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) =
+        spawn_server_without_workers(vec![slow, Arc::new(MockOkProvider)]).await;
 
     // Start worker
     let worker_config = noti_queue::WorkerConfig::default()
@@ -3620,27 +3495,10 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
 async fn e2e_sqlite_graceful_shutdown_waits_for_inflight_task() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
     let slow: Arc<dyn noti_core::NotifyProvider> =
         Arc::new(MockSlowProvider::new(Duration::from_millis(500)));
-    registry.register(slow);
 
-    let queue = Arc::new(
-        noti_queue::SqliteQueue::in_memory().expect("failed to create in-memory SQLite queue"),
-    );
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_sqlite_without_workers(vec![slow]).await;
 
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
@@ -3702,21 +3560,7 @@ async fn e2e_sqlite_graceful_shutdown_waits_for_inflight_task() {
 /// even when the queue is empty (no tasks to process).
 #[tokio::test]
 async fn e2e_graceful_shutdown_empty_queue_completes_quickly() {
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let _base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (_base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     // Start workers with multiple concurrency
     let worker_config = noti_queue::WorkerConfig::default()
@@ -4945,21 +4789,7 @@ async fn e2e_error_codes_absent_when_not_applicable() {
 async fn e2e_batch_async_mixed_providers_and_priorities() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -5082,23 +4912,8 @@ async fn e2e_batch_async_mixed_providers_and_priorities() {
 async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
     let (callback_base, payloads) = spawn_callback_server().await;
 
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let queue = Arc::new(noti_queue::SqliteQueue::in_memory().unwrap());
-    let task_notify = queue.notifier();
-    let state = noti_server::state::AppState::with_custom_queue(registry, queue, task_notify);
-    let app = noti_server::routes::build_router(state.clone());
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, state) =
+        spawn_server_sqlite_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
     let callback_url = format!("{callback_base}/callback");
@@ -5200,21 +5015,7 @@ async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
 /// Batch async with ALL invalid providers — verify 202 response with all items failed.
 #[tokio::test]
 async fn e2e_batch_async_all_invalid_providers_returns_202() {
-    let mut registry = noti_core::ProviderRegistry::new();
-    registry.register(Arc::new(MockOkProvider));
-
-    let state = noti_server::state::AppState::new(registry);
-    let app = noti_server::routes::build_router(state);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind to random port");
-    let addr: std::net::SocketAddr = listener.local_addr().unwrap();
-    let base = format!("http://{addr}");
-
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let (base, _state) = spawn_server_without_workers(vec![Arc::new(MockOkProvider)]).await;
 
     let client = reqwest::Client::new();
 

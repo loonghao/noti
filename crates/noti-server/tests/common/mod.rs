@@ -253,6 +253,23 @@ pub async fn spawn_server_with_workers_serial(
     (base, worker_handle)
 }
 
+/// Start a noti server with custom mock providers but **no background workers**.
+/// This allows tests to enqueue tasks, inspect them, and then start workers manually.
+/// Returns `(base_url, app_state)`.
+pub async fn spawn_server_without_workers(
+    providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+) -> (String, noti_server::state::AppState) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    for p in providers {
+        registry.register(p);
+    }
+
+    let state = noti_server::state::AppState::new(registry);
+    let app = noti_server::routes::build_router(state.clone());
+    let base = bind_and_serve(app).await;
+    (base, state)
+}
+
 // ───────────────────── SQLite queue backend helpers ─────────────────────
 
 /// Create an `AppState` backed by an in-memory SQLite queue (no file I/O).
@@ -313,6 +330,22 @@ pub async fn spawn_server_sqlite_with_workers_serial(
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
     (base, worker_handle)
+}
+
+/// Start a server with in-memory SQLite queue and custom providers, but **no workers**.
+/// Returns `(base_url, app_state)` so tests can enqueue first and start workers later.
+pub async fn spawn_server_sqlite_without_workers(
+    providers: Vec<Arc<dyn noti_core::NotifyProvider>>,
+) -> (String, noti_server::state::AppState) {
+    let mut registry = noti_core::ProviderRegistry::new();
+    for p in providers {
+        registry.register(p);
+    }
+
+    let state = sqlite_app_state_with_registry(registry);
+    let app = noti_server::routes::build_router(state.clone());
+    let base = bind_and_serve(app).await;
+    (base, state)
 }
 
 /// Start a real HTTP server backed by a file-based SQLite queue.
