@@ -62,6 +62,7 @@ Async message queue for background notification processing:
 - **Stale task recovery** — automatically recovers tasks left in `Processing` state after an unclean shutdown via `QueueBackend::recover_stale_tasks()`
 - **Worker pool** — concurrent workers dequeue and deliver notifications
 - **Webhook callbacks** — HTTP POST on task completion or failure
+- **Scheduled/delayed delivery** — defer notifications via `delay_seconds` or `scheduled_at`
 - **Task lifecycle** — queued → processing → completed/failed/cancelled
 
 ### `noti-server`
@@ -78,6 +79,7 @@ REST API server for the noti notification service:
 - **Structured logging** — text or JSON log format with automatic request ID correlation
 - **Metrics endpoint** — operational metrics for monitoring
 - **Health check** — dependency-aware `/health` endpoint (queue + providers status, uptime)
+- **API versioning** — URL path versioning (`/api/v1/`) with version discovery at `/api/versions`
 - **Configurable CORS** — `NOTI_CORS_ALLOWED_ORIGINS` for cross-origin control
 - **OpenAPI / Swagger UI** — auto-generated API docs at `/swagger-ui`
 

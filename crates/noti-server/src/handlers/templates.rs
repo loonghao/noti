@@ -4,12 +4,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use utoipa::ToSchema;
 use validator::Validate;
 
 use noti_core::MessageTemplate;
 
-use crate::handlers::error::ApiError;
+use crate::handlers::error::{ApiError, codes};
 use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
@@ -165,9 +166,10 @@ pub async fn get_template(
     Path(name): Path<String>,
 ) -> Result<Json<TemplateResponse>, ApiError> {
     let registry = state.template_registry.read().await;
-    let template = registry
-        .get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("template '{}' not found", name)))?;
+    let template = registry.get(&name).ok_or_else(|| {
+        ApiError::not_found(format!("template '{}' not found", name))
+            .with_code(codes::TEMPLATE_NOT_FOUND)
+    })?;
 
     Ok(Json(TemplateResponse {
         name: template.name.clone(),
@@ -197,12 +199,15 @@ pub async fn render_template(
     ValidatedJson(req): ValidatedJson<RenderTemplateRequest>,
 ) -> Result<Json<RenderedTemplateResponse>, ApiError> {
     let registry = state.template_registry.read().await;
-    let template = registry
-        .get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("template '{}' not found", name)))?;
+    let template = registry.get(&name).ok_or_else(|| {
+        ApiError::not_found(format!("template '{}' not found", name))
+            .with_code(codes::TEMPLATE_NOT_FOUND)
+    })?;
 
     if let Err(e) = template.validate_vars(&req.variables) {
-        return Err(ApiError::bad_request(e.to_string()));
+        return Err(
+            ApiError::bad_request(e.to_string()).with_code(codes::TEMPLATE_VARIABLE_MISSING)
+        );
     }
 
     let text = template.render_body(&req.variables);
@@ -230,9 +235,10 @@ pub async fn update_template(
 ) -> Result<Json<TemplateResponse>, ApiError> {
     let mut registry = state.template_registry.write().await;
 
-    let existing = registry
-        .get(&name)
-        .ok_or_else(|| ApiError::not_found(format!("template '{}' not found", name)))?;
+    let existing = registry.get(&name).ok_or_else(|| {
+        ApiError::not_found(format!("template '{}' not found", name))
+            .with_code(codes::TEMPLATE_NOT_FOUND)
+    })?;
 
     // Build updated template
     let new_body = req.body.as_deref().unwrap_or(&existing.body);
@@ -284,14 +290,17 @@ pub async fn delete_template(
     let mut registry = state.template_registry.write().await;
 
     match registry.remove(&name) {
-        Some(_) => Ok(Json(DeleteTemplateResponse {
-            name,
-            deleted: true,
-            message: "Template deleted successfully".to_string(),
-        })),
-        None => Err(ApiError::not_found(format!(
-            "template '{}' not found",
-            name
-        ))),
+        Some(_) => {
+            info!(template_name = %name, "template deleted");
+            Ok(Json(DeleteTemplateResponse {
+                name,
+                deleted: true,
+                message: "Template deleted successfully".to_string(),
+            }))
+        }
+        None => Err(
+            ApiError::not_found(format!("template '{}' not found", name))
+                .with_code(codes::TEMPLATE_NOT_FOUND),
+        ),
     }
 }

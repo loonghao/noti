@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
+use tracing::warn;
 use utoipa::ToSchema;
 
 use crate::state::AppState;
@@ -77,6 +78,14 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
     };
 
     let all_up = queue_health.status == "up" && providers_health.status == "up";
+
+    if !all_up {
+        warn!(
+            queue_status = %queue_health.status,
+            providers_status = %providers_health.status,
+            "health check: service degraded"
+        );
+    }
 
     Json(HealthResponse {
         status: if all_up { "ok" } else { "degraded" }.to_string(),

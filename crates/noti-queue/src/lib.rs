@@ -13,6 +13,9 @@ pub mod sqlite;
 pub mod task;
 pub mod worker;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub use callback::{CallbackPayload, fire_callback};
 pub use error::QueueError;
 pub use memory::InMemoryQueue;

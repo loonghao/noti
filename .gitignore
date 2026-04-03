@@ -13,3 +13,5 @@ docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 node_modules/
+test_output.txt
+*.tmp

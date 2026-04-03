@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
 use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
@@ -10,7 +11,7 @@ use validator::Validate;
 use noti_core::{DeliveryStatus, ProviderConfig, RetryPolicy, SendResponse};
 
 use crate::handlers::common::{self, RetryConfig};
-use crate::handlers::error::ApiError;
+use crate::handlers::error::{ApiError, codes};
 use crate::middleware::validated_json::ValidatedJson;
 use crate::state::AppState;
 
@@ -143,7 +144,7 @@ pub async fn send_notification(
     let config = ProviderConfig { values: req.config };
 
     if let Err(e) = provider.validate_config(&config) {
-        return Err(ApiError::bad_request(e.to_string()));
+        return Err(ApiError::bad_request(e.to_string()).with_code(codes::CONFIG_VALIDATION_FAILED));
     }
 
     let msg = common::build_message(
@@ -193,6 +194,13 @@ pub async fn send_notification(
                 )
                 .await;
 
+            info!(
+                notification_id = %notification_id,
+                provider = %provider_name,
+                success = resp.success,
+                "notification sent successfully"
+            );
+
             Ok(Json(SendApiResponse {
                 notification_id,
                 success: resp.success,
@@ -211,6 +219,13 @@ pub async fn send_notification(
                     Some(e.to_string()),
                 )
                 .await;
+
+            warn!(
+                notification_id = %notification_id,
+                provider = %provider_name,
+                error = %e,
+                "notification send failed"
+            );
 
             Ok(Json(SendApiResponse {
                 notification_id,
@@ -325,12 +340,25 @@ pub async fn send_batch(
         api_results.push(api_result);
     }
 
+    let success_count = batch_result.success_count();
+    let failure_count = batch_result.failure_count();
+    let total_duration_ms = batch_result.total_duration.as_millis() as u64;
+
+    info!(
+        notification_id = %notification_id,
+        mode = %req.mode,
+        success_count,
+        failure_count,
+        total_duration_ms,
+        "batch send completed"
+    );
+
     Ok(Json(BatchSendApiResponse {
         notification_id,
         mode: req.mode,
         results: api_results,
-        success_count: batch_result.success_count(),
-        failure_count: batch_result.failure_count(),
-        total_duration_ms: batch_result.total_duration.as_millis() as u64,
+        success_count,
+        failure_count,
+        total_duration_ms,
     }))
 }

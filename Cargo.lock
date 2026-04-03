@@ -999,6 +999,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "humantime"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+
+[[package]]
 name = "hyper"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1433,7 +1439,7 @@ checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
 
 [[package]]
 name = "noti-cli"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1450,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "noti-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1469,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "noti-providers"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "base64",
@@ -1489,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "noti-queue"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "noti-core",
@@ -1507,11 +1513,12 @@ dependencies = [
 
 [[package]]
 name = "noti-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "axum",
  "axum-test",
+ "humantime",
  "noti-core",
  "noti-providers",
  "noti-queue",

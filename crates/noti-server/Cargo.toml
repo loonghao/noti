@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum = { workspace = true }
+humantime = { workspace = true }
 noti-core = { path = "../noti-core", features = ["openapi"] }
 noti-providers = { path = "../noti-providers" }
 noti-queue = { path = "../noti-queue", features = ["openapi", "sqlite"] }
@@ -30,6 +31,7 @@ validator = { workspace = true }
 [dev-dependencies]
 async-trait = { workspace = true }
 axum-test = "19"
+humantime = { workspace = true }
 reqwest = { workspace = true }
 rstest = { workspace = true }
 tempfile = "3.27.0"
