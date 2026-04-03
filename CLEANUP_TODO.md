@@ -103,8 +103,8 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`e2e_batch_async_within_rate_limit_succeeds` ≈ `e2e_sqlite_batch_async_within_rate_limit_succeeds`~~ — deduplicated via `common::dual_backend_test!` macro
 - [x] ~~`e2e_sequential_batch_async_rate_limit_exhaustion` ≈ `e2e_sqlite_sequential_batch_async_rate_limit_exhaustion`~~ — deduplicated via `common::dual_backend_test!` macro
 
-- [ ] `e2e_batch_async_mixed_providers_and_priorities` ≈ `e2e_sqlite_batch_async_mixed_providers_and_priorities` — ~95% identical, same InMemory vs SQLite pattern
-- [ ] `e2e_batch_async_mock_fail_provider_with_priorities` ≈ `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` — ~95% identical, same pattern
+- [ ] `e2e_batch_async_mixed_providers_and_priorities` / `e2e_sqlite_batch_async_mixed_providers_and_priorities` — same dual-backend scenario; still a good `common::dual_backend_test!` candidate, but current inputs and ordering assertions diverge slightly
+- [ ] `e2e_batch_async_mock_fail_provider_with_priorities` / `e2e_sqlite_batch_async_mock_fail_provider_with_priorities` — same dual-backend scenario; still a good shared-body candidate, but callback-order assertions are not fully aligned yet
 - [ ] `e2e_batch_async_flaky_with_retry_succeeds` ≈ `e2e_sqlite_batch_async_flaky_with_retry_succeeds` — ~95% identical, same InMemory vs SQLite pattern (added 157cf8d–64d421c)
 - [ ] `e2e_batch_async_flaky_retry_exhausted_fails` ≈ `e2e_sqlite_batch_async_flaky_retry_exhausted_fails` — ~95% identical, same pattern (added 157cf8d–64d421c)
 - [ ] `e2e_batch_async_mixed_retry_policies` ≈ `e2e_sqlite_batch_async_mixed_retry_policies` — ~95% identical, same pattern (added 157cf8d–64d421c)
@@ -119,6 +119,14 @@ rounds or require coordination with the iteration agent.
 - [x] ~~`e2e_scheduled_send_no_scheduled_at_for_immediate` ≈ `e2e_sqlite_scheduled_send_no_scheduled_at_for_immediate` — ~95% identical, same pattern (added 9bdd527)~~ — already deduplicated via `dual_backend_test!`
 
 - [x] ~~`spawn_server_with_workers_serial` — near-duplicate of `spawn_server_with_workers`~~ — both extracted to `common/mod.rs` with distinct parameters: `spawn_server_with_workers()` (concurrency=2) and `spawn_server_with_workers_serial(extra_providers)` (concurrency=1) (e9846ee)
+
+## Structural Assessment — Deferred
+
+- [ ] `crates/noti-core/src/url.rs` — `parse_notification_url()` still spans nearly the entire file and mixes scheme dispatch, validation, alias normalization, and config assembly; split by provider family or dispatch table in a future refactor
+- [ ] `crates/noti-server/tests/e2e_test.rs` — the file is still monolithic and mixes health/auth/CORS/body-limit/queue/retry/scheduling scenarios; split by concern while keeping shared helpers in `tests/common/mod.rs`
+- [ ] `crates/noti-providers/tests/provider_send_test.rs` + `provider_send_extended_test.rs` — many provider send-path tests repeat the same success/failure/metadata contract shape; consider a shared contract-test macro/DSL and family-based file splits
+- [ ] `crates/noti-server/src/handlers/queue.rs` — request/response DTOs, schedule parsing, queue error mapping, HTTP handlers, and unit tests still live in one module; extract `dto`/`service`/`handlers` seams when safe
+- [ ] `crates/noti-providers/src/lib.rs` — `register_all_providers()` is a long manual registry list; consider a list-driven or macro-driven registration table to reduce drift risk as providers keep growing
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
