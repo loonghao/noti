@@ -100,4 +100,5 @@ REST API server for the noti notification service:
 | HTTP middleware | tower-http 0.6 (CORS, tracing) |
 | Validation | validator 0.19 |
 | Testing | rstest, assert_cmd, wiremock |
+| Benchmarking | criterion 0.5 (throughput benchmarks) |
 | Task runner | just (via vx) |

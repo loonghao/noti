@@ -61,6 +61,9 @@ vx cargo test -p noti-providers
 vx cargo test -p noti-cli
 vx cargo test -p noti-queue
 vx cargo test -p noti-server
+
+# Run throughput benchmarks (noti-queue)
+vx cargo bench -p noti-queue
 ```
 
 ## Code Style

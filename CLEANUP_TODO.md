@@ -128,6 +128,7 @@ rounds or require coordination with the iteration agent.
 - [ ] `crates/noti-providers/tests/provider_send_test.rs` + `provider_send_extended_test.rs` — many provider send-path tests repeat the same success/failure/metadata contract shape; consider a shared contract-test macro/DSL and family-based file splits
 - [ ] `crates/noti-server/src/handlers/queue.rs` — request/response DTOs, schedule parsing, queue error mapping, HTTP handlers, and unit tests still live in one module; extract `dto`/`service`/`handlers` seams when safe
 - [ ] `crates/noti-providers/src/lib.rs` — `register_all_providers()` is a long manual registry list; consider a list-driven or macro-driven registration table to reduce drift risk as providers keep growing
+- [ ] `crates/noti-queue/benches/queue_throughput.rs` — `bench_enqueue` and `bench_enqueue_dequeue_roundtrip` recreate a `Runtime` on every benchmark iteration inside `b.iter()`; this adds setup cost to each sample and inflates wall-time; extract the runtime outside `b.iter()` using `b.to_async()` or a shared `#[tokio::main]`-style wrapper when criterion-tokio integration is added
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
