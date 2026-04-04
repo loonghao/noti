@@ -42,8 +42,13 @@ impl NotifyProvider for PushoverProvider {
             ParamDef::optional("device", "Target device name"),
             ParamDef::optional("priority", "Priority: -2 to 2 (default: 0)").with_example("1"),
             ParamDef::optional("sound", "Notification sound name").with_example("pushover"),
-            ParamDef::optional("retry", "Retry interval in seconds (required for priority=2)").with_example("60"),
-            ParamDef::optional("expire", "Expire time in seconds (required for priority=2)").with_example("3600"),
+            ParamDef::optional(
+                "retry",
+                "Retry interval in seconds (required for priority=2)",
+            )
+            .with_example("60"),
+            ParamDef::optional("expire", "Expire time in seconds (required for priority=2)")
+                .with_example("3600"),
             ParamDef::optional("url", "Supplementary URL"),
             ParamDef::optional("url_title", "URL title/description"),
             ParamDef::optional("ttl", "Message TTL in seconds"),

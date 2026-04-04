@@ -129,10 +129,7 @@ impl NotifyProvider for WebhookProvider {
                 "body_template",
                 "Custom JSON body template. Use {message} and {title} as placeholders",
             ),
-            ParamDef::optional(
-                "auth_type",
-                "Authentication type: bearer, basic, api_key",
-            ),
+            ParamDef::optional("auth_type", "Authentication type: bearer, basic, api_key"),
             ParamDef::optional("auth_token", "Authentication token/credentials"),
             ParamDef::optional("retry", "Number of retry attempts on failure").with_example("3"),
             ParamDef::optional("retry_delay", "Delay in seconds between retries").with_example("2"),
@@ -222,8 +219,7 @@ impl NotifyProvider for WebhookProvider {
                         .await
                         .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
 
-                    let raw_json: Option<serde_json::Value> =
-                        serde_json::from_str(&raw_text).ok();
+                    let raw_json: Option<serde_json::Value> = serde_json::from_str(&raw_text).ok();
 
                     if (200..300).contains(&(status as usize)) {
                         let mut resp =
@@ -248,15 +244,17 @@ impl NotifyProvider for WebhookProvider {
                 SendResponse::failure("webhook", format!("HTTP {status}: {raw_text}"))
                     .with_status_code(status)
             } else {
-                SendResponse::failure("webhook", raw_text.clone())
-                    .with_status_code(status)
+                SendResponse::failure("webhook", raw_text.clone()).with_status_code(status)
             };
             if let Some(raw) = raw_json {
                 resp = resp.with_raw_response(raw);
             }
             Ok(resp)
         } else {
-            Ok(SendResponse::failure("webhook", "unknown error".to_string()))
+            Ok(SendResponse::failure(
+                "webhook",
+                "unknown error".to_string(),
+            ))
         }
     }
 }

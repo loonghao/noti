@@ -265,10 +265,7 @@ impl NotifyProvider for TelegramProvider {
                 "disable_web_page_preview",
                 "Disable link previews (true/false)",
             ),
-            ParamDef::optional(
-                "thread_id",
-                "Message thread ID for supergroup topics",
-            ),
+            ParamDef::optional("thread_id", "Message thread ID for supergroup topics"),
             ParamDef::optional(
                 "protect",
                 "Protect content from forwarding/saving (true/false)",

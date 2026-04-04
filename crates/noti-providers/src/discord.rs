@@ -49,7 +49,10 @@ impl NotifyProvider for DiscordProvider {
             ParamDef::optional("embed_description", "Embed description text"),
             ParamDef::optional("embed_footer", "Embed footer text"),
             ParamDef::optional("embed_thumbnail", "Embed thumbnail URL"),
-            ParamDef::optional("embed_field", "Embed field (can be repeated, format: title:value)"),
+            ParamDef::optional(
+                "embed_field",
+                "Embed field (can be repeated, format: title:value)",
+            ),
         ]
     }
 
@@ -209,10 +212,7 @@ impl DiscordProvider {
                 embed.insert("footer".to_string(), json!({ "text": footer }));
             }
             if let Some(thumbnail) = config.get("embed_thumbnail") {
-                embed.insert(
-                    "thumbnail".to_string(),
-                    json!({ "url": thumbnail }),
-                );
+                embed.insert("thumbnail".to_string(), json!({ "url": thumbnail }));
             }
 
             // Parse embed fields (format: "title:value", can be repeated)

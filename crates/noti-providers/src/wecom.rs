@@ -51,11 +51,8 @@ impl NotifyProvider for WeComProvider {
                 "mentioned_mobile_list",
                 "Comma-separated mobile numbers to @mention",
             ),
-            ParamDef::optional(
-                "type",
-                "Message type: text, markdown, news, template_card",
-            )
-            .with_example("news"),
+            ParamDef::optional("type", "Message type: text, markdown, news, template_card")
+                .with_example("news"),
             ParamDef::optional("news_title", "News card title"),
             ParamDef::optional("news_desc", "News card description"),
             ParamDef::optional("news_url", "News card jump URL"),

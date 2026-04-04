@@ -59,15 +59,16 @@ impl NotifyProvider for FeishuProvider {
                 "app_secret",
                 "Feishu App Secret (required with app_id for uploads)",
             ),
-            ParamDef::optional(
-                "mention_user",
-                "User ID to @mention (ou_xxxxx format)",
-            ),
+            ParamDef::optional("mention_user", "User ID to @mention (ou_xxxxx format)"),
             ParamDef::optional("mention_all", "Mention all users (true/false)"),
-            ParamDef::optional("type", "Message type: text, post, interactive").with_example("interactive"),
+            ParamDef::optional("type", "Message type: text, post, interactive")
+                .with_example("interactive"),
             ParamDef::optional("card_title", "Interactive card title"),
             ParamDef::optional("card_text", "Interactive card content text"),
-            ParamDef::optional("card_btn", "Card button (format: label:url, can be repeated)"),
+            ParamDef::optional(
+                "card_btn",
+                "Card button (format: label:url, can be repeated)",
+            ),
             ParamDef::optional("card_json", "Raw card JSON for full control"),
         ]
     }
@@ -235,8 +236,7 @@ impl NotifyProvider for FeishuProvider {
             }
             _ => {
                 // Check for @mention first
-                if config.get("mention_user").is_some()
-                    || config.get("mention_all") == Some("true")
+                if config.get("mention_user").is_some() || config.get("mention_all") == Some("true")
                 {
                     Self::build_post_with_mention(message, config)
                 } else {
@@ -355,10 +355,7 @@ impl FeishuProvider {
     }
 
     /// Build a post message with optional @mention.
-    fn build_post_with_mention(
-        message: &Message,
-        config: &ProviderConfig,
-    ) -> serde_json::Value {
+    fn build_post_with_mention(message: &Message, config: &ProviderConfig) -> serde_json::Value {
         let title = message.title.as_deref().unwrap_or("Notification");
         let mut content: Vec<Vec<serde_json::Value>> = Vec::new();
 

@@ -49,13 +49,15 @@ impl NotifyProvider for SlackProvider {
                 "thread_ts",
                 "Thread reply ts (timestamp) to reply in a thread",
             ),
-            ParamDef::optional("ephemeral_user", "User ID for ephemeral message (visible only to that user)"),
-            ParamDef::optional("send_at", "Unix timestamp for scheduled message"),
             ParamDef::optional(
-                "blocks",
-                "Raw Block Kit JSON array for structured messages",
-            )
-            .with_example(r#"[{"type":"section","text":{"type":"mrkdwn","text":"*Build passed*"}}]"#),
+                "ephemeral_user",
+                "User ID for ephemeral message (visible only to that user)",
+            ),
+            ParamDef::optional("send_at", "Unix timestamp for scheduled message"),
+            ParamDef::optional("blocks", "Raw Block Kit JSON array for structured messages")
+                .with_example(
+                    r#"[{"type":"section","text":{"type":"mrkdwn","text":"*Build passed*"}}]"#,
+                ),
         ]
     }
 

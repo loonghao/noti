@@ -178,10 +178,9 @@ impl DingTalkProvider {
         });
 
         // Single button actionCard
-        if let (Some(btn_title), Some(btn_url)) = (
-            config.get("card_single_btn"),
-            config.get("card_single_url"),
-        ) {
+        if let (Some(btn_title), Some(btn_url)) =
+            (config.get("card_single_btn"), config.get("card_single_url"))
+        {
             action_card["singleTitle"] = json!(btn_title);
             action_card["singleURL"] = json!(btn_url);
         } else if let Some(btns) = config.get("card_btn") {
@@ -243,10 +242,7 @@ impl DingTalkProvider {
 
         // Fallback: use message title and text
         if links.is_empty() {
-            let title = message
-                .title
-                .as_deref()
-                .unwrap_or("Notification");
+            let title = message.title.as_deref().unwrap_or("Notification");
             links.push(json!({
                 "title": title,
                 "messageURL": "",
@@ -334,13 +330,19 @@ impl NotifyProvider for DingTalkProvider {
                 "app_secret",
                 "DingTalk App Secret (required with app_key for uploads)",
             ),
-            ParamDef::optional("mention_mobile", "Mobile number to @mention (can be repeated)"),
+            ParamDef::optional(
+                "mention_mobile",
+                "Mobile number to @mention (can be repeated)",
+            ),
             ParamDef::optional("mention_user", "User ID to @mention (can be repeated)"),
             ParamDef::optional("mention_all", "Mention all users (true/false)"),
             ParamDef::optional("type", "Message type: text, markdown, actionCard, feedCard"),
             ParamDef::optional("card_title", "ActionCard/FeedCard title"),
             ParamDef::optional("card_text", "ActionCard content text"),
-            ParamDef::optional("card_btn", "ActionCard button (format: label:url, can be repeated)"),
+            ParamDef::optional(
+                "card_btn",
+                "ActionCard button (format: label:url, can be repeated)",
+            ),
             ParamDef::optional("card_single_btn", "Single button title:url for actionCard"),
             ParamDef::optional("card_single_url", "Single button jump URL"),
             ParamDef::optional(
