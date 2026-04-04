@@ -51,6 +51,24 @@ impl NotifyProvider for WeComProvider {
                 "mentioned_mobile_list",
                 "Comma-separated mobile numbers to @mention",
             ),
+            ParamDef::optional(
+                "type",
+                "Message type: text, markdown, news, template_card",
+            )
+            .with_example("news"),
+            ParamDef::optional("news_title", "News card title"),
+            ParamDef::optional("news_desc", "News card description"),
+            ParamDef::optional("news_url", "News card jump URL"),
+            ParamDef::optional("news_picurl", "News card image URL"),
+            ParamDef::optional(
+                "card_type",
+                "Template card type: text_notice or news_notice",
+            )
+            .with_example("text_notice"),
+            ParamDef::optional("card_title", "Template card main title"),
+            ParamDef::optional("card_desc", "Template card description"),
+            ParamDef::optional("card_jump_url", "Template card jump URL"),
+            ParamDef::optional("card_jump_title", "Template card jump button title"),
         ]
     }
 
@@ -66,6 +84,85 @@ impl NotifyProvider for WeComProvider {
         self.validate_config(config)?;
         let key = config.require("key", "wecom")?;
         let url = Self::build_webhook_url(key);
+
+        // Handle news message type
+        if config.get("type") == Some("news") {
+            let title = config
+                .get("news_title")
+                .or(message.title.as_deref())
+                .unwrap_or("Notification");
+            let mut article = json!({
+                "title": title,
+                "url": config.get("news_url").unwrap_or(""),
+            });
+            if let Some(desc) = config.get("news_desc") {
+                article["description"] = json!(desc);
+            } else if !message.text.is_empty() {
+                article["description"] = json!(message.text);
+            }
+            if let Some(picurl) = config.get("news_picurl") {
+                article["picurl"] = json!(picurl);
+            }
+
+            let body = json!({
+                "msgtype": "news",
+                "news": {
+                    "articles": [article]
+                }
+            });
+
+            let resp = self
+                .client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
+
+        // Handle template_card message type
+        if config.get("type") == Some("template_card") {
+            let card_type = config.get("card_type").unwrap_or("text_notice");
+            let title = config
+                .get("card_title")
+                .or(message.title.as_deref())
+                .unwrap_or("Notification");
+            let desc = config.get("card_desc").unwrap_or(&message.text);
+
+            let mut card = json!({
+                "card_type": card_type,
+                "main_title": {
+                    "title": title,
+                    "desc": desc
+                }
+            });
+
+            if let Some(jump_url) = config.get("card_jump_url") {
+                let jump_title = config.get("card_jump_title").unwrap_or("View Details");
+                card["card_action"] = json!({
+                    "type": 1,
+                    "url": jump_url,
+                    "title": jump_title
+                });
+            }
+
+            let body = json!({
+                "msgtype": "template_card",
+                "template_card": card
+            });
+
+            let resp = self
+                .client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| NotiError::Network(e.to_string()))?;
+
+            return Self::parse_response(resp).await;
+        }
 
         // If has image attachment, try sending as image message
         if let Some(img) = message.first_image() {

@@ -51,6 +51,11 @@ impl NotifyProvider for SlackProvider {
             ),
             ParamDef::optional("ephemeral_user", "User ID for ephemeral message (visible only to that user)"),
             ParamDef::optional("send_at", "Unix timestamp for scheduled message"),
+            ParamDef::optional(
+                "blocks",
+                "Raw Block Kit JSON array for structured messages",
+            )
+            .with_example(r#"[{"type":"section","text":{"type":"mrkdwn","text":"*Build passed*"}}]"#),
         ]
     }
 
@@ -101,7 +106,17 @@ impl NotifyProvider for SlackProvider {
                 })
             }
             _ => {
-                json!({ "text": message.text })
+                // Check for raw blocks JSON
+                if let Some(blocks_json) = config.get("blocks") {
+                    let blocks: serde_json::Value = serde_json::from_str(blocks_json)
+                        .map_err(|e| NotiError::Validation(format!("invalid blocks JSON: {e}")))?;
+                    json!({
+                        "text": message.text,
+                        "blocks": blocks
+                    })
+                } else {
+                    json!({ "text": message.text })
+                }
             }
         };
 
