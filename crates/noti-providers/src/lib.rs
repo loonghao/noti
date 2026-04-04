@@ -135,8 +135,26 @@ static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 /// Register all built-in notification providers into the given registry.
 pub fn register_all_providers(registry: &mut ProviderRegistry) {
     let client: &Client = &HTTP_CLIENT;
+    register_chat_im_providers(registry, client);
+    register_gaming_community_providers(registry, client);
+    register_social_providers(registry, client);
+    register_push_notification_providers(registry, client);
+    register_automation_incident_providers(registry, client);
+    register_sms_providers(registry, client);
+    register_email_providers(registry, client);
+    register_webhook_providers(registry, client);
+    register_home_automation_providers(registry, client);
+    register_media_cloud_providers(registry, client);
+    register_secure_messaging_providers(registry, client);
+    register_misc_providers(registry, client);
+    register_iteration_7_providers(registry, client);
+    register_iteration_8_providers(registry, client);
+    register_iteration_9_providers(registry, client);
+    register_iteration_10_providers(registry, client);
+}
 
-    // Chat / IM providers (20)
+// Category: Chat / IM providers (20)
+fn register_chat_im_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(wecom::WeComProvider::new(client.clone())));
     registry.register(Arc::new(feishu::FeishuProvider::new(client.clone())));
     registry.register(Arc::new(dingtalk::DingTalkProvider::new(client.clone())));
@@ -157,15 +175,21 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(twist::TwistProvider::new(client.clone())));
     registry.register(Arc::new(flock::FlockProvider::new(client.clone())));
     registry.register(Arc::new(gitter::GitterProvider::new(client.clone())));
+}
 
-    // Gaming / community chat (2)
+// Category: Gaming / community chat (2)
+fn register_gaming_community_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(guilded::GuildedProvider::new(client.clone())));
     registry.register(Arc::new(misskey::MisskeyProvider::new(client.clone())));
+}
 
-    // Social networks (1)
+// Category: Social networks (1)
+fn register_social_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(bluesky::BlueskyProvider::new(client.clone())));
+}
 
-    // Push notification providers (20)
+// Category: Push notification providers (20)
+fn register_push_notification_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(pushover::PushoverProvider::new(client.clone())));
     registry.register(Arc::new(ntfy::NtfyProvider::new(client.clone())));
     registry.register(Arc::new(gotify::GotifyProvider::new(client.clone())));
@@ -186,8 +210,10 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(wxpusher::WxPusherProvider::new(client.clone())));
     registry.register(Arc::new(fcm::FcmProvider::new(client.clone())));
     registry.register(Arc::new(pushjet::PushjetProvider::new(client.clone())));
+}
 
-    // Automation & incident platforms (7)
+// Category: Automation & incident platforms (7)
+fn register_automation_incident_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(ifttt::IftttProvider::new(client.clone())));
     registry.register(Arc::new(pagerduty::PagerDutyProvider::new(client.clone())));
     registry.register(Arc::new(opsgenie::OpsgenieProvider::new(client.clone())));
@@ -195,8 +221,10 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(signl4::Signl4Provider::new(client.clone())));
     registry.register(Arc::new(victorops::VictorOpsProvider::new(client.clone())));
     registry.register(Arc::new(spike::SpikeProvider::new(client.clone())));
+}
 
-    // SMS providers (17)
+// Category: SMS providers (17)
+fn register_sms_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(twilio::TwilioProvider::new(client.clone())));
     registry.register(Arc::new(vonage::VonageProvider::new(client.clone())));
     registry.register(Arc::new(d7networks::D7NetworksProvider::new(client.clone())));
@@ -214,8 +242,10 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(httpsms::HttpSmsProvider::new(client.clone())));
     registry.register(Arc::new(msg91::Msg91Provider::new(client.clone())));
     registry.register(Arc::new(freemobile::FreeMobileProvider::new(client.clone())));
+}
 
-    // Email providers (8)
+// Category: Email providers (8)
+fn register_email_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(email::EmailProvider::new()));
     registry.register(Arc::new(mailgun::MailgunProvider::new(client.clone())));
     registry.register(Arc::new(sendgrid::SendGridProvider::new(client.clone())));
@@ -224,38 +254,43 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(resend::ResendProvider::new(client.clone())));
     registry.register(Arc::new(brevo::BrevoProvider::new(client.clone())));
     registry.register(Arc::new(smtp2go::Smtp2GoProvider::new(client.clone())));
+}
 
-    // AWS cloud providers (1)
-    registry.register(Arc::new(sns::SnsProvider::new(client.clone())));
-
-    // Generic webhook variants (4)
+// Category: Webhook providers (4)
+fn register_webhook_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(webhook::WebhookProvider::new(client.clone())));
     registry.register(Arc::new(json_webhook::JsonWebhookProvider::new(client.clone())));
     registry.register(Arc::new(form_webhook::FormWebhookProvider::new(client.clone())));
     registry.register(Arc::new(xml_webhook::XmlWebhookProvider::new(client.clone())));
+}
 
-    // Home automation & IoT (2)
+// Category: Home automation & IoT (2)
+fn register_home_automation_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(homeassistant::HomeAssistantProvider::new(client.clone())));
     registry.register(Arc::new(lametric::LaMetricProvider::new(client.clone())));
+}
 
-    // Self-hosted media / cloud (2)
+// Category: Self-hosted media / cloud (2)
+fn register_media_cloud_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(lunasea::LunaseaProvider::new(client.clone())));
     registry.register(Arc::new(nextcloud::NextcloudProvider::new(client.clone())));
+}
 
-    // Secure messaging (2)
+// Category: Secure messaging (2)
+fn register_secure_messaging_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(threema::ThreemaProvider::new(client.clone())));
     registry.register(Arc::new(signal::SignalProvider::new(client.clone())));
+}
 
-    // Messaging / Social (1)
+// Category: Misc (3)
+fn register_misc_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(reddit::RedditProvider::new(client.clone())));
-
-    // Relay / aggregation (1)
     registry.register(Arc::new(apprise::AppriseProvider::new(client.clone())));
-
-    // Browser push (1)
     registry.register(Arc::new(webpush::WebPushProvider::new(client.clone())));
+}
 
-    // New providers — Iteration 7 (13)
+// Category: New providers — Iteration 7 (13)
+fn register_iteration_7_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(whatsapp::WhatsAppProvider::new(client.clone())));
     registry.register(Arc::new(kodi::KodiProvider::new(client.clone())));
     registry.register(Arc::new(notifico::NotificoProvider::new(client.clone())));
@@ -269,8 +304,10 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(africas_talking::AfricasTalkingProvider::new(client.clone())));
     registry.register(Arc::new(o365::O365Provider::new(client.clone())));
     registry.register(Arc::new(nctalk::NcTalkProvider::new(client.clone())));
+}
 
-    // New providers — Iteration 8 (13)
+// Category: New providers — Iteration 8 (13)
+fn register_iteration_8_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(emby::EmbyProvider::new(client.clone())));
     registry.register(Arc::new(jellyfin::JellyfinProvider::new(client.clone())));
     registry.register(Arc::new(pushcut::PushcutProvider::new(client.clone())));
@@ -284,15 +321,19 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(rsyslog::RsyslogProvider::new(client.clone())));
     registry.register(Arc::new(smsmanager::SmsManagerProvider::new(client.clone())));
     registry.register(Arc::new(twitter::TwitterProvider::new(client.clone())));
+}
 
-    // New providers — Iteration 9 (5)
+// Category: New providers — Iteration 9 (5)
+fn register_iteration_9_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(boxcar::BoxcarProvider::new(client.clone())));
     registry.register(Arc::new(dapnet::DapnetProvider::new(client.clone())));
     registry.register(Arc::new(enigma2::Enigma2Provider::new(client.clone())));
     registry.register(Arc::new(notifiarr::NotifiarrProvider::new(client.clone())));
     registry.register(Arc::new(statuspage::StatuspageProvider::new(client.clone())));
+}
 
-    // New providers — Iteration 10 (5)
+// Category: New providers — Iteration 10 (5)
+fn register_iteration_10_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(dot::DotProvider::new(client.clone())));
     registry.register(Arc::new(fluxer::FluxerProvider::new(client.clone())));
     registry.register(Arc::new(workflows::WorkflowsProvider::new(client.clone())));
