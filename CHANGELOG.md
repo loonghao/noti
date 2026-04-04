@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/loonghao/noti/compare/v0.1.8...v0.1.9) (2026-04-04)
+
+
+### Features
+
+* **providers:** enhance all providers with new features from issues ([#42](https://github.com/loonghao/noti/issues/42)) ([5dde218](https://github.com/loonghao/noti/commit/5dde218d2c492e751955044f1800f627133bfcb6))
+
 ## [0.1.8](https://github.com/loonghao/noti/compare/v0.1.7...v0.1.8) (2026-04-03)
 
 
