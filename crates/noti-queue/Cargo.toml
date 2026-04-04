@@ -25,5 +25,10 @@ utoipa = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 rstest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[[bench]]
+name = "queue_throughput"
+harness = false
