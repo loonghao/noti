@@ -134,9 +134,7 @@ static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 /// Register all built-in notification providers into the given registry.
 pub fn register_all_providers(registry: &mut ProviderRegistry) {
-    // Dereference LazyLock to get Client reference
-    #[allow(clippy::explicit_auto_deref)]
-    let client: &Client = &*HTTP_CLIENT;
+    let client: &Client = &HTTP_CLIENT;
 
     // Chat / IM providers (20)
     registry.register(Arc::new(wecom::WeComProvider::new(client.clone())));
