@@ -127,10 +127,16 @@ pub mod zulip;
 use noti_core::ProviderRegistry;
 use reqwest::Client;
 use std::sync::Arc;
+use std::sync::LazyLock;
+
+/// Shared HTTP client for all providers (created once, reused)
+static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 /// Register all built-in notification providers into the given registry.
 pub fn register_all_providers(registry: &mut ProviderRegistry) {
-    let client = Client::new();
+    // Dereference LazyLock to get Client reference
+    #[allow(clippy::explicit_auto_deref)]
+    let client: &Client = &*HTTP_CLIENT;
 
     // Chat / IM providers (20)
     registry.register(Arc::new(wecom::WeComProvider::new(client.clone())));
@@ -140,15 +146,9 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(telegram::TelegramProvider::new(client.clone())));
     registry.register(Arc::new(discord::DiscordProvider::new(client.clone())));
     registry.register(Arc::new(teams::TeamsProvider::new(client.clone())));
-    registry.register(Arc::new(googlechat::GoogleChatProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(mattermost::MattermostProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(rocketchat::RocketChatProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(googlechat::GoogleChatProvider::new(client.clone())));
+    registry.register(Arc::new(mattermost::MattermostProvider::new(client.clone())));
+    registry.register(Arc::new(rocketchat::RocketChatProvider::new(client.clone())));
     registry.register(Arc::new(matrix::MatrixProvider::new(client.clone())));
     registry.register(Arc::new(zulip::ZulipProvider::new(client.clone())));
     registry.register(Arc::new(webex::WebexProvider::new(client.clone())));
@@ -173,15 +173,9 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(gotify::GotifyProvider::new(client.clone())));
     registry.register(Arc::new(bark::BarkProvider::new(client.clone())));
     registry.register(Arc::new(pushdeer::PushDeerProvider::new(client.clone())));
-    registry.register(Arc::new(serverchan::ServerChanProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(pushbullet::PushBulletProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(simplepush::SimplePushProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(serverchan::ServerChanProvider::new(client.clone())));
+    registry.register(Arc::new(pushbullet::PushBulletProvider::new(client.clone())));
+    registry.register(Arc::new(simplepush::SimplePushProvider::new(client.clone())));
     registry.register(Arc::new(notica::NoticaProvider::new(client.clone())));
     registry.register(Arc::new(prowl::ProwlProvider::new(client.clone())));
     registry.register(Arc::new(join::JoinProvider::new(client.clone())));
@@ -207,18 +201,12 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     // SMS providers (17)
     registry.register(Arc::new(twilio::TwilioProvider::new(client.clone())));
     registry.register(Arc::new(vonage::VonageProvider::new(client.clone())));
-    registry.register(Arc::new(d7networks::D7NetworksProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(d7networks::D7NetworksProvider::new(client.clone())));
     registry.register(Arc::new(sinch::SinchProvider::new(client.clone())));
-    registry.register(Arc::new(clickatell::ClickatellProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(clickatell::ClickatellProvider::new(client.clone())));
     registry.register(Arc::new(bulksms::BulkSmsProvider::new(client.clone())));
     registry.register(Arc::new(kavenegar::KavenegarProvider::new(client.clone())));
-    registry.register(Arc::new(messagebird::MessageBirdProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(messagebird::MessageBirdProvider::new(client.clone())));
     registry.register(Arc::new(plivo::PlivoProvider::new(client.clone())));
     registry.register(Arc::new(burstsms::BurstSmsProvider::new(client.clone())));
     registry.register(Arc::new(popcorn::PopcornProvider::new(client.clone())));
@@ -227,9 +215,7 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(smseagle::SmsEagleProvider::new(client.clone())));
     registry.register(Arc::new(httpsms::HttpSmsProvider::new(client.clone())));
     registry.register(Arc::new(msg91::Msg91Provider::new(client.clone())));
-    registry.register(Arc::new(freemobile::FreeMobileProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(freemobile::FreeMobileProvider::new(client.clone())));
 
     // Email providers (8)
     registry.register(Arc::new(email::EmailProvider::new()));
@@ -246,20 +232,12 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
 
     // Generic webhook variants (4)
     registry.register(Arc::new(webhook::WebhookProvider::new(client.clone())));
-    registry.register(Arc::new(json_webhook::JsonWebhookProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(form_webhook::FormWebhookProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(xml_webhook::XmlWebhookProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(json_webhook::JsonWebhookProvider::new(client.clone())));
+    registry.register(Arc::new(form_webhook::FormWebhookProvider::new(client.clone())));
+    registry.register(Arc::new(xml_webhook::XmlWebhookProvider::new(client.clone())));
 
     // Home automation & IoT (2)
-    registry.register(Arc::new(homeassistant::HomeAssistantProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(homeassistant::HomeAssistantProvider::new(client.clone())));
     registry.register(Arc::new(lametric::LaMetricProvider::new(client.clone())));
 
     // Self-hosted media / cloud (2)
@@ -280,94 +258,46 @@ pub fn register_all_providers(registry: &mut ProviderRegistry) {
     registry.register(Arc::new(webpush::WebPushProvider::new(client.clone())));
 
     // New providers — Iteration 7 (13)
-    // WhatsApp Business Cloud API
     registry.register(Arc::new(whatsapp::WhatsAppProvider::new(client.clone())));
-    // Kodi (XBMC) JSON-RPC notifications
     registry.register(Arc::new(kodi::KodiProvider::new(client.clone())));
-    // Notifico self-hosted notification service
     registry.register(Arc::new(notifico::NotificoProvider::new(client.clone())));
-    // 46elks SMS
-    registry.register(Arc::new(fortysixelks::FortySixElksProvider::new(
-        client.clone(),
-    )));
-    // BulkVS SMS
+    registry.register(Arc::new(fortysixelks::FortySixElksProvider::new(client.clone())));
     registry.register(Arc::new(bulkvs::BulkVsProvider::new(client.clone())));
-    // Jira issue comments
     registry.register(Arc::new(jira::JiraProvider::new(client.clone())));
-    // PushMe push notifications
     registry.register(Arc::new(pushme::PushMeProvider::new(client.clone())));
-    // SendPulse transactional email
     registry.register(Arc::new(sendpulse::SendPulseProvider::new(client.clone())));
-    // Streamlabs alerts
-    registry.register(Arc::new(streamlabs::StreamlabsProvider::new(
-        client.clone(),
-    )));
-    // Synology Chat webhook
+    registry.register(Arc::new(streamlabs::StreamlabsProvider::new(client.clone())));
     registry.register(Arc::new(synology::SynologyProvider::new(client.clone())));
-    // Africa's Talking SMS
-    registry.register(Arc::new(africas_talking::AfricasTalkingProvider::new(
-        client.clone(),
-    )));
-    // Office 365 / Outlook via Microsoft Graph
+    registry.register(Arc::new(africas_talking::AfricasTalkingProvider::new(client.clone())));
     registry.register(Arc::new(o365::O365Provider::new(client.clone())));
-    // Nextcloud Talk chat
     registry.register(Arc::new(nctalk::NcTalkProvider::new(client.clone())));
 
     // New providers — Iteration 8 (13)
-    // Emby media server notifications
     registry.register(Arc::new(emby::EmbyProvider::new(client.clone())));
-    // Jellyfin media server notifications
     registry.register(Arc::new(jellyfin::JellyfinProvider::new(client.clone())));
-    // Pushcut iOS automation notifications
     registry.register(Arc::new(pushcut::PushcutProvider::new(client.clone())));
-    // MQTT publish via broker HTTP API
     registry.register(Arc::new(mqtt::MqttProvider::new(client.clone())));
-    // VoIP.ms SMS messaging
     registry.register(Arc::new(voipms::VoipMsProvider::new(client.clone())));
-    // SFR SMS (French carrier)
     registry.register(Arc::new(sfr::SfrProvider::new(client.clone())));
-    // Pushed.co push notifications
     registry.register(Arc::new(pushed::PushedProvider::new(client.clone())));
-    // Growl desktop notifications via GNTP
     registry.register(Arc::new(growl::GrowlProvider::new(client.clone())));
-    // Kumulos push notifications
     registry.register(Arc::new(kumulos::KumulosProvider::new(client.clone())));
-    // Parse Platform push notifications
     registry.register(Arc::new(parse::ParseProvider::new(client.clone())));
-    // Remote Syslog via HTTP relay
     registry.register(Arc::new(rsyslog::RsyslogProvider::new(client.clone())));
-    // SMS Manager
-    registry.register(Arc::new(smsmanager::SmsManagerProvider::new(
-        client.clone(),
-    )));
-    // X (Twitter) tweets/DMs
+    registry.register(Arc::new(smsmanager::SmsManagerProvider::new(client.clone())));
     registry.register(Arc::new(twitter::TwitterProvider::new(client.clone())));
 
     // New providers — Iteration 9 (5)
-    // Boxcar iOS/Android push notifications
     registry.register(Arc::new(boxcar::BoxcarProvider::new(client.clone())));
-    // DAPNET ham radio paging network
     registry.register(Arc::new(dapnet::DapnetProvider::new(client.clone())));
-    // Enigma2 satellite receiver on-screen notifications
     registry.register(Arc::new(enigma2::Enigma2Provider::new(client.clone())));
-    // Notifiarr media server notification aggregation
     registry.register(Arc::new(notifiarr::NotifiarrProvider::new(client.clone())));
-    // Atlassian Statuspage.io incident management
-    registry.register(Arc::new(statuspage::StatuspageProvider::new(
-        client.clone(),
-    )));
+    registry.register(Arc::new(statuspage::StatuspageProvider::new(client.clone())));
 
     // New providers — Iteration 10 (5)
-    // Dot. IoT e-ink display notifications
     registry.register(Arc::new(dot::DotProvider::new(client.clone())));
-    // Fluxer webhook notifications (Discord-style)
     registry.register(Arc::new(fluxer::FluxerProvider::new(client.clone())));
-    // Microsoft Power Automate / Workflows (Adaptive Cards)
     registry.register(Arc::new(workflows::WorkflowsProvider::new(client.clone())));
-    // NotificationAPI multi-channel notifications
-    registry.register(Arc::new(notification_api::NotificationApiProvider::new(
-        client.clone(),
-    )));
-    // SpugPush webhook notifications (Spug monitoring)
-    registry.register(Arc::new(spugpush::SpugPushProvider::new(client)));
+    registry.register(Arc::new(notification_api::NotificationApiProvider::new(client.clone())));
+    registry.register(Arc::new(spugpush::SpugPushProvider::new(client.clone())));
 }
