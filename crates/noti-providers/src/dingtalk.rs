@@ -158,6 +158,145 @@ impl DingTalkProvider {
             )
         }
     }
+
+    /// Send an actionCard message.
+    async fn send_action_card(
+        &self,
+        message: &Message,
+        config: &ProviderConfig,
+        url: &str,
+    ) -> Result<SendResponse, NotiError> {
+        let title = config
+            .get("card_title")
+            .or(message.title.as_deref())
+            .unwrap_or("Notification");
+        let text = config.get("card_text").unwrap_or(&message.text);
+
+        let mut action_card = json!({
+            "title": title,
+            "text": text
+        });
+
+        // Single button actionCard
+        if let (Some(btn_title), Some(btn_url)) =
+            (config.get("card_single_btn"), config.get("card_single_url"))
+        {
+            action_card["singleTitle"] = json!(btn_title);
+            action_card["singleURL"] = json!(btn_url);
+        } else if let Some(btns) = config.get("card_btn") {
+            // Multi-button actionCard
+            let mut btns_array = Vec::new();
+            for btn in btns.split(',') {
+                let btn = btn.trim();
+                if let Some((label, jump_url)) = btn.split_once(':') {
+                    btns_array.push(json!({
+                        "title": label.trim(),
+                        "actionURL": jump_url.trim()
+                    }));
+                }
+            }
+            if !btns_array.is_empty() {
+                action_card["btns"] = json!(btns_array);
+                action_card["btnOrientation"] = json!("1");
+            }
+        }
+
+        let mut body = json!({
+            "msgtype": "actionCard",
+            "actionCard": action_card
+        });
+        body = Self::add_mention_to_body(body, config);
+
+        let resp = self
+            .client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
+
+    /// Send a feedCard message.
+    async fn send_feed_card(
+        &self,
+        message: &Message,
+        config: &ProviderConfig,
+        url: &str,
+    ) -> Result<SendResponse, NotiError> {
+        let mut links = Vec::new();
+
+        if let Some(items) = config.get("feed_items") {
+            for item in items.split(',') {
+                let item = item.trim();
+                if let Some((item_title, item_url)) = item.split_once(':') {
+                    links.push(json!({
+                        "title": item_title.trim(),
+                        "messageURL": item_url.trim(),
+                        "picURL": ""
+                    }));
+                }
+            }
+        }
+
+        // Fallback: use message title and text
+        if links.is_empty() {
+            let title = message.title.as_deref().unwrap_or("Notification");
+            links.push(json!({
+                "title": title,
+                "messageURL": "",
+                "picURL": ""
+            }));
+        }
+
+        let body = json!({
+            "msgtype": "feedCard",
+            "feedCard": {
+                "links": links
+            }
+        });
+
+        let resp = self
+            .client
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
+
+    /// Add @mention parameters to the request body.
+    fn add_mention_to_body(
+        mut body: serde_json::Value,
+        config: &ProviderConfig,
+    ) -> serde_json::Value {
+        let mut at = serde_json::Map::new();
+
+        if let Some(mobiles_str) = config.get("mention_mobile") {
+            let mobiles: Vec<&str> = mobiles_str.split(',').map(|s| s.trim()).collect();
+            at.insert("atMobiles".to_string(), json!(mobiles));
+        }
+
+        if let Some(users_str) = config.get("mention_user") {
+            let users: Vec<&str> = users_str.split(',').map(|s| s.trim()).collect();
+            at.insert("atUserIds".to_string(), json!(users));
+        }
+
+        if config.get("mention_all") == Some("true") {
+            at.insert("isAtAll".to_string(), json!(true));
+        }
+
+        if !at.is_empty() {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("at".to_string(), json!(at));
+            }
+        }
+
+        body
+    }
 }
 
 #[async_trait]
@@ -191,6 +330,25 @@ impl NotifyProvider for DingTalkProvider {
                 "app_secret",
                 "DingTalk App Secret (required with app_key for uploads)",
             ),
+            ParamDef::optional(
+                "mention_mobile",
+                "Mobile number to @mention (can be repeated)",
+            ),
+            ParamDef::optional("mention_user", "User ID to @mention (can be repeated)"),
+            ParamDef::optional("mention_all", "Mention all users (true/false)"),
+            ParamDef::optional("type", "Message type: text, markdown, actionCard, feedCard"),
+            ParamDef::optional("card_title", "ActionCard/FeedCard title"),
+            ParamDef::optional("card_text", "ActionCard content text"),
+            ParamDef::optional(
+                "card_btn",
+                "ActionCard button (format: label:url, can be repeated)",
+            ),
+            ParamDef::optional("card_single_btn", "Single button title:url for actionCard"),
+            ParamDef::optional("card_single_url", "Single button jump URL"),
+            ParamDef::optional(
+                "feed_items",
+                "FeedCard items (format: title:url, can be repeated)",
+            ),
         ]
     }
 
@@ -207,6 +365,19 @@ impl NotifyProvider for DingTalkProvider {
         let access_token = config.require("access_token", "dingtalk")?;
         let url = Self::build_url(access_token, config.get("secret"));
 
+        // Check for structured actionCard or feedCard
+        if let Some(msg_type) = config.get("type") {
+            match msg_type {
+                "actionCard" => {
+                    return self.send_action_card(message, config, &url).await;
+                }
+                "feedCard" => {
+                    return self.send_feed_card(message, config, &url).await;
+                }
+                _ => {}
+            }
+        }
+
         // If there's an image attachment and app credentials, upload via API
         if let Some(img) = message.first_image() {
             if let (Some(app_key), Some(app_secret)) =
@@ -222,13 +393,14 @@ impl NotifyProvider for DingTalkProvider {
                     message.text, media_id
                 );
 
-                let body = json!({
+                let mut body = json!({
                     "msgtype": "markdown",
                     "markdown": {
                         "title": title,
                         "text": md_text
                     }
                 });
+                body = Self::add_mention_to_body(body, config);
 
                 let resp = self
                     .client
@@ -249,13 +421,14 @@ impl NotifyProvider for DingTalkProvider {
                 message.text
             );
 
-            let body = json!({
+            let mut body = json!({
                 "msgtype": "markdown",
                 "markdown": {
                     "title": title,
                     "text": md_text
                 }
             });
+            body = Self::add_mention_to_body(body, config);
 
             let resp = self
                 .client
@@ -309,21 +482,23 @@ impl NotifyProvider for DingTalkProvider {
         let body = match message.format {
             MessageFormat::Markdown => {
                 let title = message.title.as_deref().unwrap_or("Notification");
-                json!({
+                let payload = json!({
                     "msgtype": "markdown",
                     "markdown": {
                         "title": title,
                         "text": message.text
                     }
-                })
+                });
+                Self::add_mention_to_body(payload, config)
             }
             _ => {
-                json!({
+                let payload = json!({
                     "msgtype": "text",
                     "text": {
                         "content": message.text
                     }
-                })
+                });
+                Self::add_mention_to_body(payload, config)
             }
         };
 

@@ -47,6 +47,12 @@ impl TelegramProvider {
         if config.get("disable_web_page_preview") == Some("true") {
             payload["disable_web_page_preview"] = json!(true);
         }
+        if let Some(thread_id) = config.get("thread_id") {
+            payload["message_thread_id"] = json!(thread_id);
+        }
+        if config.get("protect") == Some("true") {
+            payload["protect_content"] = json!(true);
+        }
 
         let resp = self
             .client
@@ -111,6 +117,12 @@ impl TelegramProvider {
             if config.get("disable_notification") == Some("true") {
                 form = form.text("disable_notification", "true".to_string());
             }
+            if let Some(thread_id) = config.get("thread_id") {
+                form = form.text("message_thread_id", thread_id.to_string());
+            }
+            if config.get("protect") == Some("true") {
+                form = form.text("protect_content", "true".to_string());
+            }
 
             let resp = self
                 .client
@@ -157,6 +169,72 @@ impl TelegramProvider {
             )
         }
     }
+
+    /// Send a chat action (typing, upload_photo, etc.) via sendChatAction.
+    async fn send_chat_action(
+        &self,
+        bot_token: &str,
+        chat_id: &str,
+        action: &str,
+    ) -> Result<SendResponse, NotiError> {
+        let url = format!("https://api.telegram.org/bot{bot_token}/sendChatAction");
+        let payload = json!({
+            "chat_id": chat_id,
+            "action": action,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
+
+    /// Edit an existing message in-place via editMessageText.
+    async fn edit_message(
+        &self,
+        message: &Message,
+        bot_token: &str,
+        chat_id: &str,
+        message_id: &str,
+        _config: &ProviderConfig,
+    ) -> Result<SendResponse, NotiError> {
+        let url = format!("https://api.telegram.org/bot{bot_token}/editMessageText");
+
+        let parse_mode = match message.format {
+            MessageFormat::Markdown => Some("MarkdownV2"),
+            MessageFormat::Html => Some("HTML"),
+            MessageFormat::Text => None,
+        };
+
+        let msg_id: i64 = message_id
+            .parse()
+            .map_err(|_| NotiError::Validation(format!("invalid message_id: {message_id}")))?;
+
+        let mut payload = json!({
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "text": message.text,
+        });
+
+        if let Some(mode) = parse_mode {
+            payload["parse_mode"] = json!(mode);
+        }
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| NotiError::Network(e.to_string()))?;
+
+        Self::parse_response(resp).await
+    }
 }
 
 #[async_trait]
@@ -187,6 +265,21 @@ impl NotifyProvider for TelegramProvider {
                 "disable_web_page_preview",
                 "Disable link previews (true/false)",
             ),
+            ParamDef::optional("thread_id", "Message thread ID for supergroup topics"),
+            ParamDef::optional(
+                "protect",
+                "Protect content from forwarding/saving (true/false)",
+            ),
+            ParamDef::optional(
+                "action",
+                "Chat action to send (typing, upload_photo, upload_document, etc.)",
+            )
+            .with_example("typing"),
+            ParamDef::optional(
+                "edit_message_id",
+                "Edit an existing message by its message ID (in-place update)",
+            )
+            .with_example("12345"),
         ]
     }
 
@@ -202,6 +295,18 @@ impl NotifyProvider for TelegramProvider {
         self.validate_config(config)?;
         let bot_token = config.require("bot_token", "telegram")?;
         let chat_id = config.require("chat_id", "telegram")?;
+
+        // Handle sendChatAction (typing indicators, etc.)
+        if let Some(action) = config.get("action") {
+            return self.send_chat_action(bot_token, chat_id, action).await;
+        }
+
+        // Handle editMessageText (in-place update)
+        if let Some(message_id) = config.get("edit_message_id") {
+            return self
+                .edit_message(message, bot_token, chat_id, message_id, config)
+                .await;
+        }
 
         if message.has_attachments() {
             self.send_attachment(message, bot_token, chat_id, config)
