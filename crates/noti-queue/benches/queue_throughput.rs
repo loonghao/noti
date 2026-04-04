@@ -15,10 +15,6 @@ use noti_core::{Message, Priority, ProviderConfig};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
-fn runtime() -> Runtime {
-    Runtime::new().expect("create runtime")
-}
-
 /// Create a minimal NotificationTask for benchmarking.
 fn make_task(provider: &str, priority: Priority) -> NotificationTask {
     let msg = Message::text("benchmark task").with_priority(priority);
@@ -26,15 +22,23 @@ fn make_task(provider: &str, priority: Priority) -> NotificationTask {
 }
 
 fn bench_enqueue(c: &mut Criterion) {
+    let rt = Runtime::new().expect("create runtime");
+    let queue = Arc::new(InMemoryQueue::new());
+
     let mut group = c.benchmark_group("enqueue");
     group.throughput(Throughput::Elements(1));
 
     for size in [1, 100, 1000, 10000] {
         group.bench_function(format!("{}_tasks", size), |b| {
+            // Pre-populate queue to the correct size
+            rt.block_on(async {
+                for _ in 0..size {
+                    queue.enqueue(make_task("slack", Priority::Normal)).await.unwrap();
+                }
+            });
+
             b.iter(|| {
-                let rt = runtime();
                 rt.block_on(async {
-                    let queue = InMemoryQueue::new();
                     for _ in 0..size {
                         let task = make_task("slack", Priority::Normal);
                         black_box(queue.enqueue(task).await).unwrap();
@@ -47,41 +51,42 @@ fn bench_enqueue(c: &mut Criterion) {
 }
 
 fn bench_dequeue(c: &mut Criterion) {
-    let rt = runtime();
+    let rt = Runtime::new().expect("create runtime");
+    let queue = Arc::new(InMemoryQueue::new());
+
+    // Pre-fill queue
     rt.block_on(async {
-        let queue = InMemoryQueue::new();
-        // Pre-fill queue
         for _ in 0..10000 {
             queue.enqueue(make_task("slack", Priority::Normal)).await.unwrap();
         }
+    });
 
-        let mut group = c.benchmark_group("dequeue");
-        group.throughput(Throughput::Elements(1));
+    let mut group = c.benchmark_group("dequeue");
+    group.throughput(Throughput::Elements(1));
 
-        for size in [1, 100, 1000, 10000] {
-            group.bench_function(format!("{}_tasks", size), |b| {
-                b.iter(|| {
-                    let rt = runtime();
-                    rt.block_on(async {
-                        for _ in 0..size {
-                            black_box(queue.dequeue().await).unwrap();
-                        }
-                    });
+    for size in [1, 100, 1000, 10000] {
+        group.bench_function(format!("{}_tasks", size), |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    for _ in 0..size {
+                        black_box(queue.dequeue().await).unwrap();
+                    }
                 });
             });
-        }
-        group.finish();
-    });
+        });
+    }
+    group.finish();
 }
 
 fn bench_enqueue_dequeue_roundtrip(c: &mut Criterion) {
+    let rt = Runtime::new().expect("create runtime");
+
     let mut group = c.benchmark_group("enqueue_dequeue_roundtrip");
     group.throughput(Throughput::Elements(1));
 
     for size in [1, 100, 1000] {
         group.bench_function(format!("{}_tasks", size), |b| {
             b.iter(|| {
-                let rt = runtime();
                 rt.block_on(async {
                     let queue = InMemoryQueue::new();
                     for _ in 0..size {
@@ -97,6 +102,8 @@ fn bench_enqueue_dequeue_roundtrip(c: &mut Criterion) {
 }
 
 fn bench_concurrent_enqueue(c: &mut Criterion) {
+    let rt = Runtime::new().expect("create runtime");
+
     let mut group = c.benchmark_group("concurrent_enqueue");
     group.throughput(Throughput::Elements(1));
 
@@ -106,7 +113,6 @@ fn bench_concurrent_enqueue(c: &mut Criterion) {
 
         group.bench_function(format!("{}_threads_{}_each", concurrency, tasks_per_thread), |b| {
             b.iter(|| {
-                let rt = runtime();
                 rt.block_on(async {
                     let queue = Arc::new(InMemoryQueue::new());
                     let mut handles = vec![];
@@ -137,13 +143,14 @@ fn bench_concurrent_enqueue(c: &mut Criterion) {
 }
 
 fn bench_ack_throughput(c: &mut Criterion) {
+    let rt = Runtime::new().expect("create runtime");
+
     let mut group = c.benchmark_group("ack_throughput");
     group.throughput(Throughput::Elements(1));
 
     for size in [1, 100, 1000] {
         group.bench_function(format!("{}_tasks", size), |b| {
             b.iter(|| {
-                let rt = runtime();
                 rt.block_on(async {
                     let queue = InMemoryQueue::new();
                     let mut task_ids = vec![];
@@ -168,11 +175,21 @@ fn bench_ack_throughput(c: &mut Criterion) {
 }
 
 fn bench_priority_ordering(c: &mut Criterion) {
+    let rt = Runtime::new().expect("create runtime");
+    let queue = Arc::new(InMemoryQueue::new());
+
+    // Pre-populate with 1000 tasks
+    rt.block_on(async {
+        let priorities = [Priority::Low, Priority::Normal, Priority::High, Priority::Urgent];
+        for pri in priorities.iter().cycle().take(1000) {
+            queue.enqueue(make_task("slack", *pri)).await.unwrap();
+        }
+    });
+
     let mut group = c.benchmark_group("priority_ordering");
 
     group.bench_function("enqueue_4_priorities", |b| {
         b.iter(|| {
-            let rt = runtime();
             rt.block_on(async {
                 let queue = InMemoryQueue::new();
                 // Enqueue in reverse priority order
@@ -186,22 +203,11 @@ fn bench_priority_ordering(c: &mut Criterion) {
     });
 
     group.bench_function("dequeue_priority_order", |b| {
-        let rt = runtime();
-        rt.block_on(async {
-            let queue = InMemoryQueue::new();
-            // Enqueue 1000 tasks with mixed priorities
-            let priorities = [Priority::Low, Priority::Normal, Priority::High, Priority::Urgent];
-            for pri in priorities.iter().cycle().take(1000) {
-                queue.enqueue(make_task("slack", *pri)).await.unwrap();
-            }
-
-            b.iter(|| {
-                let rt = runtime();
-                rt.block_on(async {
-                    for _ in 0..250 {
-                        black_box(queue.dequeue().await).unwrap();
-                    }
-                });
+        b.iter(|| {
+            rt.block_on(async {
+                for _ in 0..250 {
+                    black_box(queue.dequeue().await).unwrap();
+                }
             });
         });
     });
