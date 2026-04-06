@@ -12,8 +12,9 @@ use crate::handlers::{
     metrics::{self, MetricsResponse, ProviderMetrics},
     providers::{self, ParamInfo, ProviderInfo, ProviderListResponse, ProviderSummary},
     queue::{
-        self, AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
+        AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
         CancelResponse, EnqueueResponse, PurgeResponse, StatsResponse, TaskInfo,
+        handlers as queue_handlers,
     },
     send::{
         self, BatchSendApiResponse, BatchSendRequest, BatchTarget, SendApiResponse, SendRequest,
@@ -57,13 +58,13 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         send::send_notification,
         send::send_batch,
         // Async Queue
-        queue::send_async,
-        queue::send_async_batch,
-        queue::get_task,
-        queue::list_tasks,
-        queue::get_stats,
-        queue::cancel_task,
-        queue::purge_tasks,
+        queue_handlers::send_async,
+        queue_handlers::send_async_batch,
+        queue_handlers::get_task,
+        queue_handlers::list_tasks,
+        queue_handlers::get_stats,
+        queue_handlers::cancel_task,
+        queue_handlers::purge_tasks,
         // Status
         status::get_status,
         status::get_all_statuses,
