@@ -102,6 +102,8 @@ fn build_v1_routes() -> Router<AppState> {
 /// touching existing v1 handlers.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        // Prometheus metrics (version-independent, root path)
+        .route("/metrics", get(handlers::prometheus::prometheus_metrics))
         // Health check (version-independent)
         .route("/health", get(handlers::health::health_check))
         // API version discovery (version-independent)

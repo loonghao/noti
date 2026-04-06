@@ -2,6 +2,7 @@ pub mod common;
 pub mod error;
 pub mod health;
 pub mod metrics;
+pub mod prometheus;
 pub mod providers;
 pub mod queue;
 pub mod send;
