@@ -36,7 +36,7 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary — argument parsing, output formatting
 │   ├── noti-core/       # Core abstractions — NotifyProvider trait, ProviderRegistry, URL parsing
-│   ├── noti-providers/  # 125 provider implementations (one file each)
+│   ├── noti-providers/  # 126 provider implementations (one file each)
 │   ├── noti-queue/      # Async message queue — background task processing
 │   └── noti-server/     # REST API server — HTTP endpoints, middleware
 ├── scripts/             # Install scripts (bash, PowerShell) & utilities

@@ -474,7 +474,7 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI 二进制 — 参数解析、输出格式化
 │   ├── noti-core/       # 核心抽象 — Provider trait、Registry、URL 解析
-│   ├── noti-providers/  # 125 个渠道实现
+│   ├── noti-providers/  # 126 个渠道实现
 │   ├── noti-queue/      # 异步消息队列 — 后台任务处理
 │   └── noti-server/     # REST API 服务器 — HTTP 端点、中间件
 ├── docs/                # VitePress 文档站点

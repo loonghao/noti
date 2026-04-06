@@ -64,7 +64,7 @@ noti send --to "tg://BOT_TOKEN/CHAT_ID" --message "Daily report" --file report.p
 **🚀 CLI-first Design**
 Built for agent and script integration. One-line commands, zero config files needed. Designed to be the notification primitive for AI agents.
 
-**📡 125 Built-in Providers**
+**📡 126 Built-in Providers**
 Chat, SMS, email, push, webhooks, incident management, IoT — all in a single, statically-linked binary. No plugins, no extensions.
 
 **🔗 URL Scheme Addressing**
@@ -199,9 +199,9 @@ noti --json send --to "wecom://<key>" --message "deploy complete"
 
 <br/>
 
-## 📡 Supported Providers (125)
+## 📡 Supported Providers (126)
 
-noti ships with **125 built-in providers** across 7 categories. No plugins required — everything is compiled into a single binary.
+noti ships with **126 built-in providers** across 7 categories. No plugins required — everything is compiled into a single binary.
 
 <details>
 <summary><strong>💬 Chat & IM — 22 providers</strong></summary>
@@ -474,7 +474,7 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary — argument parsing, output formatting
 │   ├── noti-core/       # Core abstractions — Provider trait, Registry, URL parsing
-│   ├── noti-providers/  # 125 provider implementations
+│   ├── noti-providers/  # 126 provider implementations
 │   ├── noti-queue/      # Async message queue — background task processing
 │   └── noti-server/     # REST API server — HTTP endpoints, middleware
 ├── docs/                # VitePress documentation site
@@ -485,7 +485,7 @@ noti/
 
 **Design principles:**
 - **Zero runtime** — pure Rust, statically linked, no interpreter
-- **One binary** — all 125 providers compiled in, no plugin system
+- **One binary** — all 126 providers compiled in, no plugin system
 - **URL-first** — every provider addressable via URI scheme
 - **Agent-friendly** — JSON output, exit codes, deterministic behavior
 

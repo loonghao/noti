@@ -189,25 +189,68 @@ def noti_callback():
 
 ## Security Considerations
 
-### Validate the Source
+### HMAC-SHA256 Callback Signing
 
-The callback does not include a signature or authentication token by default. To secure your callback endpoint:
+noti-server supports HMAC-SHA256 signed callbacks. When you include a `callback_secret` in your async send request, every callback POST will include two additional headers:
+
+| Header | Description |
+|:-------|:------------|
+| `X-Noti-Signature` | `sha256=<hex>` — HMAC-SHA256 of the raw JSON body signed with your secret |
+| `X-Noti-Timestamp` | Unix epoch seconds when the callback was sent (replay protection) |
+
+**Sending with a callback secret:**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/send/async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "slack",
+    "config": {"webhook_url": "https://hooks.slack.com/services/..."},
+    "text": "Deployment complete",
+    "callback_url": "https://your-server.com/webhook/noti-callback",
+    "callback_secret": "your-shared-secret"
+  }'
+```
+
+**Verifying the signature on your server (Python example):**
+
+```python
+import hmac
+import hashlib
+
+def verify_noti_signature(body: bytes, secret: str, signature_header: str) -> bool:
+    expected = "sha256=" + hmac.new(
+        secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+@app.route("/webhook/noti-callback", methods=["POST"])
+def callback():
+    sig = request.headers.get("X-Noti-Signature", "")
+    if not verify_noti_signature(request.data, "your-shared-secret", sig):
+        return "Unauthorized", 401
+    data = request.get_json()
+    # ... process data
+    return jsonify(received=True), 200
+```
+
+### Additional Hardening
 
 1. **Use HTTPS** — always serve your callback URL over TLS.
-2. **Include a secret in the URL** — use a hard-to-guess path segment:
-   ```
-   https://your-server.com/webhook/noti-callback/s3cr3t-t0k3n
-   ```
+2. **Check `X-Noti-Timestamp`** — reject callbacks older than a few minutes to prevent replay attacks.
 3. **Restrict by IP** — if your noti-server has a known IP, restrict incoming requests at the firewall or reverse proxy level.
 4. **Verify metadata** — check that the `task_id` and `metadata` match a task you actually submitted.
 
 ### Protect Against Replay Attacks
 
-Since callbacks are best-effort and not signed, treat them as hints rather than authoritative state changes. For critical workflows:
+For critical workflows, treat callbacks as triggers but verify state before mutating:
 
-1. Receive the callback.
-2. Verify the task status by calling `GET /api/v1/queue/tasks/:task_id`.
-3. Only then update your internal state.
+1. Receive and verify the callback signature.
+2. Check `X-Noti-Timestamp` is recent (e.g., within 5 minutes).
+3. Call `GET /api/v1/queue/tasks/:task_id` to confirm the authoritative state.
+4. Only then update your internal state.
+
+
 
 ## Integration Patterns
 

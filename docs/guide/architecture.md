@@ -45,7 +45,7 @@ Core abstractions shared across the workspace:
 
 ### `noti-providers`
 
-All 125 provider implementations, one file per provider. Each provider:
+All 126 provider implementations, one file per provider. Each provider:
 
 1. Implements the `NotifyProvider` trait
 2. Registers itself with the `ProviderRegistry`

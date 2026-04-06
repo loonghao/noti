@@ -19,7 +19,8 @@ Both endpoints return structured JSON suitable for dashboards, alerting systems,
 | Endpoint | Method | Auth | Description |
 |:---------|:-------|:-----|:------------|
 | `/health` | `GET` | No (excluded by default) | Service health with dependency status |
-| `/api/v1/metrics` | `GET` | Yes (if enabled) | Operational metrics for monitoring dashboards |
+| `/api/v1/metrics` | `GET` | Yes (if enabled) | Operational metrics for monitoring dashboards (JSON) |
+| `/metrics` | `GET` | No | Prometheus text-format metrics for direct scraping |
 | `/api/v1/queue/stats` | `GET` | Yes (if enabled) | Queue-specific statistics |
 
 ## Health Check (`/health`)
@@ -238,44 +239,55 @@ def check_noti_health(base_url: str = "http://localhost:3000"):
     return health["status"] == "ok"
 ```
 
-### Grafana / Prometheus Integration
+## Prometheus Metrics Endpoint (`/metrics`)
 
-While noti-server currently exposes JSON metrics (not Prometheus text format), you can use a **JSON exporter** to bridge:
+noti-server exposes a native Prometheus text-format endpoint at `GET /metrics` for direct scraping — no exporter required.
 
-**Option 1: Prometheus JSON Exporter**
-
-```yaml
-# prometheus-json-exporter config
-modules:
-  noti_metrics:
-    metrics:
-      - name: noti_queue_queued
-        path: "{ .queue.queued }"
-        help: "Number of queued tasks"
-      - name: noti_queue_processing
-        path: "{ .queue.processing }"
-        help: "Number of tasks being processed"
-      - name: noti_queue_completed
-        path: "{ .queue.completed }"
-        help: "Number of completed tasks"
-        type: counter
-      - name: noti_queue_failed
-        path: "{ .queue.failed }"
-        help: "Number of failed tasks"
-        type: counter
-      - name: noti_providers_total
-        path: "{ .providers.total_registered }"
-        help: "Total registered providers"
-      - name: noti_uptime_seconds
-        path: "{ .uptime_seconds }"
-        help: "Server uptime in seconds"
-        type: gauge
-    http_client_config:
-      tls_config:
-        insecure_skip_verify: false
+```bash
+curl http://localhost:3000/metrics
 ```
 
-**Option 2: Custom scraper with Pushgateway**
+Sample output:
+
+```text
+# HELP noti_queue_total Total tasks in queue by status
+# TYPE noti_queue_total gauge
+noti_queue_total{status="queued"} 5
+noti_queue_total{status="processing"} 2
+noti_queue_total{status="completed"} 150
+noti_queue_total{status="failed"} 3
+noti_queue_total{status="cancelled"} 0
+# HELP noti_providers_registered Number of registered providers
+# TYPE noti_providers_registered gauge
+noti_providers_registered 126
+# HELP noti_providers_with_attachments Number of providers supporting attachments
+# TYPE noti_providers_with_attachments gauge
+noti_providers_with_attachments 15
+# HELP noti_server_uptime_seconds Server uptime in seconds
+# TYPE noti_server_uptime_seconds gauge
+noti_server_uptime_seconds 86400
+# HELP noti_server_version Server version
+# TYPE noti_server_version gauge
+noti_server_version{version="0.1.9"} 1
+```
+
+The endpoint returns `Content-Type: text/plain; version=0.0.4; charset=utf-8`, which Prometheus recognizes as the standard exposition format.
+
+### Prometheus Scrape Config
+
+```yaml
+scrape_configs:
+  - job_name: noti
+    static_configs:
+      - targets: ['localhost:3000']
+    metrics_path: /metrics
+```
+
+### Grafana / Prometheus Integration
+
+For dashboards, point Prometheus at the `/metrics` endpoint above. For custom integrations using the JSON endpoint or Pushgateway:
+
+**Custom scraper with Pushgateway**
 
 ```python
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
