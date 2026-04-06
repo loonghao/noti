@@ -66,6 +66,10 @@ pub async fn send_async(
         task = task.with_callback_url(url);
     }
 
+    if let Some(secret) = &req.callback_secret {
+        task = task.with_callback_secret(secret);
+    }
+
     for (k, v) in &req.metadata {
         task = task.with_metadata(k, v);
     }
@@ -185,6 +189,10 @@ pub async fn send_async_batch(
 
         if let Some(url) = &item.callback_url {
             task = task.with_callback_url(url);
+        }
+
+        if let Some(secret) = &item.callback_secret {
+            task = task.with_callback_secret(secret);
         }
 
         for (k, v) in &item.metadata {

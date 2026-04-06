@@ -37,6 +37,9 @@ pub struct AsyncSendRequest {
     pub metadata: HashMap<String, String>,
     /// Optional webhook URL to call when the task completes or fails.
     pub callback_url: Option<String>,
+    /// Optional HMAC secret for signing webhook callbacks.
+    /// When set, the callback POST will include `X-Noti-Signature: sha256=<hmac>`.
+    pub callback_secret: Option<String>,
     /// Delay in seconds before the notification is sent.
     /// Mutually exclusive with `scheduled_at`.
     pub delay_seconds: Option<u64>,

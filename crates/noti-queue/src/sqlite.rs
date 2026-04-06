@@ -129,6 +129,7 @@ impl SqliteQueue {
                 updated_at INTEGER NOT NULL,
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 callback_url TEXT,
+                callback_secret TEXT,
                 priority INTEGER NOT NULL DEFAULT 1,
                 available_at INTEGER
             );
@@ -139,6 +140,8 @@ impl SqliteQueue {
 
         // Migration: add available_at column if upgrading from an older schema.
         let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN available_at INTEGER;");
+        // Migration: add callback_secret column if upgrading from an older schema.
+        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN callback_secret TEXT;");
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -171,6 +174,7 @@ impl SqliteQueue {
             updated_at: system_time_to_epoch_ms(task.updated_at),
             metadata_json,
             callback_url: task.callback_url.clone(),
+            callback_secret: task.callback_secret.clone(),
             priority: task.priority().as_numeric() as i64,
             available_at: task.available_at.map(system_time_to_epoch_ms),
         })
@@ -195,6 +199,7 @@ impl SqliteQueue {
             updated_at: epoch_ms_to_system_time(row.updated_at),
             metadata,
             callback_url: row.callback_url.clone(),
+            callback_secret: row.callback_secret.clone(),
             available_at: row.available_at.map(epoch_ms_to_system_time),
         })
     }
@@ -213,6 +218,7 @@ struct TaskRow {
     updated_at: i64,
     metadata_json: String,
     callback_url: Option<String>,
+    callback_secret: Option<String>,
     priority: i64,
     available_at: Option<i64>,
 }
@@ -232,6 +238,7 @@ impl TaskRow {
             updated_at: row.get("updated_at")?,
             metadata_json: row.get("metadata_json")?,
             callback_url: row.get("callback_url")?,
+            callback_secret: row.get("callback_secret")?,
             priority: row.get("priority")?,
             available_at: row.get("available_at")?,
         })
@@ -263,12 +270,12 @@ impl QueueBackend for SqliteQueue {
 
         conn.execute(
             "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
-             status, attempts, last_error, created_at, updated_at, metadata_json, callback_url, priority, available_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+             status, attempts, last_error, created_at, updated_at, metadata_json, callback_url, callback_secret, priority, available_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 row.id, row.provider, row.config_json, row.message_json,
                 row.retry_policy_json, row.status, row.attempts, row.last_error,
-                row.created_at, row.updated_at, row.metadata_json, row.callback_url, row.priority,
+                row.created_at, row.updated_at, row.metadata_json, row.callback_url, row.callback_secret, row.priority,
                 row.available_at
             ],
         )

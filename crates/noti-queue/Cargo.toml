@@ -13,11 +13,13 @@ sqlite = ["rusqlite"]
 
 [dependencies]
 async-trait = { workspace = true }
+hmac = { workspace = true }
 noti-core = { path = "../noti-core" }
 reqwest = { workspace = true }
 rusqlite = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
 tracing = { workspace = true }

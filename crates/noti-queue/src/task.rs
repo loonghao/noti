@@ -83,6 +83,12 @@ pub struct NotificationTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callback_url: Option<String>,
 
+    /// Optional HMAC secret for signing webhook callbacks.
+    /// When set, callbacks will include an `X-Noti-Signature: sha256=<hmac>` header
+    /// computed as HMAC-SHA256 of the raw JSON body using this secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_secret: Option<String>,
+
     /// Earliest time this task can be dequeued (used for retry backoff delays).
     /// When `None`, the task is immediately available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,6 +112,7 @@ impl NotificationTask {
             updated_at: now,
             metadata: HashMap::new(),
             callback_url: None,
+            callback_secret: None,
             available_at: None,
         }
     }
@@ -125,6 +132,17 @@ impl NotificationTask {
     /// Set a callback URL to be invoked when the task reaches a terminal state.
     pub fn with_callback_url(mut self, url: impl Into<String>) -> Self {
         self.callback_url = Some(url.into());
+        self
+    }
+
+    /// Set a secret for HMAC-SHA256 signing of webhook callbacks.
+    ///
+    /// When set, the callback POST request will include an
+    /// `X-Noti-Signature: sha256=<hex>` header computed over the raw JSON body.
+    /// The receiver can verify the signature to confirm the callback originated
+    /// from this service and was not tampered with.
+    pub fn with_callback_secret(mut self, secret: impl Into<String>) -> Self {
+        self.callback_secret = Some(secret.into());
         self
     }
 
@@ -328,6 +346,32 @@ mod tests {
 
         assert!(task.available_at.is_some());
         assert_eq!(task.available_at.unwrap(), future);
+    }
+
+    #[test]
+    fn test_task_with_callback_secret() {
+        let msg = Message::text("test");
+        let config = ProviderConfig::new();
+        let task = NotificationTask::new("slack", config, msg)
+            .with_callback_url("https://example.com/callback")
+            .with_callback_secret("my-hmac-secret");
+
+        assert!(task.callback_url.is_some());
+        assert_eq!(task.callback_secret.as_deref(), Some("my-hmac-secret"));
+    }
+
+    #[test]
+    fn test_task_callback_secret_serde_roundtrip() {
+        let msg = Message::text("test");
+        let config = ProviderConfig::new();
+        let task = NotificationTask::new("webhook", config, msg)
+            .with_callback_url("https://example.com/callback")
+            .with_callback_secret("hmac-secret-123");
+
+        let json = serde_json::to_string(&task).unwrap();
+        let parsed: NotificationTask = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.callback_secret.as_deref(), Some("hmac-secret-123"));
     }
 
     #[test]

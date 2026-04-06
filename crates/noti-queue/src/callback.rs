@@ -2,6 +2,11 @@
 //!
 //! When a task has a `callback_url` set, the worker will fire an HTTP POST
 //! request to that URL with the task's final status as a JSON payload.
+//!
+//! If `callback_secret` is set on the task, the callback request will include
+//! an `X-Noti-Signature: sha256=<hmac_hex>` header computed as HMAC-SHA256
+//! of the raw JSON body signed with the secret. This allows the receiver to
+//! verify callback authenticity and detect tampering.
 
 use serde::Serialize;
 use std::collections::HashMap;
@@ -16,6 +21,29 @@ static CALLBACK_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .build()
         .expect("failed to build callback HTTP client")
 });
+
+/// Header name for the HMAC-SHA256 signature of the callback body.
+const SIGNATURE_HEADER: &str = "X-Noti-Signature";
+
+/// Header name for the Unix timestamp at which the callback was sent.
+const TIMESTAMP_HEADER: &str = "X-Noti-Timestamp";
+
+/// Compute HMAC-SHA256 of `payload_bytes` using `secret` and return the
+/// hex-encoded string prefixed with "sha256=".
+fn compute_signature(secret: &str, payload_bytes: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .expect("HMAC can accept any key size");
+    mac.update(payload_bytes);
+    let result = mac.finalize().into_bytes();
+    let hex = result
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    format!("sha256={}", hex)
+}
 
 /// Payload sent to the callback URL when a task reaches a terminal state.
 #[derive(Debug, Clone, Serialize)]
@@ -75,13 +103,27 @@ pub async fn fire_callback(task: &NotificationTask) {
         task_id = %task.id,
         callback_url = %url,
         status = %task.status,
+        signed = task.callback_secret.is_some(),
         "firing webhook callback"
     );
 
     // Use shared client with a short timeout
     let client = &*CALLBACK_CLIENT;
 
-    match client.post(&url).json(&payload).send().await {
+    // Serialize once so we can sign the raw bytes before sending
+    let payload_bytes = serde_json::to_vec(&payload).expect("callback payload serializes");
+
+    let mut request = client.post(&url);
+    request = request
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(TIMESTAMP_HEADER, std::time::UNIX_EPOCH.elapsed().unwrap().as_secs().to_string());
+
+    if let Some(ref secret) = task.callback_secret {
+        let sig = compute_signature(secret, &payload_bytes);
+        request = request.header(SIGNATURE_HEADER, sig);
+    }
+
+    match request.body(payload_bytes).send().await {
         Ok(resp) => {
             let status = resp.status();
             if status.is_success() {
@@ -185,5 +227,32 @@ mod tests {
 
         // Should handle gracefully without panic
         fire_callback(&task).await;
+    }
+
+    #[test]
+    fn test_compute_signature() {
+        // Known-answer test for HMAC-SHA256
+        let secret = "my-secret-key";
+        let payload = br#"{"task_id":"abc","provider":"slack","status":"completed","attempts":1}"#;
+        let sig = compute_signature(secret, payload);
+        assert!(sig.starts_with("sha256="));
+        assert_eq!(sig.len(), 7 + 64); // "sha256=" (7) + 64 hex chars
+    }
+
+    #[test]
+    fn test_compute_signature_different_secrets_different_output() {
+        let payload = b"test";
+        let sig1 = compute_signature("secret1", payload);
+        let sig2 = compute_signature("secret2", payload);
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_compute_signature_deterministic() {
+        let secret = "static-secret";
+        let payload = b"same payload";
+        let sig1 = compute_signature(secret, payload);
+        let sig2 = compute_signature(secret, payload);
+        assert_eq!(sig1, sig2);
     }
 }
