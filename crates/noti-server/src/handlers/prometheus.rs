@@ -18,6 +18,9 @@ use crate::state::AppState;
 /// - `noti_providers_registered` - Number of registered notification providers
 /// - `noti_providers_with_attachments` - Number of providers supporting attachments
 /// - `noti_server_uptime_seconds` - Server uptime in seconds
+/// - `noti_workers_total` - Total number of workers in the pool
+/// - `noti_workers_active` - Number of workers actively processing tasks
+/// - `noti_workers_idle` - Number of workers idle and available
 ///
 /// # Example
 /// ```text
@@ -40,6 +43,8 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
     let all_providers = state.registry.all_providers();
     let attachment_count = all_providers.iter().filter(|p| p.supports_attachments()).count();
     let uptime = state.started_at.elapsed().unwrap_or_default().as_secs();
+
+    let worker_stats = state.worker_stats_handle.as_ref().map(|h| h.stats());
 
     let mut output = String::new();
 
@@ -71,6 +76,21 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
     output.push_str("# TYPE noti_server_version gauge\n");
     output.push_str(&format!("noti_server_version{{version=\"{}\"}} 1\n", env!("CARGO_PKG_VERSION")));
 
+    // Worker pool metrics (only when workers are started)
+    if let Some(workers) = worker_stats {
+        output.push_str("# HELP noti_workers_total Total number of workers in the pool\n");
+        output.push_str("# TYPE noti_workers_total gauge\n");
+        output.push_str(&format!("noti_workers_total {}\n", workers.total));
+
+        output.push_str("# HELP noti_workers_active Number of workers actively processing tasks\n");
+        output.push_str("# TYPE noti_workers_active gauge\n");
+        output.push_str(&format!("noti_workers_active {}\n", workers.active));
+
+        output.push_str("# HELP noti_workers_idle Number of workers idle and available\n");
+        output.push_str("# TYPE noti_workers_idle gauge\n");
+        output.push_str(&format!("noti_workers_idle {}\n", workers.idle));
+    }
+
     axum::response::Response::builder()
         .status(200)
         .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -85,6 +105,7 @@ mod tests {
     use axum::routing::get;
     use axum_test::TestServer;
     use noti_core::ProviderRegistry;
+    use noti_queue::WorkerConfig;
 
     #[tokio::test]
     async fn test_prometheus_metrics_endpoint() {
@@ -106,5 +127,29 @@ mod tests {
         assert!(body.contains("noti_providers_registered"));
         assert!(body.contains("noti_server_uptime_seconds"));
         assert!(body.contains("noti_server_version"));
+    }
+
+    #[tokio::test]
+    async fn test_prometheus_metrics_with_worker_stats() {
+        let mut state = AppState::new(ProviderRegistry::new());
+        let worker_config = WorkerConfig::default().with_concurrency(2);
+        let (_worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+        state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
+
+        let app = Router::new()
+            .route("/metrics", get(prometheus_metrics))
+            .with_state(state);
+        let server = TestServer::new(app);
+
+        let resp = server.get("/metrics").await;
+        resp.assert_status_ok();
+
+        let body = resp.text();
+        // Worker metrics should be present when workers are started
+        assert!(body.contains("noti_workers_total"), "missing noti_workers_total");
+        assert!(body.contains("noti_workers_active"), "missing noti_workers_active");
+        assert!(body.contains("noti_workers_idle"), "missing noti_workers_idle");
+        // Should show the 2 workers from our config
+        assert!(body.contains("noti_workers_total 2"), "expected 2 total workers");
     }
 }
