@@ -16,7 +16,8 @@ use std::time::Duration;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
-use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 
 /// Configuration for OpenTelemetry tracing, sourced from environment variables.
 #[derive(Debug, Clone)]
@@ -79,9 +80,10 @@ pub fn init_otel_with_config(config: &OtelConfig) -> Option<OtelGuard> {
 
     let tracer = tracer_provider.tracer("noti-server");
 
-    // Create the OpenTelemetry tracing layer and register it with the global subscriber
+    // Create the OpenTelemetry tracing layer and register it as the global subscriber.
+    // Using `try_init` so that if a subscriber is already set (e.g. in tests) this is a no-op.
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-    tracing_subscriber::registry().with(otel_layer);
+    let _ = tracing_subscriber::registry().with(otel_layer).try_init();
 
     // Install the OTEL tracer provider as the global default
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());

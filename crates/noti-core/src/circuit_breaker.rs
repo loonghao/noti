@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Configuration for circuit breaker behavior.
 #[derive(Debug, Clone)]
@@ -142,8 +142,11 @@ impl CircuitBreaker {
                 if failures >= self.config.failure_threshold {
                     // Open the circuit
                     self.state.store(STATE_OPEN, Ordering::SeqCst);
-                    self.opened_at
-                        .store(Instant::now().elapsed().as_millis() as u64, Ordering::SeqCst);
+                    let now_ms = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    self.opened_at.store(now_ms, Ordering::SeqCst);
                 }
             }
             STATE_HALF_OPEN => {
@@ -152,8 +155,11 @@ impl CircuitBreaker {
                 self.successes.store(0, Ordering::SeqCst);
                 self.failures
                     .fetch_add(1, Ordering::SeqCst); // Count this as a failure for threshold
-                self.opened_at
-                    .store(Instant::now().elapsed().as_millis() as u64, Ordering::SeqCst);
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                self.opened_at.store(now_ms, Ordering::SeqCst);
             }
             STATE_OPEN => {
                 // Already open — count failures but don't change state
@@ -177,10 +183,13 @@ impl CircuitBreaker {
 
         if current_state == STATE_OPEN {
             // Check if we should transition to half-open
-            let opened_at = self.opened_at.load(Ordering::SeqCst);
-            let elapsed = Instant::now().elapsed();
+            let opened_at_ms = self.opened_at.load(Ordering::SeqCst);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
             let open_duration_ms = self.config.open_duration.as_millis() as u64;
-            if elapsed.as_millis() as u64 >= opened_at + open_duration_ms {
+            if now_ms >= opened_at_ms + open_duration_ms {
                 // Transition to half-open
                 self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
                 self.successes.store(0, Ordering::SeqCst);
@@ -200,10 +209,13 @@ impl CircuitBreaker {
             STATE_CLOSED => CircuitState::Closed,
             STATE_OPEN => {
                 // Check if we should transition to half-open
-                let opened_at = self.opened_at.load(Ordering::SeqCst);
-                let elapsed = Instant::now().elapsed();
+                let opened_at_ms = self.opened_at.load(Ordering::SeqCst);
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
                 let open_duration_ms = self.config.open_duration.as_millis() as u64;
-                if elapsed.as_millis() as u64 >= opened_at + open_duration_ms {
+                if now_ms >= opened_at_ms + open_duration_ms {
                     // Transition to half-open
                     self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
                     self.successes.store(0, Ordering::SeqCst);
@@ -237,8 +249,11 @@ impl CircuitBreaker {
             }
             CircuitState::Open => {
                 self.state.store(STATE_OPEN, Ordering::SeqCst);
-                self.opened_at
-                    .store(Instant::now().elapsed().as_secs(), Ordering::SeqCst);
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                self.opened_at.store(now_ms, Ordering::SeqCst);
             }
             CircuitState::HalfOpen => {
                 self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
