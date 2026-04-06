@@ -713,6 +713,7 @@ pub fn test_client() -> reqwest::Client {
 ///     |spawn_fn, label| { ... }
 /// );
 /// ```
+#[macro_export]
 macro_rules! dual_backend_test {
     // ── basic: spawn_fn() -> String ──
     (basic, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
@@ -845,8 +846,6 @@ macro_rules! dual_backend_test {
         }
     };
 }
-
-pub(crate) use dual_backend_test;
 
 // ───────────────────── Polling utilities ─────────────────────
 
