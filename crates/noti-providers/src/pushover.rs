@@ -42,6 +42,16 @@ impl NotifyProvider for PushoverProvider {
             ParamDef::optional("device", "Target device name"),
             ParamDef::optional("priority", "Priority: -2 to 2 (default: 0)").with_example("1"),
             ParamDef::optional("sound", "Notification sound name").with_example("pushover"),
+            ParamDef::optional(
+                "retry",
+                "Retry interval in seconds (required for priority=2)",
+            )
+            .with_example("60"),
+            ParamDef::optional("expire", "Expire time in seconds (required for priority=2)")
+                .with_example("3600"),
+            ParamDef::optional("url", "Supplementary URL"),
+            ParamDef::optional("url_title", "URL title/description"),
+            ParamDef::optional("ttl", "Message TTL in seconds"),
         ]
     }
 
@@ -91,6 +101,21 @@ impl NotifyProvider for PushoverProvider {
             if let Some(sound) = config.get("sound") {
                 form = form.text("sound", sound.to_string());
             }
+            if let Some(retry) = config.get("retry") {
+                form = form.text("retry", retry.to_string());
+            }
+            if let Some(expire) = config.get("expire") {
+                form = form.text("expire", expire.to_string());
+            }
+            if let Some(url) = config.get("url") {
+                form = form.text("url", url.to_string());
+            }
+            if let Some(url_title) = config.get("url_title") {
+                form = form.text("url_title", url_title.to_string());
+            }
+            if let Some(ttl) = config.get("ttl") {
+                form = form.text("ttl", ttl.to_string());
+            }
 
             self.client
                 .post("https://api.pushover.net/1/messages.json")
@@ -120,6 +145,21 @@ impl NotifyProvider for PushoverProvider {
             }
             if let Some(sound) = config.get("sound") {
                 form.push(("sound", sound.to_string()));
+            }
+            if let Some(retry) = config.get("retry") {
+                form.push(("retry", retry.to_string()));
+            }
+            if let Some(expire) = config.get("expire") {
+                form.push(("expire", expire.to_string()));
+            }
+            if let Some(url) = config.get("url") {
+                form.push(("url", url.to_string()));
+            }
+            if let Some(url_title) = config.get("url_title") {
+                form.push(("url_title", url_title.to_string()));
+            }
+            if let Some(ttl) = config.get("ttl") {
+                form.push(("ttl", ttl.to_string()));
             }
 
             self.client

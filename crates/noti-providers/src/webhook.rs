@@ -49,6 +49,9 @@ impl WebhookProvider {
             }
         };
 
+        // Apply authentication
+        request = Self::apply_auth(request, config);
+
         if let Some(headers) = config.get("headers") {
             for pair in headers.split(',') {
                 if let Some((k, v)) = pair.split_once(':') {
@@ -126,6 +129,10 @@ impl NotifyProvider for WebhookProvider {
                 "body_template",
                 "Custom JSON body template. Use {message} and {title} as placeholders",
             ),
+            ParamDef::optional("auth_type", "Authentication type: bearer, basic, api_key"),
+            ParamDef::optional("auth_token", "Authentication token/credentials"),
+            ParamDef::optional("retry", "Number of retry attempts on failure").with_example("3"),
+            ParamDef::optional("retry_delay", "Delay in seconds between retries").with_example("2"),
         ]
     }
 
@@ -178,6 +185,9 @@ impl NotifyProvider for WebhookProvider {
 
         request = request.header("Content-Type", content_type);
 
+        // Apply authentication
+        request = Self::apply_auth(request, config);
+
         // Parse extra headers
         if let Some(headers) = config.get("headers") {
             for pair in headers.split(',') {
@@ -187,34 +197,99 @@ impl NotifyProvider for WebhookProvider {
             }
         }
 
-        let resp = request
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+        // Retry logic (simple synchronous retry without delay)
+        let retry_count = config
+            .get("retry")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1);
 
-        let status = resp.status().as_u16();
-        let raw_text = resp
-            .text()
-            .await
-            .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
+        let mut last_error = None;
+        for _ in 0..retry_count {
+            match request
+                .try_clone()
+                .ok_or_else(|| NotiError::Network("request clone failed".to_string()))?
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let raw_text = resp
+                        .text()
+                        .await
+                        .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
 
-        let raw_json: Option<serde_json::Value> = serde_json::from_str(&raw_text).ok();
+                    let raw_json: Option<serde_json::Value> = serde_json::from_str(&raw_text).ok();
 
-        if (200..300).contains(&(status as usize)) {
-            let mut resp = SendResponse::success("webhook", "request sent successfully")
-                .with_status_code(status);
+                    if (200..300).contains(&(status as usize)) {
+                        let mut resp =
+                            SendResponse::success("webhook", "request sent successfully")
+                                .with_status_code(status);
+                        if let Some(raw) = raw_json {
+                            resp = resp.with_raw_response(raw);
+                        }
+                        return Ok(resp);
+                    } else {
+                        last_error = Some((status, raw_text, raw_json));
+                    }
+                }
+                Err(e) => {
+                    last_error = Some((0, e.to_string(), None));
+                }
+            }
+        }
+
+        if let Some((status, raw_text, raw_json)) = last_error {
+            let mut resp = if status > 0 {
+                SendResponse::failure("webhook", format!("HTTP {status}: {raw_text}"))
+                    .with_status_code(status)
+            } else {
+                SendResponse::failure("webhook", raw_text.clone()).with_status_code(status)
+            };
             if let Some(raw) = raw_json {
                 resp = resp.with_raw_response(raw);
             }
             Ok(resp)
         } else {
-            let mut resp = SendResponse::failure("webhook", format!("HTTP {status}: {raw_text}"))
-                .with_status_code(status);
-            if let Some(raw) = raw_json {
-                resp = resp.with_raw_response(raw);
+            Ok(SendResponse::failure(
+                "webhook",
+                "unknown error".to_string(),
+            ))
+        }
+    }
+}
+
+impl WebhookProvider {
+    /// Apply authentication based on auth_type parameter.
+    fn apply_auth(
+        request: reqwest::RequestBuilder,
+        config: &ProviderConfig,
+    ) -> reqwest::RequestBuilder {
+        let auth_type = match config.get("auth_type") {
+            Some(t) => t.to_lowercase(),
+            None => return request,
+        };
+
+        let auth_token = match config.get("auth_token") {
+            Some(t) => t,
+            None => return request,
+        };
+
+        match auth_type.as_str() {
+            "bearer" => request.bearer_auth(auth_token),
+            "basic" => {
+                // auth_token should be "username:password"
+                if let Some((username, password)) = auth_token.split_once(':') {
+                    request.basic_auth(username, Some(password))
+                } else {
+                    request.basic_auth(auth_token, None::<&str>)
+                }
             }
-            Ok(resp)
+            "api_key" => {
+                // Use X-API-Key header by default
+                request.header("X-API-Key", auth_token)
+            }
+            _ => request,
         }
     }
 }
