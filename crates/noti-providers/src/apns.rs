@@ -119,12 +119,23 @@ impl ApnsCredentials {
 
 /// Convert p8 content (PEM or base64) to DER-encoded PKCS#8 bytes.
 fn decode_p8_to_der(input: &str) -> Result<Vec<u8>, NotiError> {
-    use base64::Engine;
-
     // Remove all whitespace.
     let filtered: String = input.chars().filter(|c| !c.is_whitespace()).collect();
 
-    // Try base64 decoding the filtered input.
+    // Extract base64 body from a PEM string (strips -----BEGIN/END----- lines).
+    let extract_pem_body = |s: &str| -> Result<Vec<u8>, NotiError> {
+        let b64: String = s
+            .lines()
+            .filter(|l| !l.starts_with("-----"))
+            .flat_map(|l| l.chars())
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .map_err(|e| NotiError::Config(format!("invalid base64 p8 content: {e}")))
+    };
+
+    // Try base64 decoding the filtered (whitespace-stripped) input.
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&filtered) {
         // If it starts with 0x30 (SEQUENCE), treat as DER.
         if decoded.first() == Some(&0x30) {
@@ -132,38 +143,15 @@ fn decode_p8_to_der(input: &str) -> Result<Vec<u8>, NotiError> {
         }
         // If input had PEM headers, it was base64 of PEM — extract the base64 content.
         if input.contains("-----BEGIN") {
-            let lines: Vec<&str> = input.lines().collect();
-            let base64_content: String = lines
-                .iter()
-                .filter(|l| !l.starts_with("-----"))
-                .flat_map(|l| l.chars())
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            return base64::engine::general_purpose::STANDARD
-                .decode(&base64_content)
-                .map_err(|e| {
-                    NotiError::Config(format!("invalid base64 p8 content: {e}"))
-                });
+            return extract_pem_body(input);
         }
         // Raw base64 of DER bytes.
         return Ok(decoded);
     }
 
     // If base64 decode fails, try treating it as a raw PEM string.
-    let pem_str = input.trim();
-    if pem_str.contains("-----BEGIN") {
-        let lines: Vec<&str> = pem_str.lines().collect();
-        let base64_content: String = lines
-            .iter()
-            .filter(|l| !l.starts_with("-----"))
-            .flat_map(|l| l.chars())
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        return base64::engine::general_purpose::STANDARD
-            .decode(&base64_content)
-            .map_err(|e| {
-                NotiError::Config(format!("invalid base64 p8 content: {e}"))
-            });
+    if input.trim().contains("-----BEGIN") {
+        return extract_pem_body(input.trim());
     }
 
     Err(NotiError::Config(
@@ -173,7 +161,6 @@ fn decode_p8_to_der(input: &str) -> Result<Vec<u8>, NotiError> {
 
 /// Base64url encode without padding.
 fn b64url_encode(data: &[u8]) -> String {
-    use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 

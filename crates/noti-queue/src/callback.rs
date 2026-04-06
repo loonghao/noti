@@ -116,7 +116,7 @@ pub async fn fire_callback(task: &NotificationTask) {
     let mut request = client.post(&url);
     request = request
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(TIMESTAMP_HEADER, std::time::UNIX_EPOCH.elapsed().unwrap().as_secs().to_string());
+        .header(TIMESTAMP_HEADER, std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_secs().to_string());
 
     if let Some(ref secret) = task.callback_secret {
         let sig = compute_signature(secret, &payload_bytes);

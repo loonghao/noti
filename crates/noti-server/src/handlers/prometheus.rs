@@ -75,7 +75,7 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
         .status(200)
         .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
         .body(output)
-        .unwrap()
+        .expect("static headers are always valid")
 }
 
 #[cfg(test)]
