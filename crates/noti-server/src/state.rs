@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use noti_core::{ProviderRegistry, StatusTracker, TemplateRegistry};
+use noti_core::{CircuitBreakerRegistry, ProviderRegistry, StatusTracker, TemplateRegistry};
 use noti_queue::{
     InMemoryQueue, QueueBackend, QueueError, SqliteQueue, WorkerConfig, WorkerHandle, WorkerPool,
 };
@@ -13,6 +13,7 @@ use crate::config::QueueBackendType;
 #[derive(Clone)]
 pub struct AppState {
     pub registry: Arc<ProviderRegistry>,
+    pub circuit_breakers: Arc<CircuitBreakerRegistry>,
     pub status_tracker: StatusTracker,
     pub template_registry: Arc<RwLock<TemplateRegistry>>,
     pub queue: Arc<dyn QueueBackend>,
@@ -28,6 +29,7 @@ impl AppState {
 
         Self {
             registry: Arc::new(registry),
+            circuit_breakers: Arc::new(CircuitBreakerRegistry::new()),
             status_tracker: StatusTracker::new(),
             template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
             queue,
@@ -71,6 +73,7 @@ impl AppState {
 
         Ok(Self {
             registry: Arc::new(registry),
+            circuit_breakers: Arc::new(CircuitBreakerRegistry::new()),
             status_tracker: StatusTracker::new(),
             template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
             queue,
@@ -90,6 +93,7 @@ impl AppState {
     ) -> Self {
         Self {
             registry: Arc::new(registry),
+            circuit_breakers: Arc::new(CircuitBreakerRegistry::new()),
             status_tracker: StatusTracker::new(),
             template_registry: Arc::new(RwLock::new(TemplateRegistry::new())),
             queue,
@@ -106,6 +110,7 @@ impl AppState {
         WorkerPool::start(
             self.queue.clone(),
             self.registry.clone(),
+            self.circuit_breakers.clone(),
             config,
             self.task_notify.clone(),
         )

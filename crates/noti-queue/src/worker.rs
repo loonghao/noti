@@ -6,7 +6,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
-use noti_core::ProviderRegistry;
+use noti_core::{CircuitBreakerRegistry, ProviderRegistry};
 
 use crate::callback::fire_callback;
 use crate::queue::QueueBackend;
@@ -83,10 +83,11 @@ pub struct WorkerPool;
 impl WorkerPool {
     /// Start a worker pool that processes tasks from the given queue.
     ///
-    /// Each worker loops: dequeue → send via provider → ack/nack.
+    /// Each worker loops: dequeue → check circuit breaker → send via provider → ack/nack.
     pub fn start(
         queue: Arc<dyn QueueBackend>,
         registry: Arc<ProviderRegistry>,
+        circuit_breakers: Arc<CircuitBreakerRegistry>,
         config: WorkerConfig,
         task_notify: Arc<Notify>,
     ) -> WorkerHandle {
@@ -97,6 +98,7 @@ impl WorkerPool {
         for worker_id in 0..config.concurrency {
             let queue = queue.clone();
             let registry = registry.clone();
+            let circuit_breakers = circuit_breakers.clone();
             let config = config.clone();
             let shutdown_flag = shutdown_flag.clone();
             let shutdown_notify = shutdown_notify.clone();
@@ -153,6 +155,37 @@ impl WorkerPool {
                                 }
                             };
 
+                            // Get circuit breaker for this provider
+                            let circuit = circuit_breakers.get_or_create(&provider_name);
+
+                            // Check circuit breaker before sending
+                            if circuit.is_open() {
+                                let err = format!(
+                                    "circuit breaker open for provider '{}' (fast-fail)",
+                                    provider_name
+                                );
+                                tracing::warn!(
+                                    worker_id,
+                                    task_id = %task_id,
+                                    provider = %provider_name,
+                                    "circuit breaker open, failing fast"
+                                );
+                                if let Err(nack_err) = queue.nack(&task_id, &err).await {
+                                    tracing::error!(
+                                        worker_id,
+                                        task_id = %task_id,
+                                        error = %nack_err,
+                                        "failed to nack task after circuit breaker open"
+                                    );
+                                }
+                                if has_callback {
+                                    if let Ok(Some(updated)) = queue.get_task(&task_id).await {
+                                        fire_callback(&updated).await;
+                                    }
+                                }
+                                continue;
+                            }
+
                             // Send the notification
                             let send_span = tracing::info_span!(
                                 "provider.send",
@@ -166,6 +199,7 @@ impl WorkerPool {
                             .await;
                             match send_result {
                                 Ok(resp) if resp.success => {
+                                    circuit.record_success();
                                     tracing::info!(
                                         worker_id,
                                         task_id = %task_id,
@@ -187,6 +221,7 @@ impl WorkerPool {
                                     }
                                 }
                                 Ok(resp) => {
+                                    circuit.record_failure();
                                     tracing::warn!(
                                         worker_id,
                                         task_id = %task_id,
@@ -209,6 +244,7 @@ impl WorkerPool {
                                     }
                                 }
                                 Err(e) => {
+                                    circuit.record_failure();
                                     tracing::warn!(
                                         worker_id,
                                         task_id = %task_id,
@@ -278,7 +314,8 @@ mod tests {
 
     use async_trait::async_trait;
     use noti_core::{
-        Message, NotiError, NotifyProvider, ParamDef, Priority, ProviderConfig, SendResponse,
+        CircuitBreakerRegistry, CircuitState, Message, NotiError, NotifyProvider, ParamDef,
+        Priority, ProviderConfig, SendResponse,
     };
     use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -375,7 +412,13 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(queue.clone(), registry, config, task_notify);
+        let handle = WorkerPool::start(
+            queue.clone(),
+            registry,
+            Arc::new(CircuitBreakerRegistry::new()),
+            config,
+            task_notify,
+        );
 
         // Wait for the task to be processed
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -407,7 +450,13 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(queue.clone(), registry, config, task_notify);
+        let handle = WorkerPool::start(
+            queue.clone(),
+            registry,
+            Arc::new(CircuitBreakerRegistry::new()),
+            config,
+            task_notify,
+        );
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -428,7 +477,13 @@ mod tests {
             .with_concurrency(2)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(queue, registry, config, task_notify);
+        let handle = WorkerPool::start(
+            queue,
+            registry,
+            Arc::new(CircuitBreakerRegistry::new()),
+            config,
+            task_notify,
+        );
 
         // Should shut down cleanly within reasonable time
         handle.shutdown_and_join().await;
@@ -452,10 +507,61 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(queue.clone(), registry, config, task_notify);
+        let handle = WorkerPool::start(
+            queue.clone(),
+            registry,
+            Arc::new(CircuitBreakerRegistry::new()),
+            config,
+            task_notify,
+        );
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
+        let task = queue.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Failed);
+
+        handle.shutdown_and_join().await;
+    }
+
+    #[tokio::test]
+    async fn test_worker_circuit_breaker_open() {
+        use std::time::Duration;
+
+        let queue = Arc::new(InMemoryQueue::new());
+        let task_notify = queue.notifier();
+
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(MockFailProvider));
+        let registry = Arc::new(registry);
+
+        // Create a circuit breaker registry with a very low threshold
+        let circuit_registry = Arc::new(CircuitBreakerRegistry::new());
+        // Pre-open the circuit for mock-fail
+        let cb = circuit_registry.get_or_create("mock-fail");
+        cb.force_state(CircuitState::Open);
+
+        let msg = Message::text("hello");
+        let task = NotificationTask::new("mock-fail", ProviderConfig::new(), msg)
+            .with_retry_policy(noti_core::RetryPolicy::none());
+        let task_id = task.id.clone();
+
+        queue.enqueue(task).await.unwrap();
+
+        let config = WorkerConfig::default()
+            .with_concurrency(1)
+            .with_poll_interval(Duration::from_millis(50));
+
+        let handle = WorkerPool::start(
+            queue.clone(),
+            registry,
+            circuit_registry,
+            config,
+            task_notify,
+        );
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Task should have been nacked due to open circuit breaker
         let task = queue.get_task(&task_id).await.unwrap().unwrap();
         assert_eq!(task.status, TaskStatus::Failed);
 

@@ -1,3 +1,4 @@
+pub mod circuit_breaker;
 pub mod config;
 pub mod error;
 pub mod message;
@@ -11,6 +12,7 @@ pub mod template;
 pub mod url;
 
 // Re-export commonly used types at crate root.
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState, SharedCircuitBreaker};
 pub use config::{AppConfig, Profile};
 pub use error::NotiError;
 pub use message::{Attachment, AttachmentKind, Message, MessageFormat};
