@@ -1,4 +1,5 @@
 pub mod africas_talking;
+pub mod apns;
 pub mod apprise;
 pub mod bark;
 pub mod bluesky;
@@ -209,6 +210,7 @@ fn register_push_notification_providers(registry: &mut ProviderRegistry, client:
     registry.register(Arc::new(pushplus::PushplusProvider::new(client.clone())));
     registry.register(Arc::new(wxpusher::WxPusherProvider::new(client.clone())));
     registry.register(Arc::new(fcm::FcmProvider::new(client.clone())));
+    registry.register(Arc::new(apns::ApnsProvider::new(client.clone())));
     registry.register(Arc::new(pushjet::PushjetProvider::new(client.clone())));
 }
 

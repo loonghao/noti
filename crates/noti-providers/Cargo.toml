@@ -14,6 +14,7 @@ hmac = { workspace = true }
 lettre = { workspace = true }
 md-5 = { workspace = true }
 noti-core = { path = "../noti-core" }
+p256 = { version = "0.13", features = ["ecdsa"] }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

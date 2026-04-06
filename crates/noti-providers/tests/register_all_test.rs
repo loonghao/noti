@@ -8,7 +8,7 @@ fn test_register_all_providers_count() {
     noti_providers::register_all_providers(&mut registry);
 
     let all = registry.all_providers();
-    assert_eq!(all.len(), 125, "expected 125 providers, got {}", all.len());
+    assert_eq!(all.len(), 126, "expected 126 providers, got {}", all.len());
 }
 
 #[rstest]
@@ -283,6 +283,7 @@ fn test_get_by_scheme_all_providers() {
 #[case("workflows")]
 #[case("notificationapi")]
 #[case("spugpush")]
+#[case("apns")]
 fn test_provider_exists(#[case] name: &str) {
     let mut registry = ProviderRegistry::new();
     noti_providers::register_all_providers(&mut registry);
