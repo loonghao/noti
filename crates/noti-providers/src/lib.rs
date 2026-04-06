@@ -127,247 +127,182 @@ pub mod zulip;
 use noti_core::ProviderRegistry;
 use reqwest::Client;
 use std::sync::Arc;
+use std::sync::LazyLock;
+
+/// Shared HTTP client for all providers (created once, reused)
+static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
 
 /// Register all built-in notification providers into the given registry.
+///
+/// The table below is the single authoritative list of providers. To add a
+/// new provider, append one line — `register!(ModulePath::TypeName)` for
+/// client-bearing providers, or `register_no_client!(TypeName)` for the rare
+/// cases where the constructor takes no arguments.
 pub fn register_all_providers(registry: &mut ProviderRegistry) {
-    let client = Client::new();
+    let client: &Client = &HTTP_CLIENT;
 
-    // Chat / IM providers (20)
-    registry.register(Arc::new(wecom::WeComProvider::new(client.clone())));
-    registry.register(Arc::new(feishu::FeishuProvider::new(client.clone())));
-    registry.register(Arc::new(dingtalk::DingTalkProvider::new(client.clone())));
-    registry.register(Arc::new(slack::SlackProvider::new(client.clone())));
-    registry.register(Arc::new(telegram::TelegramProvider::new(client.clone())));
-    registry.register(Arc::new(discord::DiscordProvider::new(client.clone())));
-    registry.register(Arc::new(teams::TeamsProvider::new(client.clone())));
-    registry.register(Arc::new(googlechat::GoogleChatProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(mattermost::MattermostProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(rocketchat::RocketChatProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(matrix::MatrixProvider::new(client.clone())));
-    registry.register(Arc::new(zulip::ZulipProvider::new(client.clone())));
-    registry.register(Arc::new(webex::WebexProvider::new(client.clone())));
-    registry.register(Arc::new(line::LineProvider::new(client.clone())));
-    registry.register(Arc::new(revolt::RevoltProvider::new(client.clone())));
-    registry.register(Arc::new(mastodon::MastodonProvider::new(client.clone())));
-    registry.register(Arc::new(ryver::RyverProvider::new(client.clone())));
-    registry.register(Arc::new(twist::TwistProvider::new(client.clone())));
-    registry.register(Arc::new(flock::FlockProvider::new(client.clone())));
-    registry.register(Arc::new(gitter::GitterProvider::new(client.clone())));
+    // Macro: register a provider whose `new(client)` takes a cloned client.
+    macro_rules! register {
+        ($ctor:expr) => {
+            registry.register(Arc::new($ctor(client.clone())));
+        };
+    }
 
-    // Gaming / community chat (2)
-    registry.register(Arc::new(guilded::GuildedProvider::new(client.clone())));
-    registry.register(Arc::new(misskey::MisskeyProvider::new(client.clone())));
+    // Macro: register a provider whose `new()` takes no arguments.
+    macro_rules! register_no_client {
+        ($ctor:expr) => {
+            registry.register(Arc::new($ctor()));
+        };
+    }
 
-    // Social networks (1)
-    registry.register(Arc::new(bluesky::BlueskyProvider::new(client.clone())));
+    // ── Chat / IM ──────────────────────────────────────────────────────────
+    register!(wecom::WeComProvider::new);
+    register!(feishu::FeishuProvider::new);
+    register!(dingtalk::DingTalkProvider::new);
+    register!(slack::SlackProvider::new);
+    register!(telegram::TelegramProvider::new);
+    register!(discord::DiscordProvider::new);
+    register!(teams::TeamsProvider::new);
+    register!(googlechat::GoogleChatProvider::new);
+    register!(mattermost::MattermostProvider::new);
+    register!(rocketchat::RocketChatProvider::new);
+    register!(matrix::MatrixProvider::new);
+    register!(zulip::ZulipProvider::new);
+    register!(webex::WebexProvider::new);
+    register!(line::LineProvider::new);
+    register!(revolt::RevoltProvider::new);
+    register!(mastodon::MastodonProvider::new);
+    register!(ryver::RyverProvider::new);
+    register!(twist::TwistProvider::new);
+    register!(flock::FlockProvider::new);
+    register!(gitter::GitterProvider::new);
 
-    // Push notification providers (20)
-    registry.register(Arc::new(pushover::PushoverProvider::new(client.clone())));
-    registry.register(Arc::new(ntfy::NtfyProvider::new(client.clone())));
-    registry.register(Arc::new(gotify::GotifyProvider::new(client.clone())));
-    registry.register(Arc::new(bark::BarkProvider::new(client.clone())));
-    registry.register(Arc::new(pushdeer::PushDeerProvider::new(client.clone())));
-    registry.register(Arc::new(serverchan::ServerChanProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(pushbullet::PushBulletProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(simplepush::SimplePushProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(notica::NoticaProvider::new(client.clone())));
-    registry.register(Arc::new(prowl::ProwlProvider::new(client.clone())));
-    registry.register(Arc::new(join::JoinProvider::new(client.clone())));
-    registry.register(Arc::new(pushsafer::PushsaferProvider::new(client.clone())));
-    registry.register(Arc::new(onesignal::OneSignalProvider::new(client.clone())));
-    registry.register(Arc::new(techulus::TechulusProvider::new(client.clone())));
-    registry.register(Arc::new(pushy::PushyProvider::new(client.clone())));
-    registry.register(Arc::new(chanify::ChanifyProvider::new(client.clone())));
-    registry.register(Arc::new(pushplus::PushplusProvider::new(client.clone())));
-    registry.register(Arc::new(wxpusher::WxPusherProvider::new(client.clone())));
-    registry.register(Arc::new(fcm::FcmProvider::new(client.clone())));
-    registry.register(Arc::new(pushjet::PushjetProvider::new(client.clone())));
+    // ── Gaming / community chat ────────────────────────────────────────────
+    register!(guilded::GuildedProvider::new);
+    register!(misskey::MisskeyProvider::new);
 
-    // Automation & incident platforms (7)
-    registry.register(Arc::new(ifttt::IftttProvider::new(client.clone())));
-    registry.register(Arc::new(pagerduty::PagerDutyProvider::new(client.clone())));
-    registry.register(Arc::new(opsgenie::OpsgenieProvider::new(client.clone())));
-    registry.register(Arc::new(pagertree::PagerTreeProvider::new(client.clone())));
-    registry.register(Arc::new(signl4::Signl4Provider::new(client.clone())));
-    registry.register(Arc::new(victorops::VictorOpsProvider::new(client.clone())));
-    registry.register(Arc::new(spike::SpikeProvider::new(client.clone())));
+    // ── Social networks ────────────────────────────────────────────────────
+    register!(bluesky::BlueskyProvider::new);
 
-    // SMS providers (17)
-    registry.register(Arc::new(twilio::TwilioProvider::new(client.clone())));
-    registry.register(Arc::new(vonage::VonageProvider::new(client.clone())));
-    registry.register(Arc::new(d7networks::D7NetworksProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(sinch::SinchProvider::new(client.clone())));
-    registry.register(Arc::new(clickatell::ClickatellProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(bulksms::BulkSmsProvider::new(client.clone())));
-    registry.register(Arc::new(kavenegar::KavenegarProvider::new(client.clone())));
-    registry.register(Arc::new(messagebird::MessageBirdProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(plivo::PlivoProvider::new(client.clone())));
-    registry.register(Arc::new(burstsms::BurstSmsProvider::new(client.clone())));
-    registry.register(Arc::new(popcorn::PopcornProvider::new(client.clone())));
-    registry.register(Arc::new(clicksend::ClickSendProvider::new(client.clone())));
-    registry.register(Arc::new(seven::SevenProvider::new(client.clone())));
-    registry.register(Arc::new(smseagle::SmsEagleProvider::new(client.clone())));
-    registry.register(Arc::new(httpsms::HttpSmsProvider::new(client.clone())));
-    registry.register(Arc::new(msg91::Msg91Provider::new(client.clone())));
-    registry.register(Arc::new(freemobile::FreeMobileProvider::new(
-        client.clone(),
-    )));
+    // ── Push notifications ─────────────────────────────────────────────────
+    register!(pushover::PushoverProvider::new);
+    register!(ntfy::NtfyProvider::new);
+    register!(gotify::GotifyProvider::new);
+    register!(bark::BarkProvider::new);
+    register!(pushdeer::PushDeerProvider::new);
+    register!(serverchan::ServerChanProvider::new);
+    register!(pushbullet::PushBulletProvider::new);
+    register!(simplepush::SimplePushProvider::new);
+    register!(notica::NoticaProvider::new);
+    register!(prowl::ProwlProvider::new);
+    register!(join::JoinProvider::new);
+    register!(pushsafer::PushsaferProvider::new);
+    register!(onesignal::OneSignalProvider::new);
+    register!(techulus::TechulusProvider::new);
+    register!(pushy::PushyProvider::new);
+    register!(chanify::ChanifyProvider::new);
+    register!(pushplus::PushplusProvider::new);
+    register!(wxpusher::WxPusherProvider::new);
+    register!(fcm::FcmProvider::new);
+    register!(pushjet::PushjetProvider::new);
 
-    // Email providers (8)
-    registry.register(Arc::new(email::EmailProvider::new()));
-    registry.register(Arc::new(mailgun::MailgunProvider::new(client.clone())));
-    registry.register(Arc::new(sendgrid::SendGridProvider::new(client.clone())));
-    registry.register(Arc::new(sparkpost::SparkPostProvider::new(client.clone())));
-    registry.register(Arc::new(ses::SesProvider::new(client.clone())));
-    registry.register(Arc::new(resend::ResendProvider::new(client.clone())));
-    registry.register(Arc::new(brevo::BrevoProvider::new(client.clone())));
-    registry.register(Arc::new(smtp2go::Smtp2GoProvider::new(client.clone())));
+    // ── Automation & incident platforms ───────────────────────────────────
+    register!(ifttt::IftttProvider::new);
+    register!(pagerduty::PagerDutyProvider::new);
+    register!(opsgenie::OpsgenieProvider::new);
+    register!(pagertree::PagerTreeProvider::new);
+    register!(signl4::Signl4Provider::new);
+    register!(victorops::VictorOpsProvider::new);
+    register!(spike::SpikeProvider::new);
 
-    // AWS cloud providers (1)
-    registry.register(Arc::new(sns::SnsProvider::new(client.clone())));
+    // ── SMS providers ──────────────────────────────────────────────────────
+    register!(twilio::TwilioProvider::new);
+    register!(vonage::VonageProvider::new);
+    register!(d7networks::D7NetworksProvider::new);
+    register!(sinch::SinchProvider::new);
+    register!(clickatell::ClickatellProvider::new);
+    register!(bulksms::BulkSmsProvider::new);
+    register!(kavenegar::KavenegarProvider::new);
+    register!(messagebird::MessageBirdProvider::new);
+    register!(plivo::PlivoProvider::new);
+    register!(burstsms::BurstSmsProvider::new);
+    register!(popcorn::PopcornProvider::new);
+    register!(clicksend::ClickSendProvider::new);
+    register!(seven::SevenProvider::new);
+    register!(smseagle::SmsEagleProvider::new);
+    register!(httpsms::HttpSmsProvider::new);
+    register!(msg91::Msg91Provider::new);
+    register!(freemobile::FreeMobileProvider::new);
 
-    // Generic webhook variants (4)
-    registry.register(Arc::new(webhook::WebhookProvider::new(client.clone())));
-    registry.register(Arc::new(json_webhook::JsonWebhookProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(form_webhook::FormWebhookProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(xml_webhook::XmlWebhookProvider::new(
-        client.clone(),
-    )));
+    // ── Email providers ────────────────────────────────────────────────────
+    register_no_client!(email::EmailProvider::new);
+    register!(mailgun::MailgunProvider::new);
+    register!(sendgrid::SendGridProvider::new);
+    register!(sparkpost::SparkPostProvider::new);
+    register!(ses::SesProvider::new);
+    register!(sns::SnsProvider::new);
+    register!(resend::ResendProvider::new);
+    register!(brevo::BrevoProvider::new);
+    register!(smtp2go::Smtp2GoProvider::new);
 
-    // Home automation & IoT (2)
-    registry.register(Arc::new(homeassistant::HomeAssistantProvider::new(
-        client.clone(),
-    )));
-    registry.register(Arc::new(lametric::LaMetricProvider::new(client.clone())));
+    // ── Webhook providers ──────────────────────────────────────────────────
+    register!(webhook::WebhookProvider::new);
+    register!(json_webhook::JsonWebhookProvider::new);
+    register!(form_webhook::FormWebhookProvider::new);
+    register!(xml_webhook::XmlWebhookProvider::new);
 
-    // Self-hosted media / cloud (2)
-    registry.register(Arc::new(lunasea::LunaseaProvider::new(client.clone())));
-    registry.register(Arc::new(nextcloud::NextcloudProvider::new(client.clone())));
+    // ── Home automation & IoT ──────────────────────────────────────────────
+    register!(homeassistant::HomeAssistantProvider::new);
+    register!(lametric::LaMetricProvider::new);
 
-    // Secure messaging (2)
-    registry.register(Arc::new(threema::ThreemaProvider::new(client.clone())));
-    registry.register(Arc::new(signal::SignalProvider::new(client.clone())));
+    // ── Self-hosted media / cloud ──────────────────────────────────────────
+    register!(lunasea::LunaseaProvider::new);
+    register!(nextcloud::NextcloudProvider::new);
 
-    // Messaging / Social (1)
-    registry.register(Arc::new(reddit::RedditProvider::new(client.clone())));
+    // ── Secure messaging ───────────────────────────────────────────────────
+    register!(threema::ThreemaProvider::new);
+    register!(signal::SignalProvider::new);
 
-    // Relay / aggregation (1)
-    registry.register(Arc::new(apprise::AppriseProvider::new(client.clone())));
+    // ── Misc ───────────────────────────────────────────────────────────────
+    register!(reddit::RedditProvider::new);
+    register!(apprise::AppriseProvider::new);
+    register!(webpush::WebPushProvider::new);
 
-    // Browser push (1)
-    registry.register(Arc::new(webpush::WebPushProvider::new(client.clone())));
-
-    // New providers — Iteration 7 (13)
-    // WhatsApp Business Cloud API
-    registry.register(Arc::new(whatsapp::WhatsAppProvider::new(client.clone())));
-    // Kodi (XBMC) JSON-RPC notifications
-    registry.register(Arc::new(kodi::KodiProvider::new(client.clone())));
-    // Notifico self-hosted notification service
-    registry.register(Arc::new(notifico::NotificoProvider::new(client.clone())));
-    // 46elks SMS
-    registry.register(Arc::new(fortysixelks::FortySixElksProvider::new(
-        client.clone(),
-    )));
-    // BulkVS SMS
-    registry.register(Arc::new(bulkvs::BulkVsProvider::new(client.clone())));
-    // Jira issue comments
-    registry.register(Arc::new(jira::JiraProvider::new(client.clone())));
-    // PushMe push notifications
-    registry.register(Arc::new(pushme::PushMeProvider::new(client.clone())));
-    // SendPulse transactional email
-    registry.register(Arc::new(sendpulse::SendPulseProvider::new(client.clone())));
-    // Streamlabs alerts
-    registry.register(Arc::new(streamlabs::StreamlabsProvider::new(
-        client.clone(),
-    )));
-    // Synology Chat webhook
-    registry.register(Arc::new(synology::SynologyProvider::new(client.clone())));
-    // Africa's Talking SMS
-    registry.register(Arc::new(africas_talking::AfricasTalkingProvider::new(
-        client.clone(),
-    )));
-    // Office 365 / Outlook via Microsoft Graph
-    registry.register(Arc::new(o365::O365Provider::new(client.clone())));
-    // Nextcloud Talk chat
-    registry.register(Arc::new(nctalk::NcTalkProvider::new(client.clone())));
-
-    // New providers — Iteration 8 (13)
-    // Emby media server notifications
-    registry.register(Arc::new(emby::EmbyProvider::new(client.clone())));
-    // Jellyfin media server notifications
-    registry.register(Arc::new(jellyfin::JellyfinProvider::new(client.clone())));
-    // Pushcut iOS automation notifications
-    registry.register(Arc::new(pushcut::PushcutProvider::new(client.clone())));
-    // MQTT publish via broker HTTP API
-    registry.register(Arc::new(mqtt::MqttProvider::new(client.clone())));
-    // VoIP.ms SMS messaging
-    registry.register(Arc::new(voipms::VoipMsProvider::new(client.clone())));
-    // SFR SMS (French carrier)
-    registry.register(Arc::new(sfr::SfrProvider::new(client.clone())));
-    // Pushed.co push notifications
-    registry.register(Arc::new(pushed::PushedProvider::new(client.clone())));
-    // Growl desktop notifications via GNTP
-    registry.register(Arc::new(growl::GrowlProvider::new(client.clone())));
-    // Kumulos push notifications
-    registry.register(Arc::new(kumulos::KumulosProvider::new(client.clone())));
-    // Parse Platform push notifications
-    registry.register(Arc::new(parse::ParseProvider::new(client.clone())));
-    // Remote Syslog via HTTP relay
-    registry.register(Arc::new(rsyslog::RsyslogProvider::new(client.clone())));
-    // SMS Manager
-    registry.register(Arc::new(smsmanager::SmsManagerProvider::new(
-        client.clone(),
-    )));
-    // X (Twitter) tweets/DMs
-    registry.register(Arc::new(twitter::TwitterProvider::new(client.clone())));
-
-    // New providers — Iteration 9 (5)
-    // Boxcar iOS/Android push notifications
-    registry.register(Arc::new(boxcar::BoxcarProvider::new(client.clone())));
-    // DAPNET ham radio paging network
-    registry.register(Arc::new(dapnet::DapnetProvider::new(client.clone())));
-    // Enigma2 satellite receiver on-screen notifications
-    registry.register(Arc::new(enigma2::Enigma2Provider::new(client.clone())));
-    // Notifiarr media server notification aggregation
-    registry.register(Arc::new(notifiarr::NotifiarrProvider::new(client.clone())));
-    // Atlassian Statuspage.io incident management
-    registry.register(Arc::new(statuspage::StatuspageProvider::new(
-        client.clone(),
-    )));
-
-    // New providers — Iteration 10 (5)
-    // Dot. IoT e-ink display notifications
-    registry.register(Arc::new(dot::DotProvider::new(client.clone())));
-    // Fluxer webhook notifications (Discord-style)
-    registry.register(Arc::new(fluxer::FluxerProvider::new(client.clone())));
-    // Microsoft Power Automate / Workflows (Adaptive Cards)
-    registry.register(Arc::new(workflows::WorkflowsProvider::new(client.clone())));
-    // NotificationAPI multi-channel notifications
-    registry.register(Arc::new(notification_api::NotificationApiProvider::new(
-        client.clone(),
-    )));
-    // SpugPush webhook notifications (Spug monitoring)
-    registry.register(Arc::new(spugpush::SpugPushProvider::new(client)));
+    // ── Community / multi-platform ─────────────────────────────────────────
+    register!(whatsapp::WhatsAppProvider::new);
+    register!(kodi::KodiProvider::new);
+    register!(notifico::NotificoProvider::new);
+    register!(fortysixelks::FortySixElksProvider::new);
+    register!(bulkvs::BulkVsProvider::new);
+    register!(jira::JiraProvider::new);
+    register!(pushme::PushMeProvider::new);
+    register!(sendpulse::SendPulseProvider::new);
+    register!(streamlabs::StreamlabsProvider::new);
+    register!(synology::SynologyProvider::new);
+    register!(africas_talking::AfricasTalkingProvider::new);
+    register!(o365::O365Provider::new);
+    register!(nctalk::NcTalkProvider::new);
+    register!(emby::EmbyProvider::new);
+    register!(jellyfin::JellyfinProvider::new);
+    register!(pushcut::PushcutProvider::new);
+    register!(mqtt::MqttProvider::new);
+    register!(voipms::VoipMsProvider::new);
+    register!(sfr::SfrProvider::new);
+    register!(pushed::PushedProvider::new);
+    register!(growl::GrowlProvider::new);
+    register!(kumulos::KumulosProvider::new);
+    register!(parse::ParseProvider::new);
+    register!(rsyslog::RsyslogProvider::new);
+    register!(smsmanager::SmsManagerProvider::new);
+    register!(twitter::TwitterProvider::new);
+    register!(boxcar::BoxcarProvider::new);
+    register!(dapnet::DapnetProvider::new);
+    register!(enigma2::Enigma2Provider::new);
+    register!(notifiarr::NotifiarrProvider::new);
+    register!(statuspage::StatuspageProvider::new);
+    register!(dot::DotProvider::new);
+    register!(fluxer::FluxerProvider::new);
+    register!(workflows::WorkflowsProvider::new);
+    register!(notification_api::NotificationApiProvider::new);
+    register!(spugpush::SpugPushProvider::new);
 }
