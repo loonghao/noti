@@ -131,6 +131,7 @@ rounds or require coordination with the iteration agent.
 - [ ] `crates/noti-queue/benches/queue_throughput.rs` — `bench_enqueue` and `bench_enqueue_dequeue_roundtrip` recreate a `Runtime` on every benchmark iteration inside `b.iter()`; this adds setup cost to each sample and inflates wall-time; extract the runtime outside `b.iter()` using `b.to_async()` or a shared `#[tokio::main]`-style wrapper when criterion-tokio integration is added
 - [ ] `crates/noti-providers/src/apns.rs` — `p256 = { version = "0.13", features = ["ecdsa"] }` is pinned directly in the crate `Cargo.toml` rather than as a workspace dependency; consider promoting to `[workspace.dependencies]` if other crates or providers ever need ECDSA operations
 - [ ] `crates/noti-server/src/handlers/prometheus.rs` — Prometheus metrics handler builds strings manually; consider replacing with the `metrics` crate (already declared as workspace dependency) to reduce maintenance burden as more metrics are added
+- [ ] `crates/noti-core/src/circuit_breaker.rs` — 3 timing-sensitive tests are marked `#[ignore]` (half-open transition, close-on-success-in-half-open, reopen-on-failure-in-half-open); these cannot reliably use `thread::sleep` in unit tests; consider replacing with a `MockClock` abstraction or moving to integration tests with tokio's `time::pause`/`time::advance`
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 
