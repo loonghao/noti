@@ -251,6 +251,7 @@ fn register_email_providers(registry: &mut ProviderRegistry, client: &Client) {
     registry.register(Arc::new(sendgrid::SendGridProvider::new(client.clone())));
     registry.register(Arc::new(sparkpost::SparkPostProvider::new(client.clone())));
     registry.register(Arc::new(ses::SesProvider::new(client.clone())));
+    registry.register(Arc::new(sns::SnsProvider::new(client.clone())));
     registry.register(Arc::new(resend::ResendProvider::new(client.clone())));
     registry.register(Arc::new(brevo::BrevoProvider::new(client.clone())));
     registry.register(Arc::new(smtp2go::Smtp2GoProvider::new(client.clone())));
