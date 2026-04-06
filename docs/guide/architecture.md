@@ -38,6 +38,7 @@ Core abstractions shared across the workspace:
 - **`Config`** — profile management and TOML persistence
 - **`Message templates`** — variable substitution with `{{placeholder}}` syntax
 - **`Retry policies`** — configurable retry with fixed/exponential backoff
+- **`Circuit breaker`** — per-provider `CircuitBreaker` with closed/open/half-open states; registry keeps one breaker per provider name
 - **`Batch & failover sending`** — multi-target parallel or sequential delivery
 - **`Delivery status tracking`** — per-notification delivery state machine
 - **`Priority system`** — low, normal, high, urgent message priorities
@@ -60,7 +61,8 @@ Async message queue for background notification processing:
 - **In-memory backend** — `InMemoryQueue` with configurable capacity
 - **SQLite backend** — `SqliteQueue` for persistent task storage across restarts
 - **Stale task recovery** — automatically recovers tasks left in `Processing` state after an unclean shutdown via `QueueBackend::recover_stale_tasks()`
-- **Worker pool** — concurrent workers dequeue and deliver notifications
+- **Worker pool** — concurrent workers dequeue and deliver notifications; worker stats (total/active/idle) exposed via `WorkerStatsHandle` and surfaced in `/health`
+- **Circuit breaker integration** — each worker respects the provider's `CircuitBreaker` and fast-fails when the circuit is open
 - **Webhook callbacks** — HTTP POST on task completion or failure
 - **Scheduled/delayed delivery** — defer notifications via `delay_seconds` or `scheduled_at`
 - **Task lifecycle** — queued → processing → completed/failed/cancelled

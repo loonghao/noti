@@ -32,7 +32,7 @@ The health endpoint provides a holistic view of service status, including depend
 ```json
 {
   "status": "ok",
-  "version": "0.1.5",
+  "version": "0.1.9",
   "uptime_seconds": 3600,
   "dependencies": {
     "queue": {
@@ -41,11 +41,18 @@ The health endpoint provides a holistic view of service status, including depend
     },
     "providers": {
       "status": "up",
-      "detail": "125 registered"
+      "detail": "126 registered"
     }
+  },
+  "workers": {
+    "total": 4,
+    "active": 2,
+    "idle": 2
   }
 }
 ```
+
+The `workers` field is omitted when the server is started without a worker pool (e.g. in proxy-only mode).
 
 ### Status Values
 
@@ -377,6 +384,8 @@ Monitoring-related environment variables:
 | `NOTI_LOG_FORMAT` | `text` | Log format: `text` or `json` (for log aggregation) |
 | `NOTI_AUTH_EXCLUDED_PATHS` | `/health` | Paths that bypass authentication (health check always accessible) |
 | `NOTI_WORKER_COUNT` | `4` | Number of background workers (affects processing throughput) |
+| `NOTI_OTEL_ENDPOINT` | *(empty)* | OTLP collector gRPC endpoint (e.g. `http://localhost:4317`). When set, distributed traces are exported to Jaeger, Tempo, Honeycomb, etc. |
+| `NOTI_OTEL_SERVICE_NAME` | `noti-server` | Service name used in OTEL resource attributes and span names. |
 
 ### Recommended Production Setup
 
