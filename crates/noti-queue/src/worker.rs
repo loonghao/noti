@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -10,6 +10,82 @@ use noti_core::{CircuitBreakerRegistry, ProviderRegistry};
 
 use crate::callback::fire_callback;
 use crate::queue::QueueBackend;
+
+/// Worker pool statistics for health monitoring.
+/// Wrapped in Arc for cheap cloning across worker tasks.
+pub struct WorkerStats {
+    /// Total number of workers in the pool.
+    pub total: u32,
+    /// Number of workers currently processing a task.
+    active: AtomicU32,
+    /// Number of workers currently idle (waiting for tasks).
+    idle: AtomicU32,
+}
+
+impl Default for WorkerStats {
+    fn default() -> Self {
+        Self {
+            total: 0,
+            active: AtomicU32::new(0),
+            idle: AtomicU32::new(0),
+        }
+    }
+}
+
+impl std::fmt::Debug for WorkerStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerStats")
+            .field("total", &self.total)
+            .field("active", &self.active.load(Ordering::SeqCst))
+            .field("idle", &self.idle.load(Ordering::SeqCst))
+            .finish()
+    }
+}
+
+impl WorkerStats {
+    /// Increment active count and decrement idle count.
+    pub fn mark_active(&self) {
+        self.active.fetch_add(1, Ordering::SeqCst);
+        self.idle.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Increment idle count and decrement active count.
+    pub fn mark_idle(&self) {
+        self.idle.fetch_add(1, Ordering::SeqCst);
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Get current snapshot of worker stats.
+    pub fn snapshot(&self) -> WorkerStatsSnapshot {
+        WorkerStatsSnapshot {
+            total: self.total,
+            active: self.active.load(Ordering::SeqCst),
+            idle: self.idle.load(Ordering::SeqCst),
+        }
+    }
+}
+
+/// Immutable snapshot of worker statistics.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct WorkerStatsSnapshot {
+    pub total: u32,
+    pub active: u32,
+    pub idle: u32,
+}
+
+/// Handle to worker pool statistics. Cloneable so it can be stored in AppState.
+/// Use this to query worker stats without needing the full WorkerHandle.
+#[derive(Clone)]
+pub struct WorkerStatsHandle {
+    stats: Arc<WorkerStats>,
+}
+
+impl WorkerStatsHandle {
+    /// Get a snapshot of current worker statistics.
+    pub fn stats(&self) -> WorkerStatsSnapshot {
+        self.stats.snapshot()
+    }
+}
 
 /// Configuration for the worker pool.
 #[derive(Debug, Clone)]
@@ -51,6 +127,8 @@ pub struct WorkerHandle {
     handles: Vec<JoinHandle<()>>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
+    /// Shared worker statistics for health monitoring.
+    stats: Arc<WorkerStats>,
 }
 
 impl WorkerHandle {
@@ -75,6 +153,11 @@ impl WorkerHandle {
             let _ = handle.await;
         }
     }
+
+    /// Get a snapshot of current worker statistics.
+    pub fn stats(&self) -> WorkerStatsSnapshot {
+        self.stats.snapshot()
+    }
 }
 
 /// A pool of workers that consume tasks from a queue and send notifications.
@@ -84,16 +167,28 @@ impl WorkerPool {
     /// Start a worker pool that processes tasks from the given queue.
     ///
     /// Each worker loops: dequeue → check circuit breaker → send via provider → ack/nack.
+    ///
+    /// Returns `(WorkerHandle, WorkerStatsHandle)`. Use `WorkerHandle` for shutdown
+    /// and `WorkerStatsHandle` for querying worker statistics.
     pub fn start(
         queue: Arc<dyn QueueBackend>,
         registry: Arc<ProviderRegistry>,
         circuit_breakers: Arc<CircuitBreakerRegistry>,
         config: WorkerConfig,
         task_notify: Arc<Notify>,
-    ) -> WorkerHandle {
+    ) -> (WorkerHandle, WorkerStatsHandle) {
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let shutdown_notify = Arc::new(Notify::new());
+        let stats = Arc::new(WorkerStats {
+            total: config.concurrency as u32,
+            ..Default::default()
+        });
         let mut handles = Vec::with_capacity(config.concurrency);
+
+        // Initialize all workers as idle
+        for _ in 0..config.concurrency {
+            stats.idle.fetch_add(1, Ordering::SeqCst);
+        }
 
         for worker_id in 0..config.concurrency {
             let queue = queue.clone();
@@ -103,6 +198,7 @@ impl WorkerPool {
             let shutdown_flag = shutdown_flag.clone();
             let shutdown_notify = shutdown_notify.clone();
             let task_notify = task_notify.clone();
+            let stats = stats.clone();
 
             let handle = tokio::spawn(async move {
                 tracing::info!(worker_id, "queue worker started");
@@ -116,6 +212,7 @@ impl WorkerPool {
 
                     match queue.dequeue().await {
                         Ok(Some(task)) => {
+                            stats.mark_active();
                             let task_id = task.id.clone();
                             let provider_name = task.provider.clone();
                             let has_callback = task.callback_url.is_some();
@@ -267,6 +364,8 @@ impl WorkerPool {
                                             fire_callback(&updated).await;
                                         }
                                     }
+                                    // Mark worker as idle after completing task
+                                    stats.mark_idle();
                                 }
                             }
                         }
@@ -298,11 +397,14 @@ impl WorkerPool {
             handles.push(handle);
         }
 
-        WorkerHandle {
+        let worker_handle = WorkerHandle {
             handles,
             shutdown_flag,
             shutdown_notify,
-        }
+            stats: stats.clone(),
+        };
+        let stats_handle = WorkerStatsHandle { stats };
+        (worker_handle, stats_handle)
     }
 }
 
@@ -412,7 +514,7 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(
+        let (handle, _stats_handle) = WorkerPool::start(
             queue.clone(),
             registry,
             Arc::new(CircuitBreakerRegistry::new()),
@@ -450,7 +552,7 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(
+        let (handle, _stats_handle) = WorkerPool::start(
             queue.clone(),
             registry,
             Arc::new(CircuitBreakerRegistry::new()),
@@ -477,7 +579,7 @@ mod tests {
             .with_concurrency(2)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(
+        let (handle, _stats_handle) = WorkerPool::start(
             queue,
             registry,
             Arc::new(CircuitBreakerRegistry::new()),
@@ -507,7 +609,7 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(
+        let (handle, _stats_handle) = WorkerPool::start(
             queue.clone(),
             registry,
             Arc::new(CircuitBreakerRegistry::new()),
@@ -551,7 +653,7 @@ mod tests {
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
 
-        let handle = WorkerPool::start(
+        let (handle, _stats_handle) = WorkerPool::start(
             queue.clone(),
             registry,
             circuit_registry,

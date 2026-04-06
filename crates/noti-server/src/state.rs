@@ -3,7 +3,8 @@ use std::time::SystemTime;
 
 use noti_core::{CircuitBreakerRegistry, ProviderRegistry, StatusTracker, TemplateRegistry};
 use noti_queue::{
-    InMemoryQueue, QueueBackend, QueueError, SqliteQueue, WorkerConfig, WorkerHandle, WorkerPool,
+    InMemoryQueue, QueueBackend, QueueError, SqliteQueue, WorkerConfig, WorkerHandle,
+    WorkerPool, WorkerStatsHandle,
 };
 use tokio::sync::{Notify, RwLock};
 
@@ -19,6 +20,11 @@ pub struct AppState {
     pub queue: Arc<dyn QueueBackend>,
     pub task_notify: Arc<Notify>,
     pub started_at: SystemTime,
+    /// Optional worker handle for accessing worker statistics.
+    /// None when workers are not started (e.g., read-only mode or tests).
+    /// Stored as Arc so that AppState can remain Clone while allowing
+    /// stats to be shared across clones.
+    pub worker_stats_handle: Option<Arc<WorkerStatsHandle>>,
 }
 
 impl AppState {
@@ -35,6 +41,7 @@ impl AppState {
             queue,
             task_notify,
             started_at: SystemTime::now(),
+            worker_stats_handle: None,
         }
     }
 
@@ -79,6 +86,7 @@ impl AppState {
             queue,
             task_notify,
             started_at: SystemTime::now(),
+            worker_stats_handle: None,
         })
     }
 
@@ -99,14 +107,15 @@ impl AppState {
             queue,
             task_notify,
             started_at: SystemTime::now(),
+            worker_stats_handle: None,
         }
     }
 
     /// Start background worker pool for async task processing.
     ///
-    /// Returns a handle that must be kept alive; dropping it does not shut down
-    /// workers, but calling `shutdown_and_join()` on it will.
-    pub fn start_workers(&self, config: WorkerConfig) -> WorkerHandle {
+    /// Returns `(WorkerHandle, WorkerStatsHandle)`. Use `WorkerHandle` for shutdown
+    /// and `WorkerStatsHandle` for querying worker statistics.
+    pub fn start_workers(&self, config: WorkerConfig) -> (WorkerHandle, WorkerStatsHandle) {
         WorkerPool::start(
             self.queue.clone(),
             self.registry.clone(),
@@ -114,5 +123,14 @@ impl AppState {
             config,
             self.task_notify.clone(),
         )
+    }
+
+    /// Return a new AppState clone with the worker handle set.
+    /// This is needed because AppState is Clone but we need to set the
+    /// worker_stats_handle after starting workers.
+    pub fn with_worker_handle(self, worker_stats_handle: Arc<WorkerStatsHandle>) -> Self {
+        let mut this = self;
+        this.worker_stats_handle = Some(worker_stats_handle);
+        this
     }
 }

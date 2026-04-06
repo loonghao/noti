@@ -83,7 +83,7 @@ dual_backend_test!(
         let worker_config = noti_queue::WorkerConfig::default()
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
-        let worker_handle = state.start_workers(worker_config);
+        let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
         // Wait for all tasks to complete
         for task_id in &task_ids {
@@ -137,7 +137,7 @@ dual_backend_test!(
         let worker_config = noti_queue::WorkerConfig::default()
             .with_concurrency(1)
             .with_poll_interval(Duration::from_millis(50));
-        let worker_handle = state.start_workers(worker_config);
+        let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
         let client = test_client();
         let callback_url = format!("{callback_base}/callback");
@@ -226,7 +226,7 @@ async fn e2e_graceful_shutdown_stops_processing_new_tasks() {
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
     // Wait for the worker to pick up and start processing the first task (50ms poll + start)
     // but not long enough for 200ms send to finish
@@ -282,7 +282,7 @@ async fn e2e_http_server_responsive_during_worker_shutdown() {
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
     let client = test_client();
     let base_clone = base.clone();
@@ -344,7 +344,7 @@ async fn e2e_graceful_shutdown_empty_queue_completes_quickly() {
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(4)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
     // Let workers run for a bit with empty queue
     tokio::time::sleep(Duration::from_millis(100)).await;

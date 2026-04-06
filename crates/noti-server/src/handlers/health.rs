@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::State;
+use noti_queue::WorkerStatsSnapshot;
 use serde::Serialize;
 use tracing::warn;
 use utoipa::ToSchema;
@@ -17,6 +18,9 @@ pub struct HealthResponse {
     pub uptime_seconds: u64,
     /// Dependency health details.
     pub dependencies: DependencyHealth,
+    /// Worker pool statistics. Omitted when workers are not started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers: Option<WorkerStatsSnapshot>,
 }
 
 /// Per-dependency health status.
@@ -87,6 +91,8 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
         );
     }
 
+    let workers = state.worker_stats_handle.as_ref().map(|h| h.stats());
+
     Json(HealthResponse {
         status: if all_up { "ok" } else { "degraded" }.to_string(),
         version: env!("CARGO_PKG_VERSION"),
@@ -95,5 +101,6 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
             queue: queue_health,
             providers: providers_health,
         },
+        workers,
     })
 }

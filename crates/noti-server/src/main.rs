@@ -1,4 +1,5 @@
 use axum::extract::DefaultBodyLimit;
+use std::sync::Arc;
 
 use noti_core::ProviderRegistry;
 use noti_queue::WorkerConfig;
@@ -49,7 +50,7 @@ async fn main() {
     let mut registry = ProviderRegistry::new();
     noti_providers::register_all_providers(&mut registry);
 
-    let state =
+    let mut state =
         AppState::with_queue_backend(registry, &config.queue_backend, &config.queue_db_path)
             .await
             .expect("failed to initialize queue backend");
@@ -60,8 +61,9 @@ async fn main() {
         concurrency: config.worker_count,
         ..Default::default()
     };
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
     tracing::info!(workers = config.worker_count, "queue worker pool started");
+    state = state.with_worker_handle(Arc::new(worker_stats_handle));
 
     // Auth middleware
     let auth_state = AuthState::new(config.auth.clone());

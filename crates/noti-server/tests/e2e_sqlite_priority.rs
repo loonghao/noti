@@ -63,7 +63,7 @@ async fn e2e_sqlite_priority_ordering_urgent_before_low() {
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
     // Wait for both tasks
     wait_for_terminal_status(&client, &base, &low_id).await;

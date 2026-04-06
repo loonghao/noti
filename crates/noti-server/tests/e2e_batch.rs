@@ -105,7 +105,7 @@ async fn e2e_batch_async_mixed_providers_and_priorities() {
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
     // Wait for all valid tasks to complete
     for task_id in &task_ids {
@@ -211,7 +211,7 @@ async fn e2e_sqlite_batch_async_mixed_providers_and_priorities() {
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, _worker_stats_handle) = state.start_workers(worker_config);
 
     for task_id in &task_ids {
         wait_for_terminal_status(&client, &base, task_id).await;

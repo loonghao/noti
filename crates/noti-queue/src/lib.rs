@@ -23,4 +23,4 @@ pub use queue::{QueueBackend, QueueStats};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteQueue;
 pub use task::{NotificationTask, TaskId, TaskStatus};
-pub use worker::{WorkerConfig, WorkerHandle, WorkerPool};
+pub use worker::{WorkerConfig, WorkerHandle, WorkerPool, WorkerStats, WorkerStatsSnapshot, WorkerStatsHandle};

@@ -217,11 +217,12 @@ pub async fn spawn_server_with_workers() -> (String, noti_queue::WorkerHandle) {
     registry.register(Arc::new(MockOkProvider));
     registry.register(Arc::new(MockFailProvider));
 
-    let state = noti_server::state::AppState::new(registry);
+    let mut state = noti_server::state::AppState::new(registry);
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(2)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
@@ -241,12 +242,13 @@ pub async fn spawn_server_with_workers_serial(
         registry.register(p);
     }
 
-    let state = noti_server::state::AppState::new(registry);
+    let mut state = noti_server::state::AppState::new(registry);
     // Single worker ensures sequential processing in priority order.
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
@@ -298,11 +300,12 @@ pub async fn spawn_server_sqlite_with_workers() -> (String, noti_queue::WorkerHa
     registry.register(Arc::new(MockOkProvider));
     registry.register(Arc::new(MockFailProvider));
 
-    let state = sqlite_app_state_with_registry(registry);
+    let mut state = sqlite_app_state_with_registry(registry);
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(2)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
@@ -321,11 +324,12 @@ pub async fn spawn_server_sqlite_with_workers_serial(
         registry.register(p);
     }
 
-    let state = sqlite_app_state_with_registry(registry);
+    let mut state = sqlite_app_state_with_registry(registry);
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(1)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
@@ -374,7 +378,7 @@ pub async fn spawn_server_sqlite_file_with_workers(
     registry.register(Arc::new(MockOkProvider));
     registry.register(Arc::new(MockFailProvider));
 
-    let state = noti_server::state::AppState::with_queue_backend(
+    let mut state = noti_server::state::AppState::with_queue_backend(
         registry,
         &noti_server::config::QueueBackendType::Sqlite,
         db_path,
@@ -384,7 +388,8 @@ pub async fn spawn_server_sqlite_file_with_workers(
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(2)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let app = noti_server::routes::build_router(state);
     let base = bind_and_serve(app).await;
@@ -561,11 +566,12 @@ pub async fn spawn_server_with_workers_and_rate_limit(
         registry.register(p);
     }
 
-    let state = noti_server::state::AppState::new(registry);
+    let mut state = noti_server::state::AppState::new(registry);
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(2)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let rate_config =
         RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
@@ -594,11 +600,12 @@ pub async fn spawn_server_sqlite_with_workers_and_rate_limit(
         registry.register(p);
     }
 
-    let state = sqlite_app_state_with_registry(registry);
+    let mut state = sqlite_app_state_with_registry(registry);
     let worker_config = noti_queue::WorkerConfig::default()
         .with_concurrency(2)
         .with_poll_interval(Duration::from_millis(50));
-    let worker_handle = state.start_workers(worker_config);
+    let (worker_handle, worker_stats_handle) = state.start_workers(worker_config);
+    state = state.with_worker_handle(std::sync::Arc::new(worker_stats_handle));
 
     let rate_config =
         RateLimitConfig::new(max_requests, Duration::from_secs(window_secs)).with_per_ip(false);
