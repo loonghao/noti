@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use tracing::Instrument;
 
 use noti_core::ProviderRegistry;
 
@@ -117,13 +118,16 @@ impl WorkerPool {
                             let provider_name = task.provider.clone();
                             let has_callback = task.callback_url.is_some();
 
-                            tracing::debug!(
+                            let span = tracing::info_span!(
+                                "process_task",
                                 worker_id,
                                 task_id = %task_id,
                                 provider = %provider_name,
-                                attempt = task.attempts,
-                                "processing task"
+                                attempt = task.attempts
                             );
+                            let _guard = span.enter();
+
+                            tracing::debug!("processing task");
 
                             // Look up the provider
                             let provider = match registry.get_by_name(&provider_name) {
@@ -150,7 +154,17 @@ impl WorkerPool {
                             };
 
                             // Send the notification
-                            match provider.send(&task.message, &task.config).await {
+                            let send_span = tracing::info_span!(
+                                "provider.send",
+                                provider = %provider_name,
+                                task_id = %task_id
+                            );
+                            let send_result = async {
+                                provider.send(&task.message, &task.config).await
+                            }
+                            .instrument(send_span)
+                            .await;
+                            match send_result {
                                 Ok(resp) if resp.success => {
                                     tracing::info!(
                                         worker_id,
@@ -166,7 +180,6 @@ impl WorkerPool {
                                             "failed to ack completed task"
                                         );
                                     }
-                                    // Fire callback on success
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {
                                             fire_callback(&updated).await;
@@ -181,8 +194,7 @@ impl WorkerPool {
                                         message = %resp.message,
                                         "provider returned failure response"
                                     );
-                                    if let Err(nack_err) = queue.nack(&task_id, &resp.message).await
-                                    {
+                                    if let Err(nack_err) = queue.nack(&task_id, &resp.message).await {
                                         tracing::error!(
                                             worker_id,
                                             task_id = %task_id,
@@ -190,7 +202,6 @@ impl WorkerPool {
                                             "failed to nack task after provider failure"
                                         );
                                     }
-                                    // Fire callback only if task reached terminal state (not retrying)
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {
                                             fire_callback(&updated).await;
@@ -215,7 +226,6 @@ impl WorkerPool {
                                             "failed to nack task after send error"
                                         );
                                     }
-                                    // Fire callback only if task reached terminal state (not retrying)
                                     if has_callback {
                                         if let Ok(Some(updated)) = queue.get_task(&task_id).await {
                                             fire_callback(&updated).await;

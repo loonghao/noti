@@ -7,6 +7,7 @@ use noti_server::middleware::auth::{AuthState, auth_middleware};
 use noti_server::middleware::rate_limit::{RateLimiterState, rate_limit_middleware};
 use noti_server::middleware::request_id::request_id_middleware;
 use noti_server::state::AppState;
+use noti_server::tracing_otel;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
@@ -15,6 +16,9 @@ use tracing_subscriber::EnvFilter;
 async fn main() {
     // Load configuration from environment variables
     let config = ServerConfig::from_env();
+
+    // Initialize OpenTelemetry (if NOTI_OTEL_ENDPOINT is set)
+    let _otel_guard = tracing_otel::init_otel();
 
     // Initialize tracing with configured log level and format
     let env_filter =
@@ -28,10 +32,14 @@ async fn main() {
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
                 .flatten_event(true)
                 .with_current_span(true)
-                .init();
+                .try_init()
+                .ok();
         }
         LogFormat::Text => {
-            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .try_init()
+                .ok();
         }
     }
 
@@ -140,6 +148,12 @@ async fn main() {
     tracing::info!("shutting down worker pool...");
     worker_handle.shutdown_and_join().await;
     tracing::info!("worker pool stopped, server exiting");
+
+    // Flush OpenTelemetry spans before exiting
+    if let Some(ref guard) = _otel_guard {
+        tracing::info!("flushing OpenTelemetry spans...");
+        guard.shutdown();
+    }
 }
 
 /// Wait for a shutdown signal (Ctrl+C or SIGTERM on Unix).

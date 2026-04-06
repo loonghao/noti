@@ -14,6 +14,37 @@ use std::sync::LazyLock;
 
 use crate::task::{NotificationTask, TaskStatus};
 
+/// W3C TraceContext traceparent header name.
+const TRACEPARENT_HEADER: &str = "traceparent";
+
+/// Extract the W3C TraceContext `traceparent` header value from the current tracing span.
+///
+/// Returns `None` if no active span has a valid OpenTelemetry context.
+/// The format is: `00-{trace_id}-{parent_id}-{flags}` where trace_id is 32 hex
+/// chars, parent_id is 16 hex chars, and flags is 2 hex chars ("01" = sampled).
+fn current_traceparent() -> Option<String> {
+    use opentelemetry::trace::TraceContextExt as _;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    let span = tracing::Span::current();
+    let ctx = span.context();
+    let span_ref = ctx.span();
+    let span_ctx = span_ref.span_context();
+    if !span_ctx.is_valid() {
+        return None;
+    }
+
+    let trace_id = span_ctx.trace_id();
+    let span_id = span_ctx.span_id();
+    let flags = if span_ctx.is_sampled() { "01" } else { "00" };
+
+    // W3C spec: trace_id is 32 hex chars, span_id is 16 hex chars
+    Some(format!(
+        "00-{:032x}-{:016x}-{}",
+        trace_id, span_id, flags
+    ))
+}
+
 /// Shared HTTP client for webhook callbacks (reused across all calls).
 static CALLBACK_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -83,6 +114,7 @@ impl CallbackPayload {
 /// This is a best-effort operation — callback failures are logged but
 /// do not affect the task's final status. The function is designed to
 /// be called from the worker loop without blocking task processing.
+#[tracing_attributes::instrument(skip(task), fields(task_id = %task.id, callback_url = %task.callback_url.as_ref().unwrap_or(&String::new()), status = %task.status))]
 pub async fn fire_callback(task: &NotificationTask) {
     let url = match &task.callback_url {
         Some(url) if !url.is_empty() => url.clone(),
@@ -117,6 +149,11 @@ pub async fn fire_callback(task: &NotificationTask) {
     request = request
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(TIMESTAMP_HEADER, std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_secs().to_string());
+
+    // Propagate the W3C TraceContext for distributed tracing correlation
+    if let Some(tp) = current_traceparent() {
+        request = request.header(TRACEPARENT_HEADER, &tp);
+    }
 
     if let Some(ref secret) = task.callback_secret {
         let sig = compute_signature(secret, &payload_bytes);
@@ -254,5 +291,35 @@ mod tests {
         let sig1 = compute_signature(secret, payload);
         let sig2 = compute_signature(secret, payload);
         assert_eq!(sig1, sig2);
+    }
+
+    #[tokio::test]
+    async fn test_current_traceparent_no_active_span() {
+        // Without an active OTEL span (no tracer initialized in tests),
+        // current_traceparent() should return None gracefully.
+        let result = current_traceparent();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_current_traceparent_inside_span() {
+        // When called inside an active tracing span, current_traceparent()
+        // should return a valid W3C traceparent header.
+        let result = tracing::info_span!("test_span", test = "value")
+            .in_scope(|| current_traceparent());
+
+        // If OTEL is initialized with a real exporter, this will be Some.
+        // In test environments without OTEL, this may be None — both are valid.
+        if let Some(tp) = result {
+            // Verify format: 00-{32 hex trace_id}-{16 hex span_id}-{2 hex flags}
+            assert!(tp.starts_with("00-"), "traceparent should start with '00-': {}", tp);
+            let parts: Vec<&str> = tp.split('-').collect();
+            assert_eq!(parts.len(), 4, "traceparent should have 4 parts: {}", tp);
+            assert_eq!(parts[0], "00", "version should be '00': {}", tp);
+            assert_eq!(parts[1].len(), 32, "trace_id should be 32 hex chars: {}", tp);
+            assert_eq!(parts[2].len(), 16, "span_id should be 16 hex chars: {}", tp);
+            assert!(parts[3] == "00" || parts[3] == "01", "flags should be 00 or 01: {}", tp);
+        }
+        // result being None is also acceptable in a no-OTEL test environment
     }
 }

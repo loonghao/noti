@@ -19,6 +19,8 @@
 //! | `NOTI_QUEUE_BACKEND` | `memory` | Queue backend: `memory` or `sqlite` |
 //! | `NOTI_QUEUE_DB_PATH` | `noti-queue.db` | SQLite database path (when backend=sqlite) |
 //! | `NOTI_CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins; `*` = permissive |
+//! | `NOTI_OTEL_ENDPOINT` | *(empty)* | OTLP collector gRPC endpoint (e.g. `http://localhost:4317`). When empty, OpenTelemetry is disabled. |
+//! | `NOTI_OTEL_SERVICE_NAME` | `noti-server` | Service name used in OTEL resource and span names. |
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
