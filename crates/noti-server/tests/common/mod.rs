@@ -2,6 +2,11 @@
 //!
 //! Provides reusable server spawn helpers, mock providers, callback infrastructure,
 //! and polling utilities so that individual test files stay focused on assertions.
+//!
+//! Each test binary only uses a subset of helpers defined here; the dead_code lint
+//! is suppressed at the module level because that is the standard pattern for
+//! shared test utility modules.
+#![allow(dead_code)]
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
@@ -713,6 +718,7 @@ pub fn test_client() -> reqwest::Client {
 ///     |spawn_fn, label| { ... }
 /// );
 /// ```
+#[macro_export]
 macro_rules! dual_backend_test {
     // ── basic: spawn_fn() -> String ──
     (basic, $mem_name:ident, $sql_name:ident, |$spawn:ident, $label:ident| $body:block) => {
@@ -845,8 +851,6 @@ macro_rules! dual_backend_test {
         }
     };
 }
-
-pub(crate) use dual_backend_test;
 
 // ───────────────────── Polling utilities ─────────────────────
 

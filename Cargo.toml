@@ -18,6 +18,7 @@ repository = "https://github.com/loonghao/noti"
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+criterion = { version = "0.5", features = ["async_tokio"] }
 assert_cmd = "2.0"
 axum = "0.8"
 base64 = "0.22"
