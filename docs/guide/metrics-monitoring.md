@@ -276,7 +276,28 @@ noti_server_uptime_seconds 86400
 # HELP noti_server_version Server version
 # TYPE noti_server_version gauge
 noti_server_version{version="0.1.9"} 1
+# HELP noti_workers_total Total number of workers in the pool
+# TYPE noti_workers_total gauge
+noti_workers_total 4
+# HELP noti_workers_active Number of workers actively processing tasks
+# TYPE noti_workers_active gauge
+noti_workers_active 1
+# HELP noti_workers_idle Number of workers idle and available
+# TYPE noti_workers_idle gauge
+noti_workers_idle 3
+# HELP noti_ratelimit_requests_total Total requests processed by rate limiter
+# TYPE noti_ratelimit_requests_total counter
+noti_ratelimit_requests_total{per_ip="true"} 150
+# HELP noti_ratelimit_rejected_total Requests rejected due to rate limiting
+# TYPE noti_ratelimit_rejected_total counter
+noti_ratelimit_rejected_total{per_ip="true"} 12
+# HELP noti_ratelimit_tracked_ips Number of IPs currently tracked (per-IP mode)
+# TYPE noti_ratelimit_tracked_ips gauge
+noti_ratelimit_tracked_ips 5
 ```
+
+Worker pool metrics (`noti_workers_*`) only appear when workers have been started.
+Rate limiting metrics (`noti_ratelimit_*`) only appear when a rate limiter is configured.
 
 The endpoint returns `Content-Type: text/plain; version=0.0.4; charset=utf-8`, which Prometheus recognizes as the standard exposition format.
 

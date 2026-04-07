@@ -14,4 +14,6 @@ docs/.vitepress/dist/
 docs/.vitepress/cache/
 node_modules/
 test_output.txt
+test_*.txt
+clippy_output.txt
 *.tmp
