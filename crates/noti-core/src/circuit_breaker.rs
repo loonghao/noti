@@ -1,6 +1,90 @@
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// A clock for providing current time in milliseconds since Unix epoch.
+///
+/// This trait enables time abstraction for `CircuitBreaker`, allowing
+/// deterministic testing without real-time sleeps.
+pub trait Clock: Send + Sync {
+    /// Returns the current time in milliseconds since Unix epoch.
+    fn now_ms(&self) -> u64;
+}
+
+/// System time clock using `SystemTime::now()`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_ms(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+}
+
+/// Mock clock for deterministic testing.
+///
+/// Advances time programmatically via `advance()` instead of relying
+/// on real-time sleeps.
+///
+/// Internally uses `Arc<AtomicU64>` so that cloning shares the same time state.
+/// This allows a single `MockClock` to be shared between test code and the
+/// `CircuitBreaker` under test.
+#[cfg(test)]
+pub struct MockClock {
+    now_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+#[cfg(test)]
+impl MockClock {
+    /// Create a new mock clock starting at the given time (ms since epoch).
+    pub fn new(start_ms: u64) -> Self {
+        Self {
+            now_ms: Arc::new(std::sync::atomic::AtomicU64::new(start_ms)),
+        }
+    }
+
+    /// Advance the mock clock by the given duration.
+    #[allow(dead_code)]
+    pub fn advance(&self, duration: Duration) {
+        self.now_ms
+            .fetch_add(duration.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// Set the mock clock to a specific time.
+    #[allow(dead_code)]
+    pub fn set(&self, ms: u64) {
+        self.now_ms.store(ms, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+impl Clone for MockClock {
+    fn clone(&self) -> Self {
+        Self {
+            now_ms: Arc::clone(&self.now_ms),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Debug for MockClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockClock")
+            .field("now_ms", &self.now_ms.load(Ordering::SeqCst))
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl Clock for MockClock {
+    fn now_ms(&self) -> u64 {
+        self.now_ms.load(Ordering::SeqCst)
+    }
+}
 
 /// Configuration for circuit breaker behavior.
 #[derive(Debug, Clone)]
@@ -62,8 +146,11 @@ pub enum CircuitState {
 /// Core circuit breaker state and logic.
 ///
 /// Uses atomics for lock-free updates. All operations are O(1).
-pub struct CircuitBreaker {
+///
+/// The `C` type parameter is the clock used for time tracking.
+pub struct CircuitBreaker<C: Clock = SystemClock> {
     config: CircuitBreakerConfig,
+    clock: C,
     /// Consecutive failure count (resets on success when closed).
     failures: AtomicU32,
     /// Consecutive success count (resets on failure when closed).
@@ -78,23 +165,35 @@ const STATE_CLOSED: u32 = 0;
 const STATE_OPEN: u32 = 1;
 const STATE_HALF_OPEN: u32 = 2;
 
-impl CircuitBreaker {
-    /// Create a new circuit breaker with the default configuration.
-    pub fn new() -> Self {
-        Self::with_config(CircuitBreakerConfig::default())
-    }
-
-    /// Create a new circuit breaker with a custom configuration.
-    pub fn with_config(config: CircuitBreakerConfig) -> Self {
+impl<C: Clock> CircuitBreaker<C> {
+    /// Create a new circuit breaker with a custom configuration and explicit clock.
+    ///
+    /// This constructor is useful for tests that need to control time.
+    pub fn with_config_and_clock(config: CircuitBreakerConfig, clock: C) -> Self {
         Self {
             config,
+            clock,
             failures: AtomicU32::new(0),
             successes: AtomicU32::new(0),
             opened_at: std::sync::atomic::AtomicU64::new(0),
             state: std::sync::atomic::AtomicU32::new(STATE_CLOSED),
         }
     }
+}
 
+impl CircuitBreaker<SystemClock> {
+    /// Create a new circuit breaker with the default configuration and system clock.
+    pub fn new() -> Self {
+        Self::with_config_and_clock(CircuitBreakerConfig::default(), SystemClock)
+    }
+
+    /// Create a new circuit breaker with a custom configuration and system clock.
+    pub fn with_config(config: CircuitBreakerConfig) -> Self {
+        Self::with_config_and_clock(config, SystemClock)
+    }
+}
+
+impl<C: Clock> CircuitBreaker<C> {
     /// Record a successful provider call.
     pub fn record_success(&self) {
         let current_state = self.state.load(Ordering::SeqCst);
@@ -142,11 +241,7 @@ impl CircuitBreaker {
                 if failures >= self.config.failure_threshold {
                     // Open the circuit
                     self.state.store(STATE_OPEN, Ordering::SeqCst);
-                    let now_ms = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    self.opened_at.store(now_ms, Ordering::SeqCst);
+                    self.opened_at.store(self.clock.now_ms(), Ordering::SeqCst);
                 }
             }
             STATE_HALF_OPEN => {
@@ -155,11 +250,7 @@ impl CircuitBreaker {
                 self.successes.store(0, Ordering::SeqCst);
                 self.failures
                     .fetch_add(1, Ordering::SeqCst); // Count this as a failure for threshold
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                self.opened_at.store(now_ms, Ordering::SeqCst);
+                self.opened_at.store(self.clock.now_ms(), Ordering::SeqCst);
             }
             STATE_OPEN => {
                 // Already open — count failures but don't change state
@@ -184,10 +275,7 @@ impl CircuitBreaker {
         if current_state == STATE_OPEN {
             // Check if we should transition to half-open
             let opened_at_ms = self.opened_at.load(Ordering::SeqCst);
-            let now_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
+            let now_ms = self.clock.now_ms();
             let open_duration_ms = self.config.open_duration.as_millis() as u64;
             if now_ms >= opened_at_ms + open_duration_ms {
                 // Transition to half-open
@@ -210,10 +298,7 @@ impl CircuitBreaker {
             STATE_OPEN => {
                 // Check if we should transition to half-open
                 let opened_at_ms = self.opened_at.load(Ordering::SeqCst);
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                let now_ms = self.clock.now_ms();
                 let open_duration_ms = self.config.open_duration.as_millis() as u64;
                 if now_ms >= opened_at_ms + open_duration_ms {
                     // Transition to half-open
@@ -249,11 +334,7 @@ impl CircuitBreaker {
             }
             CircuitState::Open => {
                 self.state.store(STATE_OPEN, Ordering::SeqCst);
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                self.opened_at.store(now_ms, Ordering::SeqCst);
+                self.opened_at.store(self.clock.now_ms(), Ordering::SeqCst);
             }
             CircuitState::HalfOpen => {
                 self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
@@ -263,14 +344,14 @@ impl CircuitBreaker {
     }
 }
 
-impl Default for CircuitBreaker {
+impl Default for CircuitBreaker<SystemClock> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 /// A shared circuit breaker that can be used across multiple tasks.
-pub type SharedCircuitBreaker = Arc<CircuitBreaker>;
+pub type SharedCircuitBreaker = Arc<CircuitBreaker<SystemClock>>;
 
 /// A registry of circuit breakers, one per provider.
 #[derive(Default)]
@@ -338,7 +419,6 @@ impl CircuitBreakerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use std::time::Duration;
 
     #[test]
@@ -382,46 +462,48 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Timing-sensitive test - skipped for now
     fn test_circuit_half_open_after_duration() {
+        // Deterministic test using MockClock instead of thread::sleep
         let config = CircuitBreakerConfig {
             failure_threshold: 1,
             success_threshold: 1,
             open_duration: Duration::from_millis(50),
             ..Default::default()
         };
-        let cb = CircuitBreaker::with_config(config);
+        let clock = MockClock::new(0);
+        let cb = CircuitBreaker::with_config_and_clock(config, clock.clone());
 
         // Open the circuit
         cb.record_failure();
         assert_eq!(cb.state(), CircuitState::Open);
         assert!(cb.is_open());
 
-        // Wait for open duration
-        thread::sleep(Duration::from_millis(100));
+        // Advance clock past open_duration
+        clock.advance(Duration::from_millis(100));
 
         // Should transition to half-open on next check via is_open()
-        // (is_open() transitions from Open to HalfOpen when duration has passed)
         assert!(!cb.is_open());
     }
 
     #[test]
-    #[ignore] // Timing-sensitive test - skipped for now
     fn test_circuit_closes_on_success_in_half_open() {
+        // Deterministic test using MockClock instead of thread::sleep
         let config = CircuitBreakerConfig {
             failure_threshold: 1,
             success_threshold: 1,
             open_duration: Duration::from_millis(10),
             ..Default::default()
         };
-        let cb = CircuitBreaker::with_config(config);
+        let clock = MockClock::new(0);
+        let cb = CircuitBreaker::with_config_and_clock(config, clock.clone());
 
         // Open the circuit
         cb.record_failure();
         assert_eq!(cb.state(), CircuitState::Open);
 
-        // Wait for transition to half-open
-        thread::sleep(Duration::from_millis(50));
+        // Advance clock past open_duration to trigger half-open transition
+        clock.advance(Duration::from_millis(50));
+
         // Transition via is_open()
         assert!(!cb.is_open());
         assert_eq!(cb.state(), CircuitState::HalfOpen);
@@ -432,22 +514,24 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Timing-sensitive test - skipped for now
     fn test_circuit_reopens_on_failure_in_half_open() {
+        // Deterministic test using MockClock instead of thread::sleep
         let config = CircuitBreakerConfig {
             failure_threshold: 1,
             success_threshold: 1,
             open_duration: Duration::from_millis(10),
             ..Default::default()
         };
-        let cb = CircuitBreaker::with_config(config);
+        let clock = MockClock::new(0);
+        let cb = CircuitBreaker::with_config_and_clock(config, clock.clone());
 
         // Open the circuit
         cb.record_failure();
         assert_eq!(cb.state(), CircuitState::Open);
 
-        // Wait for transition to half-open
-        thread::sleep(Duration::from_millis(50));
+        // Advance clock past open_duration to trigger half-open transition
+        clock.advance(Duration::from_millis(50));
+
         // Transition via is_open()
         assert!(!cb.is_open());
 
