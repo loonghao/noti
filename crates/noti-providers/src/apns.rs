@@ -74,7 +74,7 @@ struct ApnsCredentials {
 }
 
 impl ApnsCredentials {
-    fn from_config(config: &ProviderConfig) -> Result<Self, NotiError> {
+    async fn from_config(config: &ProviderConfig) -> Result<Self, NotiError> {
         let key_id = config
             .require("key_id", "apns")
             .map_err(|e| NotiError::Config(e.to_string()))?;
@@ -86,13 +86,11 @@ impl ApnsCredentials {
             .map_err(|e| NotiError::Config(e.to_string()))?;
 
         // Support p8_base64 (inline) or p8_path (file on disk).
+        // Reading from disk is done via tokio::fs to avoid blocking the async executor.
         let pkcs8_der = if let Some(base64_input) = config.get("p8_base64") {
             decode_p8_to_der(base64_input)?
         } else if let Some(path) = config.get("p8_path") {
-            let content =
-                std::fs::read_to_string(path).map_err(|e| {
-                    NotiError::Config(format!("failed to read p8 file '{path}': {e}"))
-                })?;
+            let content = read_p8_file(path).await?;
             decode_p8_to_der(&content)?
         } else {
             return Err(NotiError::Config(
@@ -115,6 +113,21 @@ impl ApnsCredentials {
             sandbox,
         })
     }
+}
+
+/// Read a p8 private key file without blocking the async executor.
+///
+/// Uses tokio::task::spawn_blocking to run the blocking file I/O in a
+/// dedicated thread, preventing the async executor from being blocked.
+async fn read_p8_file(path: &str) -> Result<String, NotiError> {
+    let path_owned = path.to_owned();
+    let path_for_error = path_owned.clone();
+    tokio::task::spawn_blocking(move || {
+        std::fs::read_to_string(&path_owned)
+    })
+    .await
+    .map_err(|e| NotiError::Config(format!("failed to spawn blocking task for p8 file: {e}")))?
+    .map_err(|e| NotiError::Config(format!("failed to read p8 file '{path_for_error}': {e}")))
 }
 
 /// Convert p8 content (PEM or base64) to DER-encoded PKCS#8 bytes.
@@ -415,7 +428,7 @@ impl NotifyProvider for ApnsProvider {
         message: &Message,
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
-        let credentials = ApnsCredentials::from_config(config)?;
+        let credentials = ApnsCredentials::from_config(config).await?;
 
         let device_token = config.require("device_token", "apns")?;
 
