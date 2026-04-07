@@ -133,15 +133,19 @@ use std::time::Duration;
 
 /// Shared HTTP client for all providers (created once, reused).
 ///
-/// Configured with connection pooling and keepalive for high-throughput scenarios:
+/// Configured with connection pooling, keepalive, and timeouts for high-throughput production use:
 /// - `pool_max_idle_per_host(8)`: limit idle connections per host to avoid resource exhaustion
 /// - `tcp_keepalive(Duration::from_secs(30))`: detect half-open connections
 /// - `tcp_nodelay(true)`: disable Nagle's algorithm for lower latency
+/// - `connect_timeout(10s)`: fail fast when a provider host is unreachable
+/// - `timeout(30s)`: total request timeout prevents indefinite hangs on slow providers
 static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         .pool_max_idle_per_host(8)
         .tcp_keepalive(Duration::from_secs(30))
         .tcp_nodelay(true)
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
         .build()
         .expect("reqwest Client::builder should always succeed")
 });
