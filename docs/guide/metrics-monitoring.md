@@ -121,7 +121,7 @@ The metrics endpoint returns a comprehensive snapshot of server operational stat
     "total": 1022
   },
   "providers": {
-    "total_registered": 125,
+    "total_registered": 126,
     "with_attachment_support": 15
   },
   "uptime_seconds": 86400,
@@ -275,7 +275,7 @@ noti_providers_with_attachments 15
 noti_server_uptime_seconds 86400
 # HELP noti_server_version Server version
 # TYPE noti_server_version gauge
-noti_server_version{version="0.1.9"} 1
+noti_server_version 1
 # HELP noti_workers_total Total number of workers in the pool
 # TYPE noti_workers_total gauge
 noti_workers_total 4
@@ -286,10 +286,10 @@ noti_workers_active 1
 # TYPE noti_workers_idle gauge
 noti_workers_idle 3
 # HELP noti_ratelimit_requests_total Total requests processed by rate limiter
-# TYPE noti_ratelimit_requests_total counter
+# TYPE noti_ratelimit_requests_total gauge
 noti_ratelimit_requests_total{per_ip="true"} 150
 # HELP noti_ratelimit_rejected_total Requests rejected due to rate limiting
-# TYPE noti_ratelimit_rejected_total counter
+# TYPE noti_ratelimit_rejected_total gauge
 noti_ratelimit_rejected_total{per_ip="true"} 12
 # HELP noti_ratelimit_tracked_ips Number of IPs currently tracked (per-IP mode)
 # TYPE noti_ratelimit_tracked_ips gauge

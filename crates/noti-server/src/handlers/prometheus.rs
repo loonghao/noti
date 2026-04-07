@@ -54,8 +54,8 @@ impl PerIpLabel {
 /// - `noti_workers_total` - Total number of workers in the pool
 /// - `noti_workers_active` - Number of workers actively processing tasks
 /// - `noti_workers_idle` - Number of workers idle and available
-/// - `noti_ratelimit_requests_total` - Total requests processed by rate limiter (counter)
-/// - `noti_ratelimit_rejected_total` - Requests rejected due to rate limiting (counter)
+/// - `noti_ratelimit_requests_total` - Total requests processed by rate limiter (gauge)
+/// - `noti_ratelimit_rejected_total` - Requests rejected due to rate limiting (gauge)
 /// - `noti_ratelimit_tracked_ips` - Number of IPs tracked in per-IP mode (gauge)
 ///
 /// # Example
