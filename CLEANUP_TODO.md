@@ -131,3 +131,8 @@ rounds or require coordination with the iteration agent.
 ## Tests — Cross-Module Deduplication (noti-queue)
 
 - [x] ~~`make_task()` helper defined identically in both `sqlite.rs:506` and `memory.rs:330` test modules — consider extracting to a shared `#[cfg(test)]` test_utils module~~ — extracted to `crates/noti-queue/src/test_utils.rs` with `#[cfg(test)] pub(crate) mod test_utils` in lib.rs; both `memory.rs` and `sqlite.rs` now import via `crate::test_utils::make_task`
+
+## Tests — Missing E2E Coverage
+
+- [ ] DLQ HTTP API (`/api/v1/queue/dlq`) has no dedicated E2E test file — iteration agent should add `e2e_dlq.rs` covering: list DLQ entries, requeue from DLQ, delete from DLQ, DLQ stats endpoint
+- [ ] File Storage API (`/api/v1/storage`) basic happy-path E2E tests exist in `e2e_storage.rs`, but no negative-path tests for: upload without `file` field (returns 400), download non-existent ID (returns 404), delete non-existent ID (returns 404)
