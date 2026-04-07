@@ -446,7 +446,7 @@ pub async fn spawn_server_with_temp_storage() -> (String, StorageServerHandle) {
     (
         format!("http://{addr}"),
         StorageServerHandle {
-            temp_path: temp_dir.into_path(),
+            temp_path: temp_dir.keep(),
             shutdown_tx,
         },
     )

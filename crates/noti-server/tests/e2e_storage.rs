@@ -34,6 +34,7 @@ struct DeleteFileResponse {
 
 #[derive(Debug, Deserialize)]
 struct ErrorResponse {
+    #[allow(dead_code)]
     error: String,
     message: String,
 }
