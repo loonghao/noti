@@ -68,7 +68,8 @@ pub async fn store_file(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("bin");
-    let file_path = storage_root.join(format!("{}.{}", file_id, ext));
+    // Store files in the uploads subdirectory to match where download looks
+    let file_path = storage_root.join("uploads").join(format!("{}.{}", file_id, ext));
 
     let mut file = tokio::fs::File::create(&file_path).await?;
     file.write_all(&data).await?;
@@ -268,6 +269,14 @@ pub async fn download_file(
 ) -> Result<Response, ApiError> {
     let upload_dir = state.storage_dir();
 
+    // Check if upload directory exists
+    if !upload_dir.exists() {
+        return Err(ApiError::not_found(format!(
+            "file '{}' not found (no files have been uploaded)",
+            file_id
+        )));
+    }
+
     // Find the file: iterate to find any file with matching ID prefix
     let mut matching_path: Option<PathBuf> = None;
     let mut entries = fs::read_dir(&upload_dir).await.map_err(|e| {
@@ -365,6 +374,14 @@ pub async fn delete_file(
 ) -> Result<Json<DeleteFileResponse>, ApiError> {
     let upload_dir = state.storage_dir();
     let thumb_dir = state.thumbnails_dir();
+
+    // Check if upload directory exists
+    if !upload_dir.exists() {
+        return Err(ApiError::not_found(format!(
+            "file '{}' not found (no files have been uploaded)",
+            file_id
+        )));
+    }
 
     // Find and delete the uploaded file
     let mut deleted = false;

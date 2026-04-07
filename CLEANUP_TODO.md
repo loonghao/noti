@@ -126,7 +126,7 @@ rounds or require coordination with the iteration agent.
 - [ ] `crates/noti-core/src/url.rs` — `parse_notification_url()` still spans nearly the entire file and mixes scheme dispatch, validation, alias normalization, and config assembly; split by provider family or dispatch table in a future refactor
 - [ ] `crates/noti-providers/src/lib.rs` — `register_all_providers()` is a long manual registry list; consider a list-driven or macro-driven registration table to reduce drift risk as providers keep growing (now 126+ providers)
 - [ ] `crates/noti-queue/benches/queue_throughput.rs` — `bench_enqueue` and `bench_enqueue_dequeue_roundtrip` recreate a `Runtime` on every benchmark iteration inside `b.iter()`; this adds setup cost to each sample and inflates wall-time; extract the runtime outside `b.iter()` using `b.to_async()` or a shared `#[tokio::main]`-style wrapper when criterion-tokio integration is added
-- [ ] DLQ HTTP API not yet exposed — `QueueBackend::list_dlq()`, `dlq_stats()`, `requeue_from_dlq()`, `delete_from_dlq()` are fully implemented in both InMemory and SQLite backends (aa1162a + 53b73a9) but no HTTP handlers exist in `noti-server`; iteration agent should add `GET /api/v1/queue/dlq`, `POST /api/v1/queue/dlq/{id}/requeue`, `DELETE /api/v1/queue/dlq/{id}`, and `GET /api/v1/queue/stats` with `dlq_size` field
+- [x] ~~DLQ HTTP API not yet exposed~~ — `QueueBackend::list_dlq()`, `dlq_stats()`, `requeue_from_dlq()`, `delete_from_dlq()` are fully implemented in both InMemory and SQLite backends; HTTP handlers exposed in `noti-server` (79a80a1 + f9eedcd)
 
 ## Tests — Cross-Module Deduplication (noti-queue)
 

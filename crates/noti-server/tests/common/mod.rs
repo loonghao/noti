@@ -396,6 +396,62 @@ pub async fn spawn_server_sqlite_file_with_workers(
     (base, worker_handle)
 }
 
+// ───────────────────── Storage helpers ─────────────────────
+
+use tokio::sync::oneshot;
+
+/// A handle to a spawned storage server.
+/// The temp directory is NOT deleted when this is dropped - it uses the system temp
+/// directory and relies on OS cleanup. The server shutdown is sent on drop.
+pub struct StorageServerHandle {
+    /// The path to the temp storage directory (kept for inspection if needed).
+    pub temp_path: std::path::PathBuf,
+    shutdown_tx: oneshot::Sender<()>,
+}
+
+/// Start a server with a temporary storage directory.
+/// The storage root will be `{temp_dir}/storage` which is where the handler
+/// expects files to be stored.
+pub async fn spawn_server_with_temp_storage() -> (String, StorageServerHandle) {
+    let temp_dir = tempfile::TempDir::new().expect("create temp directory");
+    // The storage handler writes to storage_root/{uuid}.{ext} but creates
+    // storage_root/uploads for the upload directory. We set storage_root to
+    // {temp_dir}/storage so that storage_root/uploads = {temp_dir}/storage/uploads
+    // matches where the handler creates the uploads directory.
+    let storage_root = temp_dir.path().join("storage");
+
+    let mut registry = ProviderRegistry::new();
+    noti_providers::register_all_providers(&mut registry);
+    let mut state = noti_server::state::AppState::new(registry);
+    state = state.with_storage_root(storage_root);
+
+    let app = noti_server::routes::build_router(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind to random port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                shutdown_rx.await.ok();
+            })
+            .await
+            .unwrap();
+    });
+
+    (
+        format!("http://{addr}"),
+        StorageServerHandle {
+            temp_path: temp_dir.into_path(),
+            shutdown_tx,
+        },
+    )
+}
+
 // ───────────────────── Mock providers ─────────────────────
 
 /// A mock provider that always succeeds.
