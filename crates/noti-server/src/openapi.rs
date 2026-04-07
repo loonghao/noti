@@ -21,6 +21,7 @@ use crate::handlers::{
         TargetApiResult,
     },
     status::{self, AllStatusesResponse, PurgeStatusResponse, StatusResponse},
+    storage::{self, DeleteFileResponse, FileMetadata, UploadResponse},
     templates::{
         self, CreateTemplateRequest, DeleteTemplateResponse, RenderTemplateRequest,
         RenderedTemplateResponse, TemplateListResponse, TemplateResponse, UpdateTemplateRequest,
@@ -44,6 +45,7 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         (name = "Meta", description = "API version discovery and metadata"),
         (name = "Notifications", description = "Synchronous notification sending"),
         (name = "Async Queue", description = "Asynchronous queue-based notification processing"),
+        (name = "Storage", description = "File upload, download, and thumbnail generation"),
         (name = "Status", description = "Delivery status tracking"),
         (name = "Templates", description = "Message template management"),
         (name = "Providers", description = "Notification provider information"),
@@ -70,6 +72,11 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         queue_handlers::get_dlq_stats,
         queue_handlers::requeue_from_dlq,
         queue_handlers::delete_from_dlq,
+        // Storage
+        storage::upload_file,
+        storage::download_file,
+        storage::get_thumbnail,
+        storage::delete_file,
         // Status
         status::get_status,
         status::get_all_statuses,
@@ -105,6 +112,8 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         TaskInfo, StatsResponse, CancelResponse, PurgeResponse,
         // DLQ
         DlqEntryInfo, DlqStatsResponse, RequeueResponse, DeleteDlqResponse,
+        // Storage
+        UploadResponse, FileMetadata, DeleteFileResponse,
         // Status
         StatusResponse, AllStatusesResponse, PurgeStatusResponse,
         // Templates

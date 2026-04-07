@@ -162,6 +162,15 @@ async fn e2e_openapi_schema_all_key_components_exist() {
         "TemplateResponse",
         "ProviderInfo",
         "MetricsResponse",
+        // Storage schemas
+        "UploadResponse",
+        "FileMetadata",
+        "DeleteFileResponse",
+        // DLQ schemas
+        "DlqEntryInfo",
+        "DlqStatsResponse",
+        "RequeueResponse",
+        "DeleteDlqResponse",
     ];
 
     for name in &expected_schemas {
@@ -208,6 +217,13 @@ async fn e2e_openapi_schema_all_api_paths_exist() {
         "/api/v1/queue/tasks/{task_id}",
         "/api/v1/queue/tasks/{task_id}/cancel",
         "/api/v1/queue/purge",
+        "/api/v1/queue/dlq",
+        "/api/v1/queue/dlq/stats",
+        "/api/v1/queue/dlq/{task_id}/requeue",
+        "/api/v1/queue/dlq/{task_id}",
+        "/api/v1/storage/upload",
+        "/api/v1/storage/{file_id}",
+        "/api/v1/storage/{file_id}/thumbnail",
         "/api/v1/metrics",
     ];
 
@@ -217,4 +233,114 @@ async fn e2e_openapi_schema_all_api_paths_exist() {
             "missing API path in OpenAPI spec: {path}"
         );
     }
+}
+
+#[tokio::test]
+async fn e2e_openapi_schema_storage_schemas_have_required_fields() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let schemas = &body["components"]["schemas"];
+
+    // UploadResponse should have required fields
+    let upload = &schemas["UploadResponse"]["properties"];
+    assert!(upload["file_id"].is_object(), "UploadResponse should have file_id");
+    assert!(upload["file_name"].is_object(), "UploadResponse should have file_name");
+    assert!(upload["mime_type"].is_object(), "UploadResponse should have mime_type");
+    assert!(upload["size_bytes"].is_object(), "UploadResponse should have size_bytes");
+    assert!(
+        upload["download_url"].is_object(),
+        "UploadResponse should have download_url"
+    );
+    // thumbnail_url is optional
+    assert!(
+        upload["thumbnail_url"].is_object(),
+        "UploadResponse should have thumbnail_url (even if optional)"
+    );
+
+    // FileMetadata should have required fields
+    let meta = &schemas["FileMetadata"]["properties"];
+    assert!(meta["file_id"].is_object(), "FileMetadata should have file_id");
+    assert!(meta["is_image"].is_object(), "FileMetadata should have is_image");
+    assert!(
+        meta["has_thumbnail"].is_object(),
+        "FileMetadata should have has_thumbnail"
+    );
+
+    // DeleteFileResponse should have required fields
+    let del = &schemas["DeleteFileResponse"]["properties"];
+    assert!(del["file_id"].is_object(), "DeleteFileResponse should have file_id");
+    assert!(del["deleted"].is_object(), "DeleteFileResponse should have deleted");
+    assert!(del["message"].is_object(), "DeleteFileResponse should have message");
+}
+
+#[tokio::test]
+async fn e2e_openapi_storage_endpoints_have_get_post_delete_methods() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let paths = body["paths"].as_object().unwrap();
+
+    // POST /api/v1/storage/upload
+    let upload_path = &paths["/api/v1/storage/upload"];
+    assert!(
+        upload_path["post"].is_object(),
+        "/api/v1/storage/upload should have POST method"
+    );
+
+    // GET /api/v1/storage/{file_id}
+    let download_path = &paths["/api/v1/storage/{file_id}"];
+    assert!(
+        download_path["get"].is_object(),
+        "/api/v1/storage/{{file_id}} should have GET method"
+    );
+    assert!(
+        download_path["delete"].is_object(),
+        "/api/v1/storage/{{file_id}} should have DELETE method"
+    );
+
+    // GET /api/v1/storage/{file_id}/thumbnail
+    let thumb_path = &paths["/api/v1/storage/{file_id}/thumbnail"];
+    assert!(
+        thumb_path["get"].is_object(),
+        "/api/v1/storage/{{file_id}}/thumbnail should have GET method"
+    );
+}
+
+#[tokio::test]
+async fn e2e_openapi_has_storage_tag() {
+    let base = spawn_server().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api-docs/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+
+    let tags = body["tags"].as_array().unwrap();
+    let tag_names: Vec<&str> = tags.iter().map(|t| t["name"].as_str().unwrap()).collect();
+
+    assert!(
+        tag_names.contains(&"Storage"),
+        "OpenAPI spec should have 'Storage' tag. Found: {tag_names:?}"
+    );
 }
