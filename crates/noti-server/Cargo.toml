@@ -18,6 +18,7 @@ opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 metrics = { workspace = true }
+prometheus-client = { workspace = true }
 humantime = { workspace = true }
 noti-core = { path = "../noti-core", features = ["openapi"] }
 noti-providers = { path = "../noti-providers" }

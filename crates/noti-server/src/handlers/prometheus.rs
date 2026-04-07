@@ -4,8 +4,41 @@
 
 use axum::extract::State;
 use axum::response::IntoResponse;
+use prometheus_client::encoding::text::encode;
+use prometheus_client::encoding::EncodeLabelSet;
+use prometheus_client::metrics::family::Family;
+use prometheus_client::metrics::gauge::Gauge;
+use prometheus_client::registry::Registry;
 
 use crate::state::AppState;
+
+/// Label set for queue status metrics (e.g. queued, completed).
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct QueueStatusLabel {
+    status: String,
+}
+
+impl QueueStatusLabel {
+    fn new(status: &str) -> Self {
+        QueueStatusLabel {
+            status: status.to_string(),
+        }
+    }
+}
+
+/// Label set for per-IP rate limiting metrics.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct PerIpLabel {
+    per_ip: String,
+}
+
+impl PerIpLabel {
+    fn new(per_ip: bool) -> Self {
+        PerIpLabel {
+            per_ip: if per_ip { "true".to_string() } else { "false".to_string() },
+        }
+    }
+}
 
 /// Prometheus text-format metrics endpoint.
 ///
@@ -14,7 +47,6 @@ use crate::state::AppState;
 ///
 /// # Metrics Exposed
 /// - `noti_queue_total` - Total tasks by status (queued, processing, completed, failed, cancelled)
-/// - `noti_queue_priority_total` - Tasks broken down by priority level
 /// - `noti_providers_registered` - Number of registered notification providers
 /// - `noti_providers_with_attachments` - Number of providers supporting attachments
 /// - `noti_server_uptime_seconds` - Server uptime in seconds
@@ -51,65 +83,127 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
     let worker_stats = state.worker_stats_handle.as_ref().map(|h| h.stats());
     let rate_limit_metrics = state.rate_limiter.as_ref().map(|r| r.metrics());
 
-    let mut output = String::new();
+    let mut registry = Registry::default();
 
-    // Queue metrics
-    output.push_str("# HELP noti_queue_total Total tasks in queue by status\n");
-    output.push_str("# TYPE noti_queue_total gauge\n");
-    output.push_str(&format!("noti_queue_total{{status=\"queued\"}} {}\n", queue_stats.queued));
-    output.push_str(&format!("noti_queue_total{{status=\"processing\"}} {}\n", queue_stats.processing));
-    output.push_str(&format!("noti_queue_total{{status=\"completed\"}} {}\n", queue_stats.completed));
-    output.push_str(&format!("noti_queue_total{{status=\"failed\"}} {}\n", queue_stats.failed));
-    output.push_str(&format!("noti_queue_total{{status=\"cancelled\"}} {}\n", queue_stats.cancelled));
+    // Queue metrics — Family with status label
+    let queue_total: Family<QueueStatusLabel, Gauge> = Family::default();
+    registry.register(
+        "noti_queue_total",
+        "Total tasks in queue by status",
+        queue_total.clone(),
+    );
+    queue_total
+        .get_or_create(&QueueStatusLabel::new("queued"))
+        .set(queue_stats.queued as i64);
+    queue_total
+        .get_or_create(&QueueStatusLabel::new("processing"))
+        .set(queue_stats.processing as i64);
+    queue_total
+        .get_or_create(&QueueStatusLabel::new("completed"))
+        .set(queue_stats.completed as i64);
+    queue_total
+        .get_or_create(&QueueStatusLabel::new("failed"))
+        .set(queue_stats.failed as i64);
+    queue_total
+        .get_or_create(&QueueStatusLabel::new("cancelled"))
+        .set(queue_stats.cancelled as i64);
 
-    // Provider metrics
-    output.push_str("# HELP noti_providers_registered Number of registered providers\n");
-    output.push_str("# TYPE noti_providers_registered gauge\n");
-    output.push_str(&format!("noti_providers_registered {}\n", all_providers.len()));
+    // Provider metrics — plain gauges
+    let providers_registered: Gauge = Gauge::default();
+    registry.register(
+        "noti_providers_registered",
+        "Number of registered providers",
+        providers_registered.clone(),
+    );
+    providers_registered.set(all_providers.len() as i64);
 
-    output.push_str("# HELP noti_providers_with_attachments Number of providers supporting attachments\n");
-    output.push_str("# TYPE noti_providers_with_attachments gauge\n");
-    output.push_str(&format!("noti_providers_with_attachments {}\n", attachment_count));
+    let providers_with_attachments: Gauge = Gauge::default();
+    registry.register(
+        "noti_providers_with_attachments",
+        "Number of providers supporting attachments",
+        providers_with_attachments.clone(),
+    );
+    providers_with_attachments.set(attachment_count as i64);
 
-    // Uptime
-    output.push_str("# HELP noti_server_uptime_seconds Server uptime in seconds\n");
-    output.push_str("# TYPE noti_server_uptime_seconds gauge\n");
-    output.push_str(&format!("noti_server_uptime_seconds {}\n", uptime));
+    // Uptime gauge
+    let uptime_gauge: Gauge = Gauge::default();
+    registry.register(
+        "noti_server_uptime_seconds",
+        "Server uptime in seconds",
+        uptime_gauge.clone(),
+    );
+    uptime_gauge.set(uptime as i64);
 
-    // Version
-    output.push_str("# HELP noti_server_version Server version\n");
-    output.push_str("# TYPE noti_server_version gauge\n");
-    output.push_str(&format!("noti_server_version{{version=\"{}\"}} 1\n", env!("CARGO_PKG_VERSION")));
+    // Version gauge
+    let version_gauge: Gauge = Gauge::default();
+    registry.register(
+        "noti_server_version",
+        "Server version",
+        version_gauge.clone(),
+    );
+    version_gauge.set(1);
 
     // Worker pool metrics (only when workers are started)
     if let Some(workers) = worker_stats {
-        output.push_str("# HELP noti_workers_total Total number of workers in the pool\n");
-        output.push_str("# TYPE noti_workers_total gauge\n");
-        output.push_str(&format!("noti_workers_total {}\n", workers.total));
+        let workers_total: Gauge = Gauge::default();
+        registry.register(
+            "noti_workers_total",
+            "Total number of workers in the pool",
+            workers_total.clone(),
+        );
+        workers_total.set(workers.total as i64);
 
-        output.push_str("# HELP noti_workers_active Number of workers actively processing tasks\n");
-        output.push_str("# TYPE noti_workers_active gauge\n");
-        output.push_str(&format!("noti_workers_active {}\n", workers.active));
+        let workers_active: Gauge = Gauge::default();
+        registry.register(
+            "noti_workers_active",
+            "Number of workers actively processing tasks",
+            workers_active.clone(),
+        );
+        workers_active.set(workers.active as i64);
 
-        output.push_str("# HELP noti_workers_idle Number of workers idle and available\n");
-        output.push_str("# TYPE noti_workers_idle gauge\n");
-        output.push_str(&format!("noti_workers_idle {}\n", workers.idle));
+        let workers_idle: Gauge = Gauge::default();
+        registry.register(
+            "noti_workers_idle",
+            "Number of workers idle and available",
+            workers_idle.clone(),
+        );
+        workers_idle.set(workers.idle as i64);
     }
 
     // Rate limiting metrics (only when rate limiter is enabled)
     if let Some(rl) = rate_limit_metrics {
-        output.push_str("# HELP noti_ratelimit_requests_total Total requests processed by rate limiter\n");
-        output.push_str("# TYPE noti_ratelimit_requests_total counter\n");
-        output.push_str(&format!("noti_ratelimit_requests_total{{per_ip=\"{}\"}} {}\n", rl.per_ip, rl.requests_total));
+        let rl_requests_total: Family<PerIpLabel, Gauge> = Family::default();
+        registry.register(
+            "noti_ratelimit_requests_total",
+            "Total requests processed by rate limiter",
+            rl_requests_total.clone(),
+        );
+        rl_requests_total
+            .get_or_create(&PerIpLabel::new(rl.per_ip))
+            .set(rl.requests_total as i64);
 
-        output.push_str("# HELP noti_ratelimit_rejected_total Requests rejected due to rate limiting\n");
-        output.push_str("# TYPE noti_ratelimit_rejected_total counter\n");
-        output.push_str(&format!("noti_ratelimit_rejected_total{{per_ip=\"{}\"}} {}\n", rl.per_ip, rl.rejected_total));
+        let rl_rejected_total: Family<PerIpLabel, Gauge> = Family::default();
+        registry.register(
+            "noti_ratelimit_rejected_total",
+            "Requests rejected due to rate limiting",
+            rl_rejected_total.clone(),
+        );
+        rl_rejected_total
+            .get_or_create(&PerIpLabel::new(rl.per_ip))
+            .set(rl.rejected_total as i64);
 
-        output.push_str("# HELP noti_ratelimit_tracked_ips Number of IPs currently tracked (per-IP mode)\n");
-        output.push_str("# TYPE noti_ratelimit_tracked_ips gauge\n");
-        output.push_str(&format!("noti_ratelimit_tracked_ips {}\n", rl.tracked_ips));
+        let rl_tracked_ips: Gauge = Gauge::default();
+        registry.register(
+            "noti_ratelimit_tracked_ips",
+            "Number of IPs currently tracked (per-IP mode)",
+            rl_tracked_ips.clone(),
+        );
+        rl_tracked_ips.set(rl.tracked_ips as i64);
     }
+
+    // Encode to Prometheus text format
+    let mut output = String::new();
+    encode(&mut output, &registry).expect("prometheus-client encoding should not fail");
 
     axum::response::Response::builder()
         .status(200)
@@ -175,8 +269,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_prometheus_metrics_with_rate_limit_stats() {
-        use std::time::Duration;
         use crate::middleware::rate_limit::{RateLimitConfig, RateLimiterState};
+        use std::time::Duration;
 
         let config = RateLimitConfig::new(100, Duration::from_secs(60));
         let rate_limiter = RateLimiterState::new(config);
@@ -194,10 +288,17 @@ mod tests {
 
         let body = resp.text();
         // Rate limit metrics should be present
-        assert!(body.contains("noti_ratelimit_requests_total"), "missing noti_ratelimit_requests_total");
-        assert!(body.contains("noti_ratelimit_rejected_total"), "missing noti_ratelimit_rejected_total");
-        assert!(body.contains("noti_ratelimit_tracked_ips"), "missing noti_ratelimit_tracked_ips");
-        // Should show per_ip="true" for the config we used
-        assert!(body.contains("per_ip=\"true\""), "expected per_ip=\"true\"");
+        assert!(
+            body.contains("noti_ratelimit_requests_total"),
+            "missing noti_ratelimit_requests_total"
+        );
+        assert!(
+            body.contains("noti_ratelimit_rejected_total"),
+            "missing noti_ratelimit_rejected_total"
+        );
+        assert!(
+            body.contains("noti_ratelimit_tracked_ips"),
+            "missing noti_ratelimit_tracked_ips"
+        );
     }
 }
