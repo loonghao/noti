@@ -1,3 +1,5 @@
+//! Notification task types for the queue system.
+
 use std::collections::HashMap;
 use std::time::SystemTime;
 
@@ -208,6 +210,35 @@ impl NotificationTask {
     }
 }
 
+/// Entry in the dead letter queue — a task that has permanently failed
+/// after exhausting all retry attempts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DlqEntry {
+    /// The full notification task that entered the DLQ.
+    pub task: NotificationTask,
+    /// When the task was moved to the DLQ.
+    pub moved_at: SystemTime,
+    /// Human-readable reason for why the task entered the DLQ
+    /// (e.g. "retries exhausted: connection timeout").
+    pub reason: String,
+}
+
+impl DlqEntry {
+    /// Create a new DLQ entry from a task and a reason string.
+    pub fn new(task: NotificationTask, reason: impl Into<String>) -> Self {
+        Self {
+            task,
+            moved_at: SystemTime::now(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Task ID of the entry.
+    pub fn task_id(&self) -> &str {
+        &self.task.id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,4 +424,49 @@ mod tests {
             .unwrap_or_default();
         assert!(diff < Duration::from_secs(1));
     }
+
+    #[test]
+    fn test_dlq_entry_creation() {
+        let msg = Message::text("failing notification");
+        let config = ProviderConfig::new();
+        let task = NotificationTask::new("slack", config, msg);
+
+        let entry = DlqEntry::new(task.clone(), "retries exhausted: connection timeout");
+
+        assert_eq!(entry.task.id, task.id);
+        assert_eq!(entry.reason, "retries exhausted: connection timeout");
+        assert!(entry.moved_at <= std::time::SystemTime::now());
+    }
+
+    #[test]
+    fn test_dlq_entry_task_id() {
+        let msg = Message::text("test");
+        let config = ProviderConfig::new();
+        let task = NotificationTask::new("webhook", config, msg);
+        let id = task.id.clone();
+
+        let entry = DlqEntry::new(task, "provider error");
+
+        assert_eq!(entry.task_id(), id);
+    }
+
+    #[test]
+    fn test_dlq_entry_serde_roundtrip() {
+        let msg = Message::text("dlq test").with_priority(Priority::High);
+        let config = ProviderConfig::new().set("url", "https://example.com");
+        let task = NotificationTask::new("webhook", config, msg)
+            .with_metadata("key", "value")
+            .with_callback_url("https://example.com/callback");
+
+        let entry = DlqEntry::new(task, "all retries failed");
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let parsed: DlqEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.task.id, entry.task.id);
+        assert_eq!(parsed.reason, "all retries failed");
+        assert_eq!(parsed.task.provider, "webhook");
+        assert_eq!(parsed.task.message.text, "dlq test");
+    }
+
 }

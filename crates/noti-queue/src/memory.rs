@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify};
 
 use crate::error::QueueError;
-use crate::queue::{QueueBackend, QueueStats};
-use crate::task::{NotificationTask, TaskId, TaskStatus};
+use crate::queue::{DlqStats, QueueBackend, QueueStats};
+use crate::task::{DlqEntry, NotificationTask, TaskId, TaskStatus};
 
 /// Wrapper for priority-based ordering in the binary heap.
 ///
@@ -64,6 +64,8 @@ pub struct InMemoryQueue {
     capacity: usize,
     /// Aggregate counters.
     counters: Mutex<QueueStats>,
+    /// Dead letter queue: tasks that have permanently failed.
+    dlq: Mutex<HashMap<TaskId, DlqEntry>>,
 }
 
 impl InMemoryQueue {
@@ -75,6 +77,7 @@ impl InMemoryQueue {
             notify: Arc::new(Notify::new()),
             capacity: 0,
             counters: Mutex::new(QueueStats::default()),
+            dlq: Mutex::new(HashMap::new()),
         }
     }
 
@@ -86,6 +89,7 @@ impl InMemoryQueue {
             notify: Arc::new(Notify::new()),
             capacity,
             counters: Mutex::new(QueueStats::default()),
+            dlq: Mutex::new(HashMap::new()),
         }
     }
 
@@ -248,12 +252,10 @@ impl QueueBackend for InMemoryQueue {
             // Wake workers for retry
             self.notify.notify_one();
         } else {
-            task.mark_failed(error);
+            // Retries exhausted — move to DLQ instead of just marking failed.
+            // This removes from tasks map and inserts into DLQ, updating counters.
             drop(tasks);
-
-            let mut counters = self.counters.lock().await;
-            counters.processing = counters.processing.saturating_sub(1);
-            counters.failed += 1;
+            self.move_to_dlq(task_id, error).await?;
         }
 
         Ok(())
@@ -318,6 +320,86 @@ impl QueueBackend for InMemoryQueue {
         }
 
         Ok(purged)
+    }
+
+    async fn move_to_dlq(&self, task_id: &str, reason: &str) -> Result<(), QueueError> {
+        let task = {
+            let mut tasks = self.tasks.lock().await;
+            let task = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
+            // Mark as Failed before extracting so the DLQ entry has the correct status
+            task.mark_failed(reason);
+            tasks.remove(task_id).expect("task was just obtained via get_mut")
+        };
+
+        let entry = DlqEntry::new(task, reason);
+        let mut dlq = self.dlq.lock().await;
+        dlq.insert(task_id.to_string(), entry);
+
+        let mut counters = self.counters.lock().await;
+        counters.processing = counters.processing.saturating_sub(1);
+        // NOTE: we do NOT increment counters.failed here.
+        // Failed tasks in the main queue are tracked there; DLQ tasks are
+        // tracked separately via dlq_stats(). This avoids double-counting
+        // when purge_completed() later resets counters.failed to 0.
+
+        Ok(())
+    }
+
+    async fn list_dlq(&self, limit: usize) -> Result<Vec<DlqEntry>, QueueError> {
+        let dlq = self.dlq.lock().await;
+        let mut entries: Vec<_> = dlq.values().cloned().collect();
+        // Newest first
+        entries.sort_by(|a, b| b.moved_at.cmp(&a.moved_at));
+        entries.truncate(limit);
+        Ok(entries)
+    }
+
+    async fn dlq_stats(&self) -> Result<DlqStats, QueueError> {
+        let dlq = self.dlq.lock().await;
+        Ok(DlqStats {
+            dlq_size: dlq.len(),
+        })
+    }
+
+    async fn requeue_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
+        let task = {
+            let mut dlq = self.dlq.lock().await;
+            dlq.remove(task_id).ok_or_else(|| QueueError::NotFound(task_id.to_string()))?
+                .task
+        };
+
+        // Reset attempt counter and status for fresh retry
+        let mut retry_task = task;
+        retry_task.attempts = 0;
+        retry_task.status = TaskStatus::Queued;
+        retry_task.last_error = None;
+        retry_task.available_at = None;
+
+        let id = retry_task.id.clone();
+        let mut tasks = self.tasks.lock().await;
+        tasks.insert(id.clone(), retry_task.clone());
+        drop(tasks);
+
+        let mut heap = self.heap.lock().await;
+        heap.push(PriorityEntry { task: retry_task });
+        drop(heap);
+
+        let mut counters = self.counters.lock().await;
+        counters.queued += 1;
+        drop(counters);
+
+        // Wake workers
+        self.notify.notify_one();
+
+        Ok(())
+    }
+
+    async fn delete_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
+        let mut dlq = self.dlq.lock().await;
+        dlq.remove(task_id).ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
+        Ok(())
     }
 }
 
@@ -418,11 +500,18 @@ mod tests {
         queue.dequeue().await.unwrap();
         queue.nack(&id, "permanent failure").await.unwrap();
 
-        let task = queue.get_task(&id).await.unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Failed);
+        // Task is no longer in main queue (moved to DLQ)
+        assert!(queue.get_task(&id).await.unwrap().is_none());
 
-        let stats = queue.stats().await.unwrap();
-        assert_eq!(stats.failed, 1);
+        // But it is in the DLQ
+        let entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].task.id, id);
+        assert_eq!(entries[0].task.status, TaskStatus::Failed);
+        assert_eq!(entries[0].reason, "permanent failure");
+
+        let dlq_stats = queue.dlq_stats().await.unwrap();
+        assert_eq!(dlq_stats.dlq_size, 1);
     }
 
     #[tokio::test]
@@ -526,7 +615,7 @@ mod tests {
     async fn test_purge_completed_resets_stats_counters() {
         let queue = InMemoryQueue::new();
 
-        // Create three tasks: one completed, one failed, one cancelled
+        // Create three tasks: one completed, one moved-to-DLQ (no retry), one cancelled
         let id_a = queue
             .enqueue(make_task("a", Priority::Normal))
             .await
@@ -548,23 +637,29 @@ mod tests {
         queue.dequeue().await.unwrap();
         queue.ack(&id_a).await.unwrap();
 
-        // b → failed (no retry)
+        // b → moved to DLQ (retry exhausted) — removed from main queue
         queue.dequeue().await.unwrap();
         queue.nack(&id_b, "error").await.unwrap();
 
         // c → cancelled
         queue.cancel(&id_c).await.unwrap();
 
-        // Before purge: terminal counters should be non-zero
+        // Before purge: DLQ has b, main queue has completed=1, cancelled=1
         let stats_before = queue.stats().await.unwrap();
         assert_eq!(stats_before.completed, 1);
-        assert_eq!(stats_before.failed, 1);
+        // failed=0 in main queue (b is in DLQ, not counted in main queue)
+        assert_eq!(stats_before.failed, 0);
         assert_eq!(stats_before.cancelled, 1);
         assert_eq!(stats_before.queued, 1); // d still queued
 
-        // Purge terminal tasks
+        // Verify b is in DLQ
+        let dlq_entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(dlq_entries.len(), 1);
+        assert_eq!(dlq_entries[0].task.id, id_b);
+
+        // Purge: only completed (a) and cancelled (c) are in the main queue
         let purged = queue.purge_completed().await.unwrap();
-        assert_eq!(purged, 3);
+        assert_eq!(purged, 2); // a and c; b is already in DLQ
 
         // After purge: terminal counters reset to 0, non-terminal unchanged
         let stats_after = queue.stats().await.unwrap();
@@ -573,6 +668,10 @@ mod tests {
         assert_eq!(stats_after.cancelled, 0);
         assert_eq!(stats_after.queued, 1); // d still queued
         assert_eq!(stats_after.processing, 0);
+
+        // DLQ still has b
+        let dlq_stats = queue.dlq_stats().await.unwrap();
+        assert_eq!(dlq_stats.dlq_size, 1);
     }
 
     #[tokio::test]

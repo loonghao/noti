@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::QueueError;
-use crate::task::{NotificationTask, TaskId, TaskStatus};
+use crate::task::{DlqEntry, NotificationTask, TaskId, TaskStatus};
 
 /// Statistics about the current queue state.
 ///
@@ -29,6 +29,14 @@ impl QueueStats {
     pub fn total(&self) -> usize {
         self.queued + self.processing + self.completed + self.failed + self.cancelled
     }
+}
+
+/// Statistics about the dead letter queue.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct DlqStats {
+    /// Number of entries currently in the DLQ.
+    pub dlq_size: usize,
 }
 
 /// Abstract queue backend trait for pluggable implementations.
@@ -88,6 +96,31 @@ pub trait QueueBackend: Send + Sync {
     async fn recover_stale_tasks(&self) -> Result<usize, QueueError> {
         Ok(0)
     }
+
+    /// Move a task to the dead letter queue.
+    ///
+    /// Called by the worker when all retry attempts have been exhausted.
+    /// The task is removed from the main queue and stored separately
+    /// for later inspection or manual replay.
+    async fn move_to_dlq(&self, task_id: &str, reason: &str) -> Result<(), QueueError>;
+
+    /// List entries in the dead letter queue.
+    ///
+    /// Returns up to `limit` DLQ entries, ordered by when they were moved
+    /// to the DLQ (newest first).
+    async fn list_dlq(&self, limit: usize) -> Result<Vec<DlqEntry>, QueueError>;
+
+    /// Get DLQ statistics.
+    async fn dlq_stats(&self) -> Result<DlqStats, QueueError>;
+
+    /// Requeue a task from the DLQ back into the main queue.
+    ///
+    /// The task's attempt counter is reset so it gets a fresh retry budget
+    /// according to its retry policy.
+    async fn requeue_from_dlq(&self, task_id: &str) -> Result<(), QueueError>;
+
+    /// Permanently delete a task from the DLQ.
+    async fn delete_from_dlq(&self, task_id: &str) -> Result<(), QueueError>;
 }
 
 #[cfg(test)]
@@ -124,5 +157,19 @@ mod tests {
         let json = serde_json::to_string(&stats).unwrap();
         let parsed: QueueStats = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.total(), stats.total());
+    }
+
+    #[test]
+    fn test_dlq_stats_default() {
+        let stats = DlqStats::default();
+        assert_eq!(stats.dlq_size, 0);
+    }
+
+    #[test]
+    fn test_dlq_stats_serde() {
+        let stats = DlqStats { dlq_size: 42 };
+        let json = serde_json::to_string(&stats).unwrap();
+        let parsed: DlqStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.dlq_size, 42);
     }
 }

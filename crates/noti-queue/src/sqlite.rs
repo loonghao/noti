@@ -13,8 +13,8 @@ use rusqlite::{Connection, params};
 use tokio::sync::{Mutex, Notify};
 
 use crate::error::QueueError;
-use crate::queue::{QueueBackend, QueueStats};
-use crate::task::{NotificationTask, TaskId, TaskStatus};
+use crate::queue::{DlqStats, QueueBackend, QueueStats};
+use crate::task::{DlqEntry, NotificationTask, TaskId, TaskStatus};
 
 // ───────────────────── error conversion helpers ─────────────────────
 
@@ -143,6 +143,17 @@ impl SqliteQueue {
         // Migration: add callback_secret column if upgrading from an older schema.
         let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN callback_secret TEXT;");
 
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS dlq_entries (
+                task_id TEXT PRIMARY KEY,
+                task_json TEXT NOT NULL,
+                moved_at INTEGER NOT NULL,
+                reason TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_dlq_moved_at ON dlq_entries(moved_at DESC);",
+        )
+        .backend_err()?;
+
         Ok(Self {
             conn: Mutex::new(conn),
             notify: Arc::new(Notify::new()),
@@ -203,6 +214,7 @@ impl SqliteQueue {
             available_at: row.available_at.map(epoch_ms_to_system_time),
         })
     }
+
 }
 
 struct TaskRow {
@@ -368,11 +380,19 @@ impl QueueBackend for SqliteQueue {
             drop(conn);
             self.notify.notify_one();
         } else {
+            // Retries exhausted — mark failed and serialize task to JSON for DLQ storage.
+            task.mark_failed(error);
+            let task_json = serde_json::to_string(&task).serde_err()?;
+            let moved_at = now;
+
+            // Insert into DLQ then delete from main tasks table (within same transaction)
             conn.execute(
-                "UPDATE tasks SET status = 'failed', last_error = ?1, updated_at = ?2 WHERE id = ?3",
-                params![error, now, task_id],
+                "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
+                params![task_id, task_json, moved_at, error],
             )
             .backend_err()?;
+            conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
+                .backend_err()?;
         }
 
         Ok(())
@@ -502,6 +522,170 @@ impl QueueBackend for SqliteQueue {
 
         Ok(recovered)
     }
+
+    async fn move_to_dlq(&self, task_id: &str, reason: &str) -> Result<(), QueueError> {
+        let task_json: String = {
+            let conn = self.conn.lock().await;
+            let row = match conn.query_row(
+                "SELECT id, provider, config_json, message_json, retry_policy_json,
+                        status, attempts, last_error, created_at, updated_at,
+                        metadata_json, callback_url, callback_secret, priority, available_at
+                 FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| {
+                    Ok(TaskRow {
+                        id: row.get(0)?,
+                        provider: row.get(1)?,
+                        config_json: row.get(2)?,
+                        message_json: row.get(3)?,
+                        retry_policy_json: row.get(4)?,
+                        status: row.get(5)?,
+                        attempts: row.get(6)?,
+                        last_error: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                        metadata_json: row.get(10)?,
+                        callback_url: row.get(11)?,
+                        callback_secret: row.get(12)?,
+                        priority: row.get(13)?,
+                        available_at: row.get(14)?,
+                    })
+                },
+            ) {
+                Ok(r) => r,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(QueueError::NotFound(task_id.to_string()));
+                }
+                Err(e) => return Err(QueueError::Backend(e.to_string())),
+            };
+            let mut task = Self::deserialize_task(&row)?;
+            task.mark_failed(reason);
+            serde_json::to_string(&task).serde_err()?
+        };
+
+        let conn = self.conn.lock().await;
+        let now = system_time_to_epoch_ms(std::time::SystemTime::now());
+        conn.execute(
+            "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
+            params![task_id, task_json, now, reason],
+        )
+        .backend_err()?;
+
+        conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
+            .backend_err()?;
+
+        Ok(())
+    }
+
+    async fn list_dlq(&self, limit: usize) -> Result<Vec<DlqEntry>, QueueError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare("SELECT task_id, task_json, moved_at, reason FROM dlq_entries ORDER BY moved_at DESC LIMIT ?1")
+            .backend_err()?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                let task_id: String = row.get(0)?;
+                let task_json: String = row.get(1)?;
+                let moved_at: i64 = row.get(2)?;
+                let reason: String = row.get(3)?;
+                Ok((task_id, task_json, moved_at, reason))
+            })
+            .backend_err()?;
+
+        let mut entries = Vec::new();
+        for row_result in rows {
+            let (_task_id, task_json, moved_at, reason) = row_result.backend_err()?;
+            let task: NotificationTask = serde_json::from_str(&task_json).serde_err()?;
+            entries.push(DlqEntry {
+                task,
+                moved_at: epoch_ms_to_system_time(moved_at),
+                reason,
+            });
+        }
+        Ok(entries)
+    }
+
+    async fn dlq_stats(&self) -> Result<DlqStats, QueueError> {
+        let conn = self.conn.lock().await;
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM dlq_entries", [], |row| row.get(0))
+            .backend_err()?;
+        Ok(DlqStats {
+            dlq_size: count as usize,
+        })
+    }
+
+    async fn requeue_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
+        let task_json: String = {
+            let conn = self.conn.lock().await;
+            let result: Result<String, _> = conn.query_row(
+                "SELECT task_json FROM dlq_entries WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            );
+            match result {
+                Ok(v) => v,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    return Err(QueueError::NotFound(task_id.to_string()));
+                }
+                Err(e) => return Err(QueueError::Backend(e.to_string())),
+            }
+        };
+
+        let mut task: NotificationTask = serde_json::from_str(&task_json).serde_err()?;
+
+        // Reset for fresh retry
+        task.attempts = 0;
+        task.status = TaskStatus::Queued;
+        task.last_error = None;
+        task.available_at = None;
+
+        let task_row = Self::serialize_task(&task)?;
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
+                               status, attempts, last_error, created_at, updated_at,
+                               metadata_json, callback_url, callback_secret, priority, available_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                task_row.id,
+                task_row.provider,
+                task_row.config_json,
+                task_row.message_json,
+                task_row.retry_policy_json,
+                task_row.status,
+                task_row.attempts,
+                task_row.last_error,
+                task_row.created_at,
+                task_row.updated_at,
+                task_row.metadata_json,
+                task_row.callback_url,
+                task_row.callback_secret,
+                task_row.priority,
+                task_row.available_at,
+            ],
+        )
+        .backend_err()?;
+
+        conn.execute("DELETE FROM dlq_entries WHERE task_id = ?1", params![task_id])
+            .backend_err()?;
+
+        drop(conn);
+        self.notify.notify_waiters();
+
+        Ok(())
+    }
+
+    async fn delete_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
+        let conn = self.conn.lock().await;
+        let deleted = conn
+            .execute("DELETE FROM dlq_entries WHERE task_id = ?1", params![task_id])
+            .backend_err()?;
+        if deleted == 0 {
+            return Err(QueueError::NotFound(task_id.to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -594,11 +778,18 @@ mod tests {
         queue.dequeue().await.unwrap();
         queue.nack(&id, "permanent failure").await.unwrap();
 
-        let task = queue.get_task(&id).await.unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Failed);
+        // Task is no longer in main queue (moved to DLQ)
+        assert!(queue.get_task(&id).await.unwrap().is_none());
 
-        let stats = queue.stats().await.unwrap();
-        assert_eq!(stats.failed, 1);
+        // But it is in the DLQ
+        let entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].task.id, id);
+        assert_eq!(entries[0].task.status, TaskStatus::Failed);
+        assert_eq!(entries[0].reason, "permanent failure");
+
+        let dlq_stats = queue.dlq_stats().await.unwrap();
+        assert_eq!(dlq_stats.dlq_size, 1);
     }
 
     #[tokio::test]
@@ -695,7 +886,7 @@ mod tests {
     async fn test_sqlite_purge_completed_resets_stats_counters() {
         let queue = SqliteQueue::in_memory().unwrap();
 
-        // Create three tasks: one completed, one failed, one cancelled
+        // Create three tasks: one completed, one moved-to-DLQ, one cancelled
         let id_a = queue
             .enqueue(make_task("a", Priority::Normal))
             .await
@@ -717,23 +908,29 @@ mod tests {
         queue.dequeue().await.unwrap();
         queue.ack(&id_a).await.unwrap();
 
-        // b → failed (no retry)
+        // b → moved to DLQ (retry exhausted) — removed from main queue
         queue.dequeue().await.unwrap();
         queue.nack(&id_b, "error").await.unwrap();
 
         // c → cancelled
         queue.cancel(&id_c).await.unwrap();
 
-        // Before purge: terminal counters should be non-zero
+        // Before purge: DLQ has b, main queue has completed=1, cancelled=1
         let stats_before = queue.stats().await.unwrap();
         assert_eq!(stats_before.completed, 1);
-        assert_eq!(stats_before.failed, 1);
+        // failed=0 in main queue (b is in DLQ, not in tasks table)
+        assert_eq!(stats_before.failed, 0);
         assert_eq!(stats_before.cancelled, 1);
         assert_eq!(stats_before.queued, 1); // d still queued
 
-        // Purge terminal tasks
+        // Verify b is in DLQ
+        let dlq_entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(dlq_entries.len(), 1);
+        assert_eq!(dlq_entries[0].task.id, id_b);
+
+        // Purge: only completed (a) and cancelled (c) are in the main queue
         let purged = queue.purge_completed().await.unwrap();
-        assert_eq!(purged, 3);
+        assert_eq!(purged, 2); // a and c; b is already in DLQ
 
         // After purge: terminal counters reset to 0, non-terminal unchanged
         let stats_after = queue.stats().await.unwrap();
@@ -742,6 +939,10 @@ mod tests {
         assert_eq!(stats_after.cancelled, 0);
         assert_eq!(stats_after.queued, 1); // d still queued
         assert_eq!(stats_after.processing, 0);
+
+        // DLQ still has b
+        let dlq_stats = queue.dlq_stats().await.unwrap();
+        assert_eq!(dlq_stats.dlq_size, 1);
     }
 
     #[tokio::test]

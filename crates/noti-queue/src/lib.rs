@@ -19,8 +19,8 @@ pub(crate) mod test_utils;
 pub use callback::{CallbackPayload, fire_callback};
 pub use error::QueueError;
 pub use memory::InMemoryQueue;
-pub use queue::{QueueBackend, QueueStats};
+pub use queue::{DlqStats, QueueBackend, QueueStats};
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteQueue;
-pub use task::{NotificationTask, TaskId, TaskStatus};
+pub use task::{DlqEntry, NotificationTask, TaskId, TaskStatus};
 pub use worker::{WorkerConfig, WorkerHandle, WorkerPool, WorkerStats, WorkerStatsSnapshot, WorkerStatsHandle};

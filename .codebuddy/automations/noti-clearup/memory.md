@@ -1,5 +1,54 @@
 # noti-clearup Memory
 
+## 2026-04-07 16:00 — Cleanup round: reviewed iteration agent commits 62b019e + 706b5e9 + 1fdd434 + 9008c30 + ab8383f + 4759323
+
+### Baseline
+- Branch: `auto-improve` (HEAD = 4759323 before cleanup)
+- Tests: **1218 passed / 0 failed / 2 ignored** (up from 1193 — new prometheus, circuit breaker, APNs tests)
+- Clippy: 0 warnings, 0 errors
+- Known: 1 moderate Dependabot vulnerability (unchanged)
+
+### Iteration Agent Activity (since last cleanup round b989ff5)
+- `62b019e` — APNs: fix blocking `std::fs` → `tokio::task::spawn_blocking`; tune shared HTTP client (`pool_max_idle_per_host(8)`, `tcp_keepalive(30s)`, `tcp_nodelay(true)`); promote `p256` to workspace dep — **clean, no issues**
+- `706b5e9` — Prometheus `/metrics`: migrated from manual string building to `prometheus-client` crate with proper `Registry`, `Family<Label, Gauge>`, and `encode()` — **clean, correct**
+- `1fdd434` — CircuitBreaker: `Clock` trait + `MockClock` (Arc-based); all 3 timing-sensitive tests now deterministic — **clean**
+- `ab8383f`/`9008c30` — Prometheus: added worker pool metrics and rate limiting metrics — **clean**
+- `4759323` — Shared HTTP client: added `connect_timeout(10s)` + `timeout(30s)` to prevent hanging requests — **clean**
+
+### Cleanup Actions (2 substantive commits + done tag)
+1. `837be1b` — docs: fix prometheus metric type annotations in `metrics-monitoring.md` — 3 inaccuracies:
+   - `noti_server_version{version="0.1.9"} 1` → `noti_server_version 1` (no version label in code)
+   - `TYPE noti_ratelimit_requests_total counter` → `gauge` (code uses `Gauge`, not `Counter`)
+   - `TYPE noti_ratelimit_rejected_total counter` → `gauge` (same)
+   - Also: `total_registered: 125` → `126` in JSON example to match actual provider count
+   - Also: `prometheus.rs` doc comment `(counter)` → `(gauge)` for both ratelimit metrics
+2. `2895237` — assess: closed 2 CLEANUP_TODO items — `p256` workspace dep (done in 62b019e) and prometheus-client migration (done in 706b5e9)
+
+### Full Scan Results
+- **Dead code**: 0 new TODO/FIXME/HACK, 0 new `#[allow(dead_code)]` in production code; `MockClock::advance/set` still have `#[allow(dead_code)]` — justified (test-only methods in `#[cfg(not(test))]` invisible context)
+- **Tests**: 0 `#[ignore]` markers (all 3 circuit breaker timing tests now run deterministically)
+- **Code quality**: 0 `println!/dbg!` in production code, 0 `.unwrap()` in production code
+- **Dependencies**: `p256` correctly promoted to workspace dep; `prometheus-client = "0.22"` and `p256 = "0.13"` both in `[workspace.dependencies]`
+
+### CLEANUP_TODO Status: 3 open structural items (down from 5)
+- `url.rs` — `parse_notification_url()` monolithic (deferred)
+- `lib.rs` — `register_all_providers()` long manual list (deferred)
+- `queue_throughput.rs` — Runtime recreated per bench iteration (deferred)
+
+### Quality Gate
+- Tests: 1218 passed, 0 failed (> baseline 1193) ✅
+- Clippy: 0 warnings ✅
+- No new lint warnings ✅
+- All changes pushed to origin ✅
+
+### Next Round Focus
+- Monitor new iteration agent commits for review
+- 3 structural items remain deferred — low severity, no functional impact
+- `MockClock::set()` has no usages — safe to keep as API completeness, no cleanup needed
+
+---
+
+
 ## 2026-04-03 22:02 — Cleanup round: closed lint + assessment follow-ups after dual-backend dedup
 
 - Continued an already-started round on `auto-improve`; finalized the remaining phase-4 style pass by standardizing `common::dual_backend_test!` doc examples in `crates/noti-server/tests/common/mod.rs` and shipped `77d8f30` (`chore(cleanup): lint: standardize dual-backend macro doc examples`).

@@ -66,7 +66,8 @@ impl WorkerStats {
 }
 
 /// Immutable snapshot of worker statistics.
-#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct WorkerStatsSnapshot {
     pub total: u32,
     pub active: u32,
@@ -562,8 +563,12 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let task = queue.get_task(&task_id).await.unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Failed);
+        // Task is moved to DLQ — get_task returns None from main queue
+        assert!(queue.get_task(&task_id).await.unwrap().is_none());
+        let entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].task.id, task_id);
+        assert_eq!(entries[0].task.status, TaskStatus::Failed);
 
         handle.shutdown_and_join().await;
     }
@@ -619,8 +624,12 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        let task = queue.get_task(&task_id).await.unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Failed);
+        // Task moved to DLQ — not in main queue
+        assert!(queue.get_task(&task_id).await.unwrap().is_none());
+        let entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].task.id, task_id);
+        assert_eq!(entries[0].task.status, TaskStatus::Failed);
 
         handle.shutdown_and_join().await;
     }
@@ -663,9 +672,12 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Task should have been nacked due to open circuit breaker
-        let task = queue.get_task(&task_id).await.unwrap().unwrap();
-        assert_eq!(task.status, TaskStatus::Failed);
+        // Task should have been nacked due to open circuit breaker → moved to DLQ
+        assert!(queue.get_task(&task_id).await.unwrap().is_none());
+        let entries = queue.list_dlq(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].task.id, task_id);
+        assert_eq!(entries[0].task.status, TaskStatus::Failed);
 
         handle.shutdown_and_join().await;
     }
