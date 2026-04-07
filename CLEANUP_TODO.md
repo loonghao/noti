@@ -135,5 +135,5 @@ rounds or require coordination with the iteration agent.
 
 ## Tests — Missing E2E Coverage
 
-- [ ] DLQ HTTP API (`/api/v1/queue/dlq`) has no dedicated E2E test file — iteration agent should add `e2e_dlq.rs` covering: list DLQ entries, requeue from DLQ, delete from DLQ, DLQ stats endpoint
-- [ ] File Storage API (`/api/v1/storage`) basic happy-path E2E tests exist in `e2e_storage.rs`, but no negative-path tests for: upload without `file` field (returns 400), download non-existent ID (returns 404), delete non-existent ID (returns 404)
+- [x] ~~DLQ HTTP API (`/api/v1/queue/dlq`) has no dedicated E2E test file~~ — `e2e_dlq.rs` added with 11 tests covering list, stats, requeue, delete (b875e3b)
+- [x] ~~File Storage API (`/api/v1/storage`) basic happy-path E2E tests exist in `e2e_storage.rs`, but no negative-path tests for: upload without `file` field (returns 400), download non-existent ID (returns 404), delete non-existent ID (returns 404)~~ — all three negative-path tests added plus empty-file edge cases (2f88b7c)
