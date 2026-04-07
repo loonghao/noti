@@ -9,7 +9,7 @@ noti/
 ├── crates/
 │   ├── noti-cli/        # CLI binary
 │   ├── noti-core/       # Core abstractions
-│   ├── noti-providers/  # 125 provider implementations
+│   ├── noti-providers/  # 126 provider implementations
 │   ├── noti-queue/      # Async message queue for background processing
 │   └── noti-server/     # REST API server
 ├── docs/                # VitePress documentation (this site)
