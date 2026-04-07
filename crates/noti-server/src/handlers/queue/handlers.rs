@@ -13,9 +13,12 @@ use crate::state::AppState;
 
 use super::dto::{
     AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
-    CancelResponse, EnqueueResponse, ListTasksQuery, PurgeResponse, StatsResponse, TaskInfo,
+    CancelResponse, DeleteFromDlqResponse, DlqListResponse, DlqStatsResponse, EnqueueResponse,
+    ListDlqQuery, ListTasksQuery, PurgeResponse, RequeueResponse, StatsResponse, TaskInfo,
 };
-use super::service::{parse_scheduled_time, parse_task_status, queue_error, task_to_info};
+use super::service::{
+    dlq_entry_to_info, parse_scheduled_time, parse_task_status, queue_error, task_to_info,
+};
 
 /// Enqueue a notification for asynchronous processing.
 #[utoipa::path(
@@ -314,7 +317,12 @@ pub async fn list_tasks(
 pub async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
     use noti_queue::QueueStats;
     let stats: QueueStats = state.queue.stats().await.map_err(queue_error)?;
-    Ok(Json(StatsResponse::from(stats)))
+    let dlq_stats = state.queue.dlq_stats().await.map_err(queue_error)?;
+
+    let mut response = StatsResponse::from(stats);
+    response.dlq_size = dlq_stats.dlq_size;
+
+    Ok(Json(response))
 }
 
 /// Cancel a queued task.
@@ -369,5 +377,142 @@ pub async fn purge_tasks(State(state): State<AppState>) -> Result<Json<PurgeResp
     Ok(Json(PurgeResponse {
         purged,
         message: format!("Purged {} terminal tasks", purged),
+    }))
+}
+
+/// List entries in the dead letter queue.
+#[utoipa::path(
+    get,
+    path = "/api/v1/queue/dlq",
+    tag = "Async Queue",
+    params(ListDlqQuery),
+    responses(
+        (status = 200, description = "DLQ entry list", body = DlqListResponse)
+    )
+)]
+pub async fn list_dlq(
+    State(state): State<AppState>,
+    Query(query): Query<ListDlqQuery>,
+) -> Result<Json<DlqListResponse>, ApiError> {
+    let limit = query.limit.unwrap_or(50).min(1000);
+
+    let entries = state.queue.list_dlq(limit).await.map_err(queue_error)?;
+    let total = entries.len();
+
+    let infos: Vec<_> = entries.iter().map(dlq_entry_to_info).collect();
+
+    Ok(Json(DlqListResponse { entries: infos, total }))
+}
+
+/// Get dead letter queue statistics.
+#[utoipa::path(
+    get,
+    path = "/api/v1/queue/dlq/stats",
+    tag = "Async Queue",
+    responses(
+        (status = 200, description = "DLQ statistics", body = DlqStatsResponse)
+    )
+)]
+pub async fn get_dlq_stats(State(state): State<AppState>) -> Result<Json<DlqStatsResponse>, ApiError> {
+    let dlq_stats = state.queue.dlq_stats().await.map_err(queue_error)?;
+
+    Ok(Json(DlqStatsResponse {
+        dlq_size: dlq_stats.dlq_size,
+    }))
+}
+
+/// Requeue a task from the DLQ back into the main queue.
+#[utoipa::path(
+    post,
+    path = "/api/v1/queue/dlq/{task_id}/requeue",
+    tag = "Async Queue",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Requeue result", body = RequeueResponse)
+    )
+)]
+pub async fn requeue_from_dlq(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> Result<Json<RequeueResponse>, ApiError> {
+    use crate::handlers::error::codes;
+
+    // First check if the task exists in the DLQ
+    let entries = state
+        .queue
+        .list_dlq(1000)
+        .await
+        .map_err(queue_error)?;
+
+    let exists = entries.iter().any(|e| e.task.id == task_id);
+
+    if !exists {
+        return Err(ApiError::not_found(format!(
+            "DLQ entry '{}' not found",
+            task_id
+        ))
+        .with_code(codes::TASK_NOT_FOUND));
+    }
+
+    state
+        .queue
+        .requeue_from_dlq(&task_id)
+        .await
+        .map_err(queue_error)?;
+
+    info!(task_id = %task_id, "task requeued from DLQ");
+
+    Ok(Json(RequeueResponse {
+        task_id,
+        requeued: true,
+        message: "Task requeued from DLQ successfully".to_string(),
+    }))
+}
+
+/// Permanently delete a task from the DLQ.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/queue/dlq/{task_id}",
+    tag = "Async Queue",
+    params(("task_id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Delete result", body = DeleteFromDlqResponse)
+    )
+)]
+pub async fn delete_from_dlq(
+    State(state): State<AppState>,
+    Path(task_id): Path<String>,
+) -> Result<Json<DeleteFromDlqResponse>, ApiError> {
+    use crate::handlers::error::codes;
+
+    // First check if the task exists in the DLQ
+    let entries = state
+        .queue
+        .list_dlq(1000)
+        .await
+        .map_err(queue_error)?;
+
+    let exists = entries.iter().any(|e| e.task.id == task_id);
+
+    if !exists {
+        return Err(ApiError::not_found(format!(
+            "DLQ entry '{}' not found",
+            task_id
+        ))
+        .with_code(codes::TASK_NOT_FOUND));
+    }
+
+    state
+        .queue
+        .delete_from_dlq(&task_id)
+        .await
+        .map_err(queue_error)?;
+
+    info!(task_id = %task_id, "task deleted from DLQ");
+
+    Ok(Json(DeleteFromDlqResponse {
+        task_id,
+        deleted: true,
+        message: "Task deleted from DLQ successfully".to_string(),
     }))
 }

@@ -11,17 +11,20 @@ pub mod service;
 // Re-export public types to maintain the same public API as the flat queue.rs.
 pub use dto::{
     AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
-    CancelResponse, EnqueueResponse, ListTasksQuery, PurgeResponse, StatsResponse, TaskInfo,
+    CancelResponse, DeleteFromDlqResponse, DlqEntryInfo, DlqListResponse, DlqStatsResponse,
+    EnqueueResponse, ListDlqQuery, ListTasksQuery, PurgeResponse, RequeueResponse,
+    StatsResponse, TaskInfo,
 };
 pub use handlers::{
-    cancel_task, get_stats, get_task, list_tasks, purge_tasks, send_async, send_async_batch,
+    cancel_task, delete_from_dlq, get_dlq_stats, get_stats, get_task, list_dlq, list_tasks,
+    purge_tasks, requeue_from_dlq, send_async, send_async_batch,
 };
 
 #[cfg(test)]
 mod tests {
     use axum::Router;
     use axum::http::StatusCode;
-    use axum::routing::{get, post};
+    use axum::routing::{delete, get, post};
     use axum_test::TestServer;
     use noti_core::ProviderRegistry;
 
@@ -38,6 +41,10 @@ mod tests {
             .route("/api/v1/queue/tasks/{task_id}/cancel", post(cancel_task))
             .route("/api/v1/queue/stats", get(get_stats))
             .route("/api/v1/queue/purge", post(purge_tasks))
+            .route("/api/v1/queue/dlq", get(list_dlq))
+            .route("/api/v1/queue/dlq/stats", get(get_dlq_stats))
+            .route("/api/v1/queue/dlq/{task_id}/requeue", post(requeue_from_dlq))
+            .route("/api/v1/queue/dlq/{task_id}", delete(delete_from_dlq))
             .with_state(state)
     }
 

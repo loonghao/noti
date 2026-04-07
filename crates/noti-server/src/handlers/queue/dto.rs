@@ -95,6 +95,8 @@ pub struct StatsResponse {
     pub failed: usize,
     pub cancelled: usize,
     pub total: usize,
+    /// Number of entries in the dead letter queue.
+    pub dlq_size: usize,
 }
 
 /// Response for purge operation.
@@ -167,6 +169,61 @@ impl From<QueueStats> for StatsResponse {
             failed: stats.failed,
             cancelled: stats.cancelled,
             total: stats.total(),
+            dlq_size: 0, // populated separately via dlq_stats()
         }
     }
+}
+
+// ───────────────────── DLQ types ─────────────────────
+
+/// Serializable DLQ entry info for API responses.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DlqEntryInfo {
+    pub task_id: String,
+    pub provider: String,
+    pub status: String,
+    pub attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_error: Option<String>,
+    pub reason: String,
+    pub moved_at: String,
+    pub priority: String,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Response for DLQ statistics.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DlqStatsResponse {
+    pub dlq_size: usize,
+}
+
+/// Response for listing DLQ entries.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DlqListResponse {
+    pub entries: Vec<DlqEntryInfo>,
+    pub total: usize,
+}
+
+/// Response for requeue operation.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RequeueResponse {
+    pub task_id: String,
+    pub requeued: bool,
+    pub message: String,
+}
+
+/// Response for delete from DLQ operation.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DeleteFromDlqResponse {
+    pub task_id: String,
+    pub deleted: bool,
+    pub message: String,
+}
+
+/// Query parameters for listing DLQ entries.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct ListDlqQuery {
+    /// Maximum number of entries to return (default: 50, max: 1000).
+    pub limit: Option<usize>,
 }

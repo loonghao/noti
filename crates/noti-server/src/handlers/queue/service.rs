@@ -1,6 +1,6 @@
-use noti_queue::{NotificationTask, TaskStatus};
+use noti_queue::{DlqEntry, NotificationTask, TaskStatus};
 
-use super::dto::TaskInfo;
+use super::dto::{DlqEntryInfo, TaskInfo};
 use crate::handlers::error::{ApiError, codes};
 
 // ───────────────────── Mapping helpers ─────────────────────
@@ -20,6 +20,21 @@ pub fn task_to_info(task: &NotificationTask) -> TaskInfo {
         priority: format!("{:?}", task.priority()),
         metadata: task.metadata.clone(),
         scheduled_at,
+    }
+}
+
+/// Convert a [`DlqEntry`] to the API response type [`DlqEntryInfo`].
+pub fn dlq_entry_to_info(entry: &DlqEntry) -> DlqEntryInfo {
+    DlqEntryInfo {
+        task_id: entry.task.id.clone(),
+        provider: entry.task.provider.clone(),
+        status: entry.task.status.to_string(),
+        attempts: entry.task.attempts,
+        last_error: entry.task.last_error.clone(),
+        reason: entry.reason.clone(),
+        moved_at: humantime::format_rfc3339(entry.moved_at).to_string(),
+        priority: format!("{:?}", entry.task.priority()),
+        metadata: entry.task.metadata.clone(),
     }
 }
 

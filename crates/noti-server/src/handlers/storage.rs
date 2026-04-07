@@ -56,6 +56,7 @@ pub struct FileMetadata {
 // ───────────────────── Storage Service ─────────────────────
 
 /// Store a file on disk and return its metadata.
+#[allow(clippy::ptr_arg)]
 pub async fn store_file(
     storage_root: &PathBuf,
     data: Vec<u8>,
@@ -77,6 +78,7 @@ pub async fn store_file(
 
 /// Generate a thumbnail for an image file.
 /// Returns the path to the thumbnail on success, or None if thumbnail generation fails.
+#[allow(clippy::ptr_arg)]
 pub async fn generate_thumbnail(
     source_path: &PathBuf,
     thumbnail_dir: &PathBuf,
@@ -104,7 +106,7 @@ pub async fn generate_thumbnail(
     let thumb_path = thumbnail_dir.join(format!("{}.png", file_id));
 
     thumbnail.save(&thumb_path).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("thumbnail save failed: {}", e))
+        std::io::Error::other(format!("thumbnail save failed: {}", e))
     })?;
     Ok(Some(thumb_path))
 }
