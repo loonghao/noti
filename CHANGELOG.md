@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.10](https://github.com/loonghao/noti/compare/v0.1.9...v0.1.10) (2026-04-07)
+
+
+### Features
+
+* **server:** expose DLQ HTTP API endpoints ([#47](https://github.com/loonghao/noti/issues/47)) ([9203415](https://github.com/loonghao/noti/commit/9203415c684238fe8e5dbf26925e17701a39784a))
+
+
+### Code Refactoring
+
+* split e2e_test.rs into focused files and extract queue handler submodules ([#46](https://github.com/loonghao/noti/issues/46)) ([ce33d39](https://github.com/loonghao/noti/commit/ce33d39eb59c81ab6fd1e9a4a9e1c2553e4c7c94))
+* split url.rs into provider-family submodules and simplify register_all_providers ([ce173ce](https://github.com/loonghao/noti/commit/ce173ce8ce7c1948670bafaa6ca1495fd642af89))
+
 ## [0.1.9](https://github.com/loonghao/noti/compare/v0.1.8...v0.1.9) (2026-04-04)
 
 
