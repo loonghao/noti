@@ -3,13 +3,19 @@ use base64::Engine;
 use noti_core::{
     AttachmentKind, Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse,
 };
+use p256::ecdsa::{signature::Signer, SigningKey};
+use p256::pkcs8::DecodePrivateKey;
 use reqwest::Client;
 use serde_json::json;
 
 /// Web Push (VAPID) provider.
 ///
 /// Sends browser push notifications using the Web Push protocol.
-/// Supports image attachments via the Notification API `image` and `badge` fields.
+/// Supports VAPID authentication for identifying the sender.
+///
+/// Note: This implementation supports VAPID authentication but sends payload
+/// as plain text (not encrypted). For full Web Push support with encrypted
+/// payloads, consider using a service like Firebase Cloud Messaging (FCM).
 ///
 /// Reference: <https://web.dev/push-notifications-overview/>
 pub struct WebPushProvider {
@@ -20,6 +26,192 @@ impl WebPushProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VAPID Authentication
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Decode VAPID private key from base64url or PEM format.
+fn decode_vapid_private_key(input: &str) -> Result<Vec<u8>, NotiError> {
+    // Remove whitespace.
+    let filtered: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+
+    // Try base64url decoding.
+    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&filtered) {
+        // If it starts with 0x30 (SEQUENCE/DER), it's raw DER.
+        if decoded.first() == Some(&0x30) {
+            return Ok(decoded);
+        }
+        // If it's PEM, extract the body.
+        if input.contains("-----BEGIN") {
+            return extract_pem_body(input);
+        }
+        // Raw base64 of DER bytes.
+        return Ok(decoded);
+    }
+
+    // Try PEM format.
+    if input.trim().contains("-----BEGIN") {
+        return extract_pem_body(input.trim());
+    }
+
+    Err(NotiError::Config(
+        "invalid VAPID private key: must be base64url or PEM format".into(),
+    ))
+}
+
+/// Extract base64 body from PEM string.
+fn extract_pem_body(input: &str) -> Result<Vec<u8>, NotiError> {
+    let b64: String = input
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .flat_map(|l| l.chars())
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&b64)
+        .map_err(|e| NotiError::Config(format!("invalid base64 VAPID key: {e}")))
+}
+
+/// Base64url encode without padding.
+fn b64url_encode(data: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
+}
+
+/// Generate a VAPID JWT for Web Push authentication.
+///
+/// VAPID uses ES256 (ECDSA over P-256 with SHA-256) signed JWTs.
+fn generate_vapid_jwt(
+    vapid_private: &str,
+    vapid_email: &str,
+    endpoint: &str,
+) -> Result<String, NotiError> {
+    // Decode the private key.
+    let der_bytes = decode_vapid_private_key(vapid_private)?;
+    let signing_key = SigningKey::from_pkcs8_der(&der_bytes)
+        .map_err(|e| NotiError::Config(format!("failed to parse VAPID private key: {e}")))?;
+
+    // Determine the audience (origin of the push service) from the endpoint.
+    let audience = extract_origin(endpoint)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| NotiError::Config(format!("system clock error: {e}")))?;
+    let iat = now.as_secs();
+    let exp = iat + 86400; // VAPID tokens are valid for 24 hours.
+
+    // Build header JSON: {"alg": "ES256", "typ": "JWT"}.
+    let header = json!({
+        "alg": "ES256",
+        "typ": "JWT"
+    });
+    let header_json = serde_json::to_string(&header)
+        .map_err(|e| NotiError::Config(format!("failed to serialize JWT header: {e}")))?;
+    let header_b64 = b64url_encode(header_json.as_bytes());
+
+    // Build claims: {"aud": "<origin>", "exp": <exp>, "iss": "<email>"}.
+    let claims = json!({
+        "aud": audience,
+        "exp": exp,
+        "iss": vapid_email
+    });
+    let claims_json = serde_json::to_string(&claims)
+        .map_err(|e| NotiError::Config(format!("failed to serialize JWT claims: {e}")))?;
+    let claims_b64 = b64url_encode(claims_json.as_bytes());
+
+    // Sign the signing input (header_b64.claims_b64).
+    let signing_input = format!("{}.{}", header_b64, claims_b64);
+    let signature_der: p256::ecdsa::DerSignature = signing_key.sign(signing_input.as_bytes());
+    let sig_bytes = signature_der.to_bytes();
+
+    // Convert raw r||s bytes to DER encoding.
+    let sig_der = rs_to_der(&sig_bytes)?;
+    let sig_b64 = b64url_encode(&sig_der);
+
+    Ok(format!("{}.{}.{}", header_b64, claims_b64, sig_b64))
+}
+
+/// Extract the origin (scheme + host + port) from a push endpoint URL.
+fn extract_origin(endpoint: &str) -> Result<String, NotiError> {
+    // Parse the endpoint URL manually since we don't have the `url` crate.
+    // Expected format: https://push.service.example.com/path or wss://...
+    let endpoint_owned = endpoint.to_string();
+
+    // Find the "://" separator.
+    let parts: Vec<&str> = endpoint_owned.splitn(2, "://").collect();
+    if parts.len() != 2 {
+        return Err(NotiError::Config(format!(
+            "invalid endpoint URL format (missing scheme): {endpoint}"
+        )));
+    }
+    let scheme = parts[0];
+    let rest = parts[1];
+
+    // Find the first "/" or ":" to separate host from path/port.
+    let host_end = rest.find(['/', ':']).unwrap_or(rest.len());
+    let host = &rest[..host_end];
+
+    if host.is_empty() {
+        return Err(NotiError::Config(format!(
+            "invalid endpoint URL (missing host): {endpoint}"
+        )));
+    }
+
+    let port_str = if host_end < rest.len() && rest.chars().nth(host_end) == Some(':') {
+        let port_start = host_end + 1;
+        let port_end = rest[port_start..].find('/').map(|p| port_start + p).unwrap_or(rest.len());
+        let port = &rest[port_start..port_end];
+        if port.is_empty() {
+            String::new()
+        } else {
+            format!(":{}", port)
+        }
+    } else {
+        String::new()
+    };
+
+    Ok(format!("{}://{}{}", scheme, host, port_str))
+}
+
+/// Convert raw r||s bytes (64 bytes for P-256) to DER-encoded ECDSA signature.
+///
+/// JWT ES256 signatures use DER encoding, not raw r||s concatenation.
+fn rs_to_der(rs_bytes: &[u8]) -> Result<Vec<u8>, NotiError> {
+    if rs_bytes.len() != 64 {
+        return Err(NotiError::Config(format!(
+            "expected 64-byte r||s signature, got {} bytes",
+            rs_bytes.len()
+        )));
+    }
+
+    let r = &rs_bytes[..32];
+    let s = &rs_bytes[32..];
+
+    // Capacity: SEQUENCE header + r INTEGER + s INTEGER ≤ 72 bytes.
+    let mut der = Vec::with_capacity(72);
+
+    // DER SEQUENCE header.
+    der.push(0x30);
+    der.push(0x44); // 68 bytes content.
+
+    // INTEGER r (32 bytes, leading 0x00 if high bit set).
+    der.push(0x02);
+    der.push(0x21);
+    if r[0] >= 0x80 {
+        der.push(0x00);
+    }
+    der.extend_from_slice(r);
+
+    // INTEGER s.
+    der.push(0x02);
+    der.push(0x21);
+    if s[0] >= 0x80 {
+        der.push(0x00);
+    }
+    der.extend_from_slice(s);
+
+    Ok(der)
 }
 
 #[async_trait]
@@ -45,7 +237,8 @@ impl NotifyProvider for WebPushProvider {
             ParamDef::required("endpoint", "Push subscription endpoint URL"),
             ParamDef::required("p256dh", "Push subscription p256dh key (base64url)"),
             ParamDef::required("auth", "Push subscription auth secret (base64url)"),
-            ParamDef::optional("vapid_private", "VAPID private key (base64url)"),
+            ParamDef::optional("vapid_private", "VAPID private key (base64url or PEM)")
+                .with_example("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcD..."),
             ParamDef::optional("vapid_email", "VAPID contact email")
                 .with_example("mailto:admin@example.com"),
             ParamDef::optional("ttl", "Time-to-live in seconds (default: 86400)")
@@ -106,14 +299,23 @@ impl NotifyProvider for WebPushProvider {
         let ttl = config.get("ttl").unwrap_or("86400");
         let urgency = config.get("urgency").unwrap_or("normal");
 
-        // For now, send a plain push to the endpoint
-        // In production, this would need VAPID signing and encryption
-        let resp = self
+        // Build the request.
+        let mut req_builder = self
             .client
             .post(endpoint)
             .header("Content-Type", "application/json")
             .header("TTL", ttl)
-            .header("Urgency", urgency)
+            .header("Urgency", urgency);
+
+        // Add VAPID authentication if both private key and email are provided.
+        if let (Some(vapid_private), Some(vapid_email)) =
+            (config.get("vapid_private"), config.get("vapid_email"))
+        {
+            let jwt = generate_vapid_jwt(vapid_private, vapid_email, endpoint)?;
+            req_builder = req_builder.header("Authorization", format!("vapid t={jwt}"));
+        }
+
+        let resp = req_builder
             .body(payload)
             .send()
             .await
@@ -137,5 +339,95 @@ impl NotifyProvider for WebPushProvider {
                     .with_raw_response(json!({"body": body})),
             )
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_origin_https() {
+        let result = extract_origin("https://push.example.com/v1/push/abc123").unwrap();
+        assert_eq!(result, "https://push.example.com");
+    }
+
+    #[test]
+    fn test_extract_origin_https_with_port() {
+        let result = extract_origin("https://push.example.com:8080/v1/push/abc123").unwrap();
+        assert_eq!(result, "https://push.example.com:8080");
+    }
+
+    #[test]
+    fn test_extract_origin_wss() {
+        let result = extract_origin("wss://push.service.example.com/ws/push").unwrap();
+        assert_eq!(result, "wss://push.service.example.com");
+    }
+
+    #[test]
+    fn test_extract_origin_fcm() {
+        // Firebase Cloud Messaging endpoint format
+        let result = extract_origin("https://fcm.googleapis.com/fcm/send/abc123").unwrap();
+        assert_eq!(result, "https://fcm.googleapis.com");
+    }
+
+    #[test]
+    fn test_extract_origin_mozilla() {
+        // Mozilla Push Service endpoint
+        let result = extract_origin("https://updates.push.services.mozilla.com/wpush/v1/abc123").unwrap();
+        assert_eq!(result, "https://updates.push.services.mozilla.com");
+    }
+
+    #[test]
+    fn test_extract_origin_missing_scheme() {
+        let result = extract_origin("push.example.com/v1/push/abc123");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_origin_empty_host() {
+        let result = extract_origin("https:///v1/push");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rs_to_der_valid() {
+        // Valid 64-byte signature (32 bytes r || 32 bytes s)
+        let rs = vec![0u8; 64];
+        let result = rs_to_der(&rs);
+        assert!(result.is_ok());
+        let der = result.unwrap();
+        assert!(!der.is_empty());
+        // DER signature should start with SEQUENCE (0x30)
+        assert_eq!(der[0], 0x30);
+    }
+
+    #[test]
+    fn test_rs_to_der_invalid_length() {
+        // Invalid length (not 64 bytes)
+        let rs = vec![0u8; 32];
+        let result = rs_to_der(&rs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_b64url_encode_decode() {
+        let original = b"hello world";
+        let encoded = b64url_encode(original);
+        // URL-safe base64 should not contain + or /
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
+    }
+
+    #[test]
+    fn test_decode_vapid_private_key_invalid() {
+        // Test that invalid keys are handled gracefully
+        let invalid_key = "not-a-valid-key";
+        let result = decode_vapid_private_key(invalid_key);
+        assert!(result.is_err());
     }
 }
