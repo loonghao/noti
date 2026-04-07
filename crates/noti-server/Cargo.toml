@@ -35,6 +35,8 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 validator = { workspace = true }
+mime_guess = { workspace = true }
+image = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

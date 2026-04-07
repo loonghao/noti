@@ -21,6 +21,7 @@
 //! | `NOTI_CORS_ALLOWED_ORIGINS` | `*` | Comma-separated allowed origins; `*` = permissive |
 //! | `NOTI_OTEL_ENDPOINT` | *(empty)* | OTLP collector gRPC endpoint (e.g. `http://localhost:4317`). When empty, OpenTelemetry is disabled. |
 //! | `NOTI_OTEL_SERVICE_NAME` | `noti-server` | Service name used in OTEL resource and span names. |
+//! | `NOTI_STORAGE_DIR` | `storage` | Directory for uploaded files and thumbnails. |
 
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -148,6 +149,8 @@ pub struct ServerConfig {
     /// CORS allowed origins. Empty vec = permissive (allow all).
     /// Populated from `NOTI_CORS_ALLOWED_ORIGINS`.
     pub cors_allowed_origins: Vec<String>,
+    /// Directory for uploaded files and thumbnails.
+    pub storage_dir: String,
 }
 
 /// Default max body size: 2 MiB.
@@ -167,6 +170,7 @@ impl Default for ServerConfig {
             queue_backend: QueueBackendType::Memory,
             queue_db_path: "noti-queue.db".to_string(),
             cors_allowed_origins: Vec::new(),
+            storage_dir: "storage".to_string(),
         }
     }
 }
@@ -238,6 +242,9 @@ impl ServerConfig {
             })
             .unwrap_or_default();
 
+        let storage_dir =
+            env::var("NOTI_STORAGE_DIR").unwrap_or_else(|_| "storage".to_string());
+
         Self {
             host,
             port,
@@ -250,6 +257,7 @@ impl ServerConfig {
             queue_backend,
             queue_db_path,
             cors_allowed_origins,
+            storage_dir,
         }
     }
 

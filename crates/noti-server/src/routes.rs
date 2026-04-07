@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -93,6 +93,14 @@ fn build_v1_routes() -> Router<AppState> {
             post(handlers::queue::cancel_task),
         )
         .route("/queue/purge", post(handlers::queue::purge_tasks))
+        // Storage endpoints
+        .route("/storage/upload", post(handlers::storage::upload_file))
+        .route("/storage/{file_id}", get(handlers::storage::download_file))
+        .route("/storage/{file_id}", delete(handlers::storage::delete_file))
+        .route(
+            "/storage/{file_id}/thumbnail",
+            get(handlers::storage::get_thumbnail),
+        )
 }
 
 /// Build the application router with all API routes and Swagger UI.

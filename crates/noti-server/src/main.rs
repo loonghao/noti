@@ -62,6 +62,10 @@ async fn main() {
             .expect("failed to initialize queue backend");
     tracing::info!(backend = ?config.queue_backend, "queue backend initialized");
 
+    // Set storage root for uploaded files and thumbnails
+    state = state.with_storage_root(std::path::PathBuf::from(&config.storage_dir));
+    tracing::info!(storage_dir = %config.storage_dir, "file storage initialized");
+
     // Start background worker pool
     let worker_config = WorkerConfig {
         concurrency: config.worker_count,

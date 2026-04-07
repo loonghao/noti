@@ -27,7 +27,7 @@ opentelemetry-otlp = "0.27"
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.28"
 assert_cmd = "2.0"
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
@@ -35,6 +35,7 @@ futures = "0.3"
 http = "1"
 hmac = "0.12"
 humantime = "2.1"
+image = "0.25"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 md-5 = "0.10"
 predicates = "3.1"

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::SystemTime;
+use std::path::PathBuf;
 
 use noti_core::{CircuitBreakerRegistry, ProviderRegistry, StatusTracker, TemplateRegistry};
 use noti_queue::{
@@ -21,6 +22,8 @@ pub struct AppState {
     pub queue: Arc<dyn QueueBackend>,
     pub task_notify: Arc<Notify>,
     pub started_at: SystemTime,
+    /// Root directory for file storage (uploaded files and thumbnails).
+    pub storage_root: PathBuf,
     /// Optional worker handle for accessing worker statistics.
     /// None when workers are not started (e.g., read-only mode or tests).
     /// Stored as Arc so that AppState can remain Clone while allowing
@@ -47,6 +50,7 @@ impl AppState {
             queue,
             task_notify,
             started_at: SystemTime::now(),
+            storage_root: PathBuf::from("storage"),
             worker_stats_handle: None,
             rate_limiter: None,
         }
@@ -93,6 +97,7 @@ impl AppState {
             queue,
             task_notify,
             started_at: SystemTime::now(),
+            storage_root: PathBuf::from("storage"),
             worker_stats_handle: None,
             rate_limiter: None,
         })
@@ -115,6 +120,7 @@ impl AppState {
             queue,
             task_notify,
             started_at: SystemTime::now(),
+            storage_root: PathBuf::from("storage"),
             worker_stats_handle: None,
             rate_limiter: None,
         }
@@ -151,5 +157,22 @@ impl AppState {
         let mut this = self;
         this.rate_limiter = Some(rate_limiter);
         this
+    }
+
+    /// Return a new AppState clone with a custom storage root directory.
+    pub fn with_storage_root(self, storage_root: PathBuf) -> Self {
+        let mut this = self;
+        this.storage_root = storage_root;
+        this
+    }
+
+    /// Returns the directory for uploaded files.
+    pub fn storage_dir(&self) -> PathBuf {
+        self.storage_root.join("uploads")
+    }
+
+    /// Returns the directory for generated thumbnails.
+    pub fn thumbnails_dir(&self) -> PathBuf {
+        self.storage_root.join("thumbnails")
     }
 }
