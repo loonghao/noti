@@ -14,8 +14,7 @@ use crate::handlers::{
     queue::{
         AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
         CancelResponse, DeleteDlqResponse, DlqEntryInfo, DlqStatsResponse, EnqueueResponse,
-        PurgeResponse, RequeueResponse, StatsResponse, TaskInfo,
-        handlers as queue_handlers,
+        PurgeResponse, RequeueResponse, StatsResponse, TaskInfo, handlers as queue_handlers,
     },
     send::{
         self, BatchSendApiResponse, BatchSendRequest, BatchTarget, SendApiResponse, SendRequest,

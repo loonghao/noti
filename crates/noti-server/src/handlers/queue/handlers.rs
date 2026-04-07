@@ -16,7 +16,9 @@ use super::dto::{
     CancelResponse, DeleteDlqResponse, DlqEntryInfo, DlqStatsResponse, EnqueueResponse,
     ListDlqQuery, ListTasksQuery, PurgeResponse, RequeueResponse, StatsResponse, TaskInfo,
 };
-use super::service::{parse_scheduled_time, parse_task_status, queue_error, task_to_dlq_entry, task_to_info};
+use super::service::{
+    parse_scheduled_time, parse_task_status, queue_error, task_to_dlq_entry, task_to_info,
+};
 
 /// Enqueue a notification for asynchronous processing.
 #[utoipa::path(
@@ -471,10 +473,7 @@ pub async fn requeue_from_dlq(
     Ok(Json(RequeueResponse {
         task_id: task_id.clone(),
         success: true,
-        message: format!(
-            "Task '{}' requeued as new task '{}'",
-            task_id, new_task_id
-        ),
+        message: format!("Task '{}' requeued as new task '{}'", task_id, new_task_id),
     }))
 }
 
