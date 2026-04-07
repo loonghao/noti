@@ -18,29 +18,35 @@ async fn main() {
     // Load configuration from environment variables
     let config = ServerConfig::from_env();
 
-    // Initialize OpenTelemetry (if NOTI_OTEL_ENDPOINT is set)
+    // Initialize OpenTelemetry (if NOTI_OTEL_ENDPOINT is set).  The guard must live
+    // until the end of main() so spans are flushed on shutdown (via Drop).
+    // init_otel() internally registers the OTEL layer with tracing_subscriber::registry().
     let _otel_guard = tracing_otel::init_otel();
 
-    // Initialize tracing with configured log level and format
+    // Env filter from RUST_LOG or the configured log level.
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| config.log_level.clone().into());
 
+    // Initialize the fmt subscriber. Uses try_init so if OTEL already claimed the global
+    // subscriber this is a no-op (which is acceptable — OTEL layer handles span export).
     match config.log_format {
         LogFormat::Json => {
-            tracing_subscriber::fmt()
+            let _ = tracing_subscriber::fmt()
                 .json()
                 .with_env_filter(env_filter)
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
                 .flatten_event(true)
                 .with_current_span(true)
-                .try_init()
-                .ok();
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_ansi(false)
+                .try_init();
         }
         LogFormat::Text => {
-            tracing_subscriber::fmt()
+            let _ = tracing_subscriber::fmt()
                 .with_env_filter(env_filter)
-                .try_init()
-                .ok();
+                .with_target(true)
+                .try_init();
         }
     }
 

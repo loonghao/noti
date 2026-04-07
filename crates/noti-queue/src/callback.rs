@@ -306,7 +306,7 @@ mod tests {
         // When called inside an active tracing span, current_traceparent()
         // should return a valid W3C traceparent header.
         let result = tracing::info_span!("test_span", test = "value")
-            .in_scope(|| current_traceparent());
+            .in_scope(current_traceparent);
 
         // If OTEL is initialized with a real exporter, this will be Some.
         // In test environments without OTEL, this may be None — both are valid.
