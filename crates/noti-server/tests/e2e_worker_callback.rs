@@ -96,7 +96,8 @@ dual_backend_test!(
             .await
             .unwrap();
         let stats: Value = resp.json().await.unwrap();
-        assert!(stats["failed"].as_u64().unwrap() >= 1);
+        // Failed task with max_retries=0 is moved to DLQ, not counted in main queue's failed
+        assert_eq!(stats["failed"].as_u64().unwrap(), 0);
 
         worker_handle.shutdown_and_join().await;
     }

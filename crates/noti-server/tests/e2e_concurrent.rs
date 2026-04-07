@@ -243,7 +243,8 @@ async fn e2e_concurrent_mixed_success_failure() {
         .unwrap();
     let stats: Value = resp.json().await.unwrap();
     assert!(stats["completed"].as_u64().unwrap() >= 5);
-    assert!(stats["failed"].as_u64().unwrap() >= 5);
+    // Failed tasks that exhausted retries are now in DLQ, not in main queue's failed counter
+    assert_eq!(stats["failed"].as_u64().unwrap(), 0);
 
     worker_handle.shutdown_and_join().await;
 }

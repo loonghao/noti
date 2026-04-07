@@ -563,8 +563,9 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Task is moved to DLQ — get_task returns None from main queue
-        assert!(queue.get_task(&task_id).await.unwrap().is_none());
+        // Task is moved to DLQ — get_task returns it via DLQ fallback with Failed status
+        let task = queue.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Failed);
         let entries = queue.list_dlq(10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].task.id, task_id);
@@ -624,8 +625,9 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // Task moved to DLQ — not in main queue
-        assert!(queue.get_task(&task_id).await.unwrap().is_none());
+        // Task moved to DLQ — get_task returns it via DLQ fallback with Failed status
+        let task = queue.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Failed);
         let entries = queue.list_dlq(10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].task.id, task_id);
@@ -673,7 +675,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Task should have been nacked due to open circuit breaker → moved to DLQ
-        assert!(queue.get_task(&task_id).await.unwrap().is_none());
+        // get_task returns it via DLQ fallback with Failed status
+        let task = queue.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Failed);
         let entries = queue.list_dlq(10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].task.id, task_id);

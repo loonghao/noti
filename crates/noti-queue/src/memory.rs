@@ -263,7 +263,14 @@ impl QueueBackend for InMemoryQueue {
 
     async fn get_task(&self, task_id: &str) -> Result<Option<NotificationTask>, QueueError> {
         let tasks = self.tasks.lock().await;
-        Ok(tasks.get(task_id).cloned())
+        if let Some(task) = tasks.get(task_id) {
+            return Ok(Some(task.clone()));
+        }
+        drop(tasks);
+
+        // Fall back to DLQ — tasks there have Failed status but are still queryable
+        let dlq = self.dlq.lock().await;
+        Ok(dlq.get(task_id).map(|entry| entry.task.clone()))
     }
 
     async fn cancel(&self, task_id: &str) -> Result<bool, QueueError> {
@@ -500,10 +507,12 @@ mod tests {
         queue.dequeue().await.unwrap();
         queue.nack(&id, "permanent failure").await.unwrap();
 
-        // Task is no longer in main queue (moved to DLQ)
-        assert!(queue.get_task(&id).await.unwrap().is_none());
+        // Task is no longer in main queue (moved to DLQ), but get_task still returns it via DLQ fallback
+        let retrieved = queue.get_task(&id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, TaskStatus::Failed);
 
-        // But it is in the DLQ
+        // It is also in the DLQ (same task instance)
         let entries = queue.list_dlq(10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].task.id, id);

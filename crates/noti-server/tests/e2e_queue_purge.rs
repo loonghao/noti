@@ -84,6 +84,7 @@ async fn e2e_purge_removes_terminal_preserves_nonterminal() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     // Stats before purge should show terminal + queued tasks
+    // Note: with DLQ, failed tasks that exhausted retries are in DLQ, not main queue
     let resp = client
         .get(format!("{base}/api/v1/queue/stats"))
         .send()
@@ -91,7 +92,8 @@ async fn e2e_purge_removes_terminal_preserves_nonterminal() {
         .unwrap();
     let stats_before: Value = resp.json().await.unwrap();
     let total_before = stats_before["total"].as_u64().unwrap();
-    assert!(total_before >= 3, "should have at least 3 tasks");
+    // Expected: completed (1) + queued (1) = 2. Failed task is in DLQ, not counted here.
+    assert!(total_before >= 2, "should have at least 2 tasks (completed + queued)");
 
     // Purge terminal tasks
     let resp = client
@@ -102,10 +104,8 @@ async fn e2e_purge_removes_terminal_preserves_nonterminal() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     let purged = body["purged"].as_u64().unwrap();
-    assert!(
-        purged >= 2,
-        "should purge at least the completed + failed tasks"
-    );
+    // Only completed task is purged from main queue; failed task is in DLQ
+    assert_eq!(purged, 1, "should purge only the completed task");
 
     // Stats after purge — terminal counters should be 0
     let resp = client
@@ -167,6 +167,7 @@ async fn e2e_sqlite_purge_removes_terminal_tasks() {
     worker_handle.shutdown_and_join().await;
 
     // Purge
+    // Note: with DLQ, failed tasks are in DLQ not main queue, so only completed is purged
     let resp = client
         .post(format!("{base}/api/v1/queue/purge"))
         .send()
@@ -175,10 +176,7 @@ async fn e2e_sqlite_purge_removes_terminal_tasks() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     let purged = body["purged"].as_u64().unwrap();
-    assert!(
-        purged >= 2,
-        "should purge completed + failed tasks, got {purged}"
-    );
+    assert_eq!(purged, 1, "should purge only completed task; failed task is in DLQ");
 
     // After purge, stats should show 0 terminal tasks
     let resp = client

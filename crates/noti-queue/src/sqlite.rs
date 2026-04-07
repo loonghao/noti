@@ -361,7 +361,7 @@ impl QueueBackend for SqliteQueue {
                 _ => QueueError::Backend(e.to_string()),
             })?;
 
-        let task = Self::deserialize_task(&row)?;
+        let mut task = Self::deserialize_task(&row)?;
 
         if task.should_retry() {
             let delay = task.retry_delay();
@@ -401,6 +401,7 @@ impl QueueBackend for SqliteQueue {
     async fn get_task(&self, task_id: &str) -> Result<Option<NotificationTask>, QueueError> {
         let conn = self.conn.lock().await;
 
+        // First check main tasks table
         let result = conn.query_row(
             "SELECT * FROM tasks WHERE id = ?1",
             params![task_id],
@@ -409,7 +410,23 @@ impl QueueBackend for SqliteQueue {
 
         match result {
             Ok(row) => Ok(Some(Self::deserialize_task(&row)?)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // Fall back to DLQ — tasks moved there have Failed status but are still queryable
+                let dlq_result = conn.query_row(
+                    "SELECT task_json FROM dlq_entries WHERE task_id = ?1",
+                    params![task_id],
+                    |row| row.get::<_, String>(0),
+                );
+
+                match dlq_result {
+                    Ok(json) => {
+                        let task: NotificationTask = serde_json::from_str(&json).serde_err()?;
+                        Ok(Some(task))
+                    }
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(e) => Err(QueueError::Backend(e.to_string())),
+                }
+            }
             Err(e) => Err(QueueError::Backend(e.to_string())),
         }
     }
@@ -778,10 +795,12 @@ mod tests {
         queue.dequeue().await.unwrap();
         queue.nack(&id, "permanent failure").await.unwrap();
 
-        // Task is no longer in main queue (moved to DLQ)
-        assert!(queue.get_task(&id).await.unwrap().is_none());
+        // Task is no longer in main queue (moved to DLQ), but get_task returns it via DLQ fallback
+        let retrieved = queue.get_task(&id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().status, TaskStatus::Failed);
 
-        // But it is in the DLQ
+        // It is also in the DLQ (same task instance)
         let entries = queue.list_dlq(10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].task.id, id);
