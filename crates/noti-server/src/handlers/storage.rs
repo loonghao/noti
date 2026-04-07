@@ -144,6 +144,22 @@ fn is_image_mime(mime: &str) -> bool {
     mime.starts_with("image/")
 }
 
+/// Find a file in `dir` whose name starts with `{file_id}.`.
+/// Returns the path to the matching file, or `None` if not found.
+async fn find_file_by_id(
+    dir: &FsPath,
+    file_id: &str,
+) -> Result<Option<PathBuf>, std::io::Error> {
+    let mut entries = fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(&format!("{}.", file_id)) {
+            return Ok(Some(entry.path()));
+        }
+    }
+    Ok(None)
+}
+
 // ───────────────────── Handlers ─────────────────────
 
 /// Upload a file via multipart form data.
@@ -275,25 +291,14 @@ pub async fn download_file(
         )));
     }
 
-    // Find the file: iterate to find any file with matching ID prefix
-    let mut matching_path: Option<PathBuf> = None;
-    let mut entries = fs::read_dir(&upload_dir).await.map_err(|e| {
+    let path = match find_file_by_id(&upload_dir, &file_id).await.map_err(|e| {
         ApiError::internal(format!("failed to read upload directory: {}", e))
-    })?;
-
-    while let Some(entry) = entries.next_entry().await.map_err(|e| {
-        ApiError::internal(format!("failed to read upload directory entry: {}", e))
     })? {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(&format!("{}.", file_id)) {
-            matching_path = Some(entry.path());
-            break;
+        Some(p) => p,
+        None => {
+            return Err(ApiError::not_found(format!("file '{}' not found", file_id)));
         }
-    }
-
-    let path = matching_path.ok_or_else(|| {
-        ApiError::not_found(format!("file '{}' not found", file_id))
-    })?;
+    };
 
     let data = fs::read(&path).await.map_err(|e| {
         ApiError::internal(format!("failed to read file: {}", e))
@@ -382,27 +387,18 @@ pub async fn delete_file(
     }
 
     // Find and delete the uploaded file
-    let mut deleted = false;
-    let mut entries = fs::read_dir(&upload_dir).await.map_err(|e| {
+    let path = match find_file_by_id(&upload_dir, &file_id).await.map_err(|e| {
         ApiError::internal(format!("failed to read upload directory: {}", e))
-    })?;
-
-    while let Some(entry) = entries.next_entry().await.map_err(|e| {
-        ApiError::internal(format!("failed to read upload directory entry: {}", e))
     })? {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with(&format!("{}.", file_id)) {
-            fs::remove_file(entry.path()).await.map_err(|e| {
-                ApiError::internal(format!("failed to delete file: {}", e))
-            })?;
-            deleted = true;
-            break;
+        Some(p) => p,
+        None => {
+            return Err(ApiError::not_found(format!("file '{}' not found", file_id)));
         }
-    }
+    };
 
-    if !deleted {
-        return Err(ApiError::not_found(format!("file '{}' not found", file_id)));
-    }
+    fs::remove_file(&path).await.map_err(|e| {
+        ApiError::internal(format!("failed to delete file: {}", e))
+    })?;
 
     // Delete thumbnail if exists
     let thumb_path = thumb_dir.join(format!("{}.png", file_id));
