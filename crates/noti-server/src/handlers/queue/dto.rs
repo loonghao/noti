@@ -151,6 +151,67 @@ pub struct BatchEnqueueResponse {
     pub total: usize,
 }
 
+// ───────────────────── DLQ types ─────────────────────
+
+/// Query parameters for listing DLQ entries.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct ListDlqQuery {
+    /// Maximum number of DLQ entries to return (default: 50).
+    pub limit: Option<usize>,
+}
+
+/// A single entry in the Dead Letter Queue (a task that exhausted all retries).
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DlqEntryInfo {
+    /// Task identifier.
+    pub task_id: String,
+    /// Provider name.
+    pub provider: String,
+    /// Error message from the last failed attempt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// Number of delivery attempts made.
+    pub attempts: u32,
+    /// When the task was created (ISO 8601 / RFC 3339).
+    pub created_at: String,
+    /// When the task last failed (ISO 8601 / RFC 3339).
+    pub failed_at: String,
+    /// Priority of the original task.
+    pub priority: String,
+    /// Optional metadata.
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub metadata: HashMap<String, String>,
+}
+
+/// DLQ statistics.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DlqStatsResponse {
+    /// Number of entries currently in the DLQ.
+    pub total: usize,
+}
+
+/// Response for requeue operation.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct RequeueResponse {
+    /// Task ID that was requeued.
+    pub task_id: String,
+    /// Whether the requeue succeeded.
+    pub success: bool,
+    /// Human-readable result message.
+    pub message: String,
+}
+
+/// Response for DLQ entry deletion.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DeleteDlqResponse {
+    /// Task ID that was deleted.
+    pub task_id: String,
+    /// Whether the deletion succeeded.
+    pub success: bool,
+    /// Human-readable result message.
+    pub message: String,
+}
+
 // ───────────────────── QueueStats → StatsResponse conversion ─────────────────────
 
 use noti_queue::QueueStats;

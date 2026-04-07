@@ -1,5 +1,5 @@
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -93,6 +93,17 @@ fn build_v1_routes() -> Router<AppState> {
             post(handlers::queue::cancel_task),
         )
         .route("/queue/purge", post(handlers::queue::purge_tasks))
+        // DLQ (Dead Letter Queue) endpoints
+        .route("/queue/dlq", get(handlers::queue::list_dlq))
+        .route("/queue/dlq/stats", get(handlers::queue::get_dlq_stats))
+        .route(
+            "/queue/dlq/{task_id}/requeue",
+            post(handlers::queue::requeue_from_dlq),
+        )
+        .route(
+            "/queue/dlq/{task_id}",
+            delete(handlers::queue::delete_from_dlq),
+        )
 }
 
 /// Build the application router with all API routes and Swagger UI.

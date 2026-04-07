@@ -1,6 +1,6 @@
 use noti_queue::{NotificationTask, TaskStatus};
 
-use super::dto::TaskInfo;
+use super::dto::{DlqEntryInfo, TaskInfo};
 use crate::handlers::error::{ApiError, codes};
 
 // ───────────────────── Mapping helpers ─────────────────────
@@ -20,6 +20,20 @@ pub fn task_to_info(task: &NotificationTask) -> TaskInfo {
         priority: format!("{:?}", task.priority()),
         metadata: task.metadata.clone(),
         scheduled_at,
+    }
+}
+
+/// Convert a failed [`NotificationTask`] to a [`DlqEntryInfo`] response.
+pub fn task_to_dlq_entry(task: &NotificationTask) -> DlqEntryInfo {
+    DlqEntryInfo {
+        task_id: task.id.clone(),
+        provider: task.provider.clone(),
+        last_error: task.last_error.clone(),
+        attempts: task.attempts,
+        created_at: humantime::format_rfc3339(task.created_at).to_string(),
+        failed_at: humantime::format_rfc3339(task.updated_at).to_string(),
+        priority: format!("{:?}", task.priority()),
+        metadata: task.metadata.clone(),
     }
 }
 

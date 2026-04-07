@@ -13,7 +13,8 @@ use crate::handlers::{
     providers::{self, ParamInfo, ProviderInfo, ProviderListResponse, ProviderSummary},
     queue::{
         AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
-        CancelResponse, EnqueueResponse, PurgeResponse, StatsResponse, TaskInfo,
+        CancelResponse, DeleteDlqResponse, DlqEntryInfo, DlqStatsResponse, EnqueueResponse,
+        PurgeResponse, RequeueResponse, StatsResponse, TaskInfo,
         handlers as queue_handlers,
     },
     send::{
@@ -65,6 +66,11 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         queue_handlers::get_stats,
         queue_handlers::cancel_task,
         queue_handlers::purge_tasks,
+        // DLQ
+        queue_handlers::list_dlq,
+        queue_handlers::get_dlq_stats,
+        queue_handlers::requeue_from_dlq,
+        queue_handlers::delete_from_dlq,
         // Status
         status::get_status,
         status::get_all_statuses,
@@ -98,6 +104,8 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
         AsyncSendRequest, EnqueueResponse,
         BatchAsyncRequest, BatchEnqueueResponse, BatchEnqueueItemResult,
         TaskInfo, StatsResponse, CancelResponse, PurgeResponse,
+        // DLQ
+        DlqEntryInfo, DlqStatsResponse, RequeueResponse, DeleteDlqResponse,
         // Status
         StatusResponse, AllStatusesResponse, PurgeStatusResponse,
         // Templates
