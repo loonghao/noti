@@ -481,3 +481,85 @@ async fn e2e_storage_magic_byte_detection_jpeg() {
         "JPEG magic bytes should override fake.png extension"
     );
 }
+
+// ───────────────────── Empty File Tests ─────────────────────
+
+#[tokio::test]
+async fn e2e_storage_upload_empty_file() {
+    let (base, _storage_path) = spawn_server_with_temp_storage().await;
+    let client = test_client();
+
+    // Upload an empty file (0 bytes)
+    let file_part = reqwest::multipart::Part::bytes(Vec::new())
+        .file_name("empty.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+
+    let resp = client
+        .post(format!("{base}/api/v1/storage/upload"))
+        .multipart(form)
+        .send()
+        .await
+        .expect("request failed");
+
+    // Empty files should still be accepted (0 is a valid size)
+    assert_eq!(
+        resp.status(),
+        StatusCode::CREATED,
+        "empty file upload should return 201 Created"
+    );
+
+    let body: UploadResponse = resp.json().await.unwrap();
+    assert!(!body.file_id.is_empty(), "file_id should not be empty");
+    assert_eq!(body.file_name, "empty.txt");
+    assert_eq!(body.size_bytes, 0, "empty file should have 0 bytes");
+    assert!(body.thumbnail_url.is_none(), "empty file should not have thumbnail");
+}
+
+#[tokio::test]
+async fn e2e_storage_download_empty_file() {
+    let (base, _storage_path) = spawn_server_with_temp_storage().await;
+    let client = test_client();
+
+    // Upload an empty file first
+    let file_part = reqwest::multipart::Part::bytes(Vec::new())
+        .file_name("empty_download.txt")
+        .mime_str("text/plain")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+
+    let upload_resp = client
+        .post(format!("{base}/api/v1/storage/upload"))
+        .multipart(form)
+        .send()
+        .await
+        .expect("upload request failed");
+
+    let upload_body: UploadResponse = upload_resp.json().await.unwrap();
+    let file_id = upload_body.file_id;
+
+    // Download the empty file
+    let download_resp = client
+        .get(format!("{base}/api/v1/storage/{file_id}"))
+        .send()
+        .await
+        .expect("download request failed");
+
+    assert_eq!(
+        download_resp.status(),
+        StatusCode::OK,
+        "download of empty file should return 200"
+    );
+
+    let downloaded_bytes = download_resp.bytes().await.unwrap();
+    assert_eq!(
+        downloaded_bytes.len(),
+        0,
+        "downloaded content should be empty"
+    );
+}
+
+
