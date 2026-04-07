@@ -65,7 +65,8 @@ Async message queue for background notification processing:
 - **Circuit breaker integration** — each worker respects the provider's `CircuitBreaker` and fast-fails when the circuit is open
 - **Webhook callbacks** — HTTP POST on task completion or failure
 - **Scheduled/delayed delivery** — defer notifications via `delay_seconds` or `scheduled_at`
-- **Task lifecycle** — queued → processing → completed/failed/cancelled
+- **Dead letter queue (DLQ)** — tasks that exhaust all retries are moved to an isolated DLQ for later inspection or manual replay via `requeue_from_dlq()`
+- **Task lifecycle** — queued → processing → completed/failed/cancelled (or DLQ on permanent failure)
 
 ### `noti-server`
 
