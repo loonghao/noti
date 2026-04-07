@@ -126,10 +126,10 @@ fn detect_mime(data: &[u8], filename: &str) -> String {
         if &data[0..6] == b"GIF87a" || &data[0..6] == b"GIF89a" {
             return "image/gif".to_string();
         }
-        // WebP
-        if &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-            return "image/webp".to_string();
-        }
+    }
+    // WebP: RIFF....WEBP requires at least 12 bytes
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return "image/webp".to_string();
     }
 
     // Fall back to extension-based detection
