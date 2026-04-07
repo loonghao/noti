@@ -18,9 +18,13 @@ use crate::state::AppState;
 /// - `noti_providers_registered` - Number of registered notification providers
 /// - `noti_providers_with_attachments` - Number of providers supporting attachments
 /// - `noti_server_uptime_seconds` - Server uptime in seconds
+/// - `noti_server_version` - Server version
 /// - `noti_workers_total` - Total number of workers in the pool
 /// - `noti_workers_active` - Number of workers actively processing tasks
 /// - `noti_workers_idle` - Number of workers idle and available
+/// - `noti_ratelimit_requests_total` - Total requests processed by rate limiter (counter)
+/// - `noti_ratelimit_rejected_total` - Requests rejected due to rate limiting (counter)
+/// - `noti_ratelimit_tracked_ips` - Number of IPs tracked in per-IP mode (gauge)
 ///
 /// # Example
 /// ```text
@@ -45,6 +49,7 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
     let uptime = state.started_at.elapsed().unwrap_or_default().as_secs();
 
     let worker_stats = state.worker_stats_handle.as_ref().map(|h| h.stats());
+    let rate_limit_metrics = state.rate_limiter.as_ref().map(|r| r.metrics());
 
     let mut output = String::new();
 
@@ -89,6 +94,21 @@ pub async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoRespo
         output.push_str("# HELP noti_workers_idle Number of workers idle and available\n");
         output.push_str("# TYPE noti_workers_idle gauge\n");
         output.push_str(&format!("noti_workers_idle {}\n", workers.idle));
+    }
+
+    // Rate limiting metrics (only when rate limiter is enabled)
+    if let Some(rl) = rate_limit_metrics {
+        output.push_str("# HELP noti_ratelimit_requests_total Total requests processed by rate limiter\n");
+        output.push_str("# TYPE noti_ratelimit_requests_total counter\n");
+        output.push_str(&format!("noti_ratelimit_requests_total{{per_ip=\"{}\"}} {}\n", rl.per_ip, rl.requests_total));
+
+        output.push_str("# HELP noti_ratelimit_rejected_total Requests rejected due to rate limiting\n");
+        output.push_str("# TYPE noti_ratelimit_rejected_total counter\n");
+        output.push_str(&format!("noti_ratelimit_rejected_total{{per_ip=\"{}\"}} {}\n", rl.per_ip, rl.rejected_total));
+
+        output.push_str("# HELP noti_ratelimit_tracked_ips Number of IPs currently tracked (per-IP mode)\n");
+        output.push_str("# TYPE noti_ratelimit_tracked_ips gauge\n");
+        output.push_str(&format!("noti_ratelimit_tracked_ips {}\n", rl.tracked_ips));
     }
 
     axum::response::Response::builder()
@@ -151,5 +171,33 @@ mod tests {
         assert!(body.contains("noti_workers_idle"), "missing noti_workers_idle");
         // Should show the 2 workers from our config
         assert!(body.contains("noti_workers_total 2"), "expected 2 total workers");
+    }
+
+    #[tokio::test]
+    async fn test_prometheus_metrics_with_rate_limit_stats() {
+        use std::time::Duration;
+        use crate::middleware::rate_limit::{RateLimitConfig, RateLimiterState};
+
+        let config = RateLimitConfig::new(100, Duration::from_secs(60));
+        let rate_limiter = RateLimiterState::new(config);
+
+        let state = AppState::new(ProviderRegistry::new())
+            .with_rate_limiter(rate_limiter);
+
+        let app = Router::new()
+            .route("/metrics", get(prometheus_metrics))
+            .with_state(state);
+        let server = TestServer::new(app);
+
+        let resp = server.get("/metrics").await;
+        resp.assert_status_ok();
+
+        let body = resp.text();
+        // Rate limit metrics should be present
+        assert!(body.contains("noti_ratelimit_requests_total"), "missing noti_ratelimit_requests_total");
+        assert!(body.contains("noti_ratelimit_rejected_total"), "missing noti_ratelimit_rejected_total");
+        assert!(body.contains("noti_ratelimit_tracked_ips"), "missing noti_ratelimit_tracked_ips");
+        // Should show per_ip="true" for the config we used
+        assert!(body.contains("per_ip=\"true\""), "expected per_ip=\"true\"");
     }
 }

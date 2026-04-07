@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -119,6 +120,32 @@ impl TokenBucket {
     }
 }
 
+// ───────────────────── Metrics ─────────────────────
+
+/// Atomic counters for rate limiting metrics.
+#[derive(Debug)]
+pub struct RateLimitMetrics {
+    /// Total requests processed (both allowed and rejected).
+    pub requests_total: std::sync::atomic::AtomicU64,
+    /// Total requests rejected due to rate limiting.
+    pub rejected_total: std::sync::atomic::AtomicU64,
+    /// Number of IPs currently being tracked (per-IP mode only).
+    pub tracked_ips: std::sync::atomic::AtomicUsize,
+}
+
+/// Snapshot of rate limiting metrics for Prometheus export.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RateLimitMetricsSnapshot {
+    /// Total requests processed.
+    pub requests_total: u64,
+    /// Total requests rejected.
+    pub rejected_total: u64,
+    /// Number of IPs currently tracked.
+    pub tracked_ips: usize,
+    /// Whether per-IP rate limiting is enabled.
+    pub per_ip: bool,
+}
+
 // ───────────────────── Shared State ─────────────────────
 
 /// Shared rate limiter state, safe to clone across handlers.
@@ -127,6 +154,7 @@ pub struct RateLimiterState {
     config: RateLimitConfig,
     global_bucket: Arc<Mutex<TokenBucket>>,
     ip_buckets: Arc<Mutex<HashMap<IpAddr, TokenBucket>>>,
+    metrics: Arc<RateLimitMetrics>,
 }
 
 impl RateLimiterState {
@@ -136,12 +164,29 @@ impl RateLimiterState {
             config: config.clone(),
             global_bucket: Arc::new(Mutex::new(global_bucket)),
             ip_buckets: Arc::new(Mutex::new(HashMap::new())),
+            metrics: Arc::new(RateLimitMetrics {
+                requests_total: std::sync::atomic::AtomicU64::new(0),
+                rejected_total: std::sync::atomic::AtomicU64::new(0),
+                tracked_ips: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        }
+    }
+
+    /// Returns a snapshot of current rate limiting metrics.
+    pub fn metrics(&self) -> RateLimitMetricsSnapshot {
+        RateLimitMetricsSnapshot {
+            requests_total: self.metrics.requests_total.load(Ordering::Relaxed),
+            rejected_total: self.metrics.rejected_total.load(Ordering::Relaxed),
+            tracked_ips: self.metrics.tracked_ips.load(Ordering::Relaxed),
+            per_ip: self.config.per_ip,
         }
     }
 
     /// Check if a request from the given IP is allowed.
     /// Returns `Ok(remaining)` or `Err(retry_after_secs)`.
     pub async fn check(&self, ip: Option<IpAddr>) -> Result<RateLimitInfo, RateLimitInfo> {
+        self.metrics.requests_total.fetch_add(1, Ordering::Relaxed);
+
         if self.config.per_ip {
             if let Some(ip) = ip {
                 return self.check_ip(ip).await;
@@ -163,21 +208,32 @@ impl RateLimiterState {
                 ..info
             })
         } else {
+            self.metrics.rejected_total.fetch_add(1, Ordering::Relaxed);
             Err(info)
         }
     }
 
     async fn check_ip(&self, ip: IpAddr) -> Result<RateLimitInfo, RateLimitInfo> {
         let mut buckets = self.ip_buckets.lock().await;
+        let ip_is_new = !buckets.contains_key(&ip);
 
         // Evict stale entries if we hit the limit
         if buckets.len() >= self.config.max_tracked_ips && !buckets.contains_key(&ip) {
-            self.evict_stale(&mut buckets);
+            let evicted = self.evict_stale(&mut buckets);
+            // Update tracked IPs count after eviction
+            if evicted > 0 {
+                self.metrics.tracked_ips.fetch_sub(evicted, Ordering::Relaxed);
+            }
         }
 
         let bucket = buckets
             .entry(ip)
             .or_insert_with(|| TokenBucket::new(self.config.max_requests, self.config.window));
+
+        // Track new IP entry
+        if ip_is_new {
+            self.metrics.tracked_ips.fetch_add(1, Ordering::Relaxed);
+        }
 
         let info = RateLimitInfo {
             limit: self.config.max_requests,
@@ -191,18 +247,21 @@ impl RateLimiterState {
                 ..info
             })
         } else {
+            self.metrics.rejected_total.fetch_add(1, Ordering::Relaxed);
             Err(info)
         }
     }
 
-    fn evict_stale(&self, buckets: &mut HashMap<IpAddr, TokenBucket>) {
+    fn evict_stale(&self, buckets: &mut HashMap<IpAddr, TokenBucket>) -> usize {
         // Remove buckets that are fully refilled (idle clients)
         let threshold = self.config.max_requests as f64;
+        let initial_len = buckets.len();
         buckets.retain(|_, b| {
             let mut clone = b.clone();
             clone.refill();
             clone.tokens < threshold
         });
+        initial_len - buckets.len()
     }
 }
 

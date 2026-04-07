@@ -9,6 +9,7 @@ use noti_queue::{
 use tokio::sync::{Notify, RwLock};
 
 use crate::config::QueueBackendType;
+use crate::middleware::rate_limit::RateLimiterState;
 
 /// Shared application state for all request handlers.
 #[derive(Clone)]
@@ -25,6 +26,11 @@ pub struct AppState {
     /// Stored as Arc so that AppState can remain Clone while allowing
     /// stats to be shared across clones.
     pub worker_stats_handle: Option<Arc<WorkerStatsHandle>>,
+    /// Optional rate limiter state for accessing rate limiting metrics.
+    /// None when rate limiting is not enabled or when in read-only mode/tests.
+    /// This is set by `main.rs` after creating the rate limiter so that
+    /// the prometheus handler can access rate limit metrics.
+    pub rate_limiter: Option<RateLimiterState>,
 }
 
 impl AppState {
@@ -42,6 +48,7 @@ impl AppState {
             task_notify,
             started_at: SystemTime::now(),
             worker_stats_handle: None,
+            rate_limiter: None,
         }
     }
 
@@ -87,6 +94,7 @@ impl AppState {
             task_notify,
             started_at: SystemTime::now(),
             worker_stats_handle: None,
+            rate_limiter: None,
         })
     }
 
@@ -108,6 +116,7 @@ impl AppState {
             task_notify,
             started_at: SystemTime::now(),
             worker_stats_handle: None,
+            rate_limiter: None,
         }
     }
 
@@ -131,6 +140,16 @@ impl AppState {
     pub fn with_worker_handle(self, worker_stats_handle: Arc<WorkerStatsHandle>) -> Self {
         let mut this = self;
         this.worker_stats_handle = Some(worker_stats_handle);
+        this
+    }
+
+    /// Return a new AppState clone with the rate limiter state set.
+    /// This is needed because AppState is Clone but we need to set the
+    /// rate_limiter after creating it in main.rs so that prometheus
+    /// handler can access rate limit metrics.
+    pub fn with_rate_limiter(self, rate_limiter: RateLimiterState) -> Self {
+        let mut this = self;
+        this.rate_limiter = Some(rate_limiter);
         this
     }
 }

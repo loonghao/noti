@@ -80,6 +80,9 @@ async fn main() {
     let rate_limiter = RateLimiterState::new(config.rate_limit.clone());
     tracing::info!("rate limiter enabled");
 
+    // Store rate limiter in AppState for prometheus handler to access metrics
+    state = state.with_rate_limiter(rate_limiter.clone());
+
     // CORS configuration
     let cors_layer = if config.cors_allowed_origins.is_empty()
         || config.cors_allowed_origins.iter().any(|o| o == "*")
