@@ -74,6 +74,8 @@ REST API server for the noti notification service:
 
 - **Axum-based HTTP server** — sync and async send endpoints
 - **Queue management API** — enqueue, list, cancel, purge tasks
+- **DLQ HTTP API** — list, requeue, delete dead-letter queue entries via `/api/v1/queue/dlq`
+- **File Storage API** — multipart upload, download, delete, and image thumbnail generation (`NOTI_STORAGE_DIR`)
 - **Configurable queue backend** — `NOTI_QUEUE_BACKEND=memory|sqlite`
 - **Template CRUD** — create, read, update, delete message templates
 - **Rate limiting** — token-bucket per-IP or global rate limiting
@@ -100,6 +102,8 @@ REST API server for the noti notification service:
 | Observability | tracing + tracing-subscriber |
 | Serialization | serde / serde_json |
 | Persistent storage | rusqlite 0.34 (bundled SQLite) |
+| Image processing | image (thumbnail generation) |
+| MIME detection | mime_guess |
 | HTTP middleware | tower-http 0.6 (CORS, tracing) |
 | Validation | validator 0.19 |
 | Testing | rstest, assert_cmd, wiremock |

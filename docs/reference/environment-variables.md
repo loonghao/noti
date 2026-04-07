@@ -25,6 +25,9 @@
 | `NOTI_QUEUE_BACKEND` | Queue backend: `memory` or `sqlite` | `memory` |
 | `NOTI_QUEUE_DB_PATH` | SQLite database path (when backend=sqlite) | `noti-queue.db` |
 | `NOTI_CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins; `*` = permissive | `*` |
+| `NOTI_STORAGE_DIR` | Root directory for uploaded files and thumbnails | `storage` |
+| `NOTI_OTEL_ENDPOINT` | OTLP collector gRPC endpoint (e.g. `http://localhost:4317`); empty = disabled | *(empty)* |
+| `NOTI_OTEL_SERVICE_NAME` | Service name used in OpenTelemetry resource and span names | `noti-server` |
 
 ## Install Script
 
