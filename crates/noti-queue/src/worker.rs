@@ -249,6 +249,7 @@ impl WorkerPool {
                                             fire_callback(&updated).await;
                                         }
                                     }
+                                    stats.mark_idle();
                                     continue;
                                 }
                             };
@@ -281,6 +282,7 @@ impl WorkerPool {
                                         fire_callback(&updated).await;
                                     }
                                 }
+                                stats.mark_idle();
                                 continue;
                             }
 
@@ -365,10 +367,10 @@ impl WorkerPool {
                                             fire_callback(&updated).await;
                                         }
                                     }
-                                    // Mark worker as idle after completing task
-                                    stats.mark_idle();
                                 }
                             }
+                            // Mark worker as idle after completing task (all send outcomes)
+                            stats.mark_idle();
                         }
                         Ok(None) => {
                             // Queue empty — wait for new task or shutdown
