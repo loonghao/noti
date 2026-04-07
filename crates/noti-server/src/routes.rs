@@ -93,7 +93,7 @@ fn build_v1_routes() -> Router<AppState> {
             post(handlers::queue::cancel_task),
         )
         .route("/queue/purge", post(handlers::queue::purge_tasks))
-        // DLQ management endpoints
+        // DLQ (Dead Letter Queue) endpoints
         .route("/queue/dlq", get(handlers::queue::list_dlq))
         .route("/queue/dlq/stats", get(handlers::queue::get_dlq_stats))
         .route(

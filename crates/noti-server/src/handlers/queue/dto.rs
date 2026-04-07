@@ -176,6 +176,13 @@ impl From<QueueStats> for StatsResponse {
 
 // ───────────────────── DLQ types ─────────────────────
 
+/// Query parameters for listing DLQ entries.
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct ListDlqQuery {
+    /// Maximum number of entries to return (default: 50, max: 1000).
+    pub limit: Option<usize>,
+}
+
 /// Serializable DLQ entry info for API responses.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct DlqEntryInfo {
@@ -213,17 +220,18 @@ pub struct RequeueResponse {
     pub message: String,
 }
 
+/// Response for DLQ entry deletion.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DeleteDlqResponse {
+    pub task_id: String,
+    pub success: bool,
+    pub message: String,
+}
+
 /// Response for delete from DLQ operation.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct DeleteFromDlqResponse {
     pub task_id: String,
     pub deleted: bool,
     pub message: String,
-}
-
-/// Query parameters for listing DLQ entries.
-#[derive(Debug, Deserialize, IntoParams)]
-pub struct ListDlqQuery {
-    /// Maximum number of entries to return (default: 50, max: 1000).
-    pub limit: Option<usize>,
 }

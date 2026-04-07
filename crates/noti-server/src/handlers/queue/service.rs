@@ -38,6 +38,21 @@ pub fn dlq_entry_to_info(entry: &DlqEntry) -> DlqEntryInfo {
     }
 }
 
+/// Convert a failed [`NotificationTask`] to the API response type [`DlqEntryInfo`].
+pub fn task_to_dlq_entry(task: &NotificationTask) -> DlqEntryInfo {
+    DlqEntryInfo {
+        task_id: task.id.clone(),
+        provider: task.provider.clone(),
+        status: task.status.to_string(),
+        attempts: task.attempts,
+        last_error: task.last_error.clone(),
+        reason: task.last_error.clone().unwrap_or_default(),
+        moved_at: humantime::format_rfc3339(task.updated_at).to_string(),
+        priority: format!("{:?}", task.priority()),
+        metadata: task.metadata.clone(),
+    }
+}
+
 /// Parse an optional status string into a [`TaskStatus`].
 ///
 /// Returns `None` for unrecognised values.

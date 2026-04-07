@@ -11,9 +11,9 @@ pub mod service;
 // Re-export public types to maintain the same public API as the flat queue.rs.
 pub use dto::{
     AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
-    CancelResponse, DeleteFromDlqResponse, DlqEntryInfo, DlqListResponse, DlqStatsResponse,
-    EnqueueResponse, ListDlqQuery, ListTasksQuery, PurgeResponse, RequeueResponse,
-    StatsResponse, TaskInfo,
+    CancelResponse, DeleteDlqResponse, DeleteFromDlqResponse, DlqEntryInfo, DlqListResponse,
+    DlqStatsResponse, EnqueueResponse, ListDlqQuery, ListTasksQuery, PurgeResponse,
+    RequeueResponse, StatsResponse, TaskInfo,
 };
 pub use handlers::{
     cancel_task, delete_from_dlq, get_dlq_stats, get_stats, get_task, list_dlq, list_tasks,

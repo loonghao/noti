@@ -13,7 +13,7 @@ use crate::state::AppState;
 
 use super::dto::{
     AsyncSendRequest, BatchAsyncRequest, BatchEnqueueItemResult, BatchEnqueueResponse,
-    CancelResponse, DeleteFromDlqResponse, DlqListResponse, DlqStatsResponse, EnqueueResponse,
+    CancelResponse, DeleteDlqResponse, DlqListResponse, DlqStatsResponse, EnqueueResponse,
     ListDlqQuery, ListTasksQuery, PurgeResponse, RequeueResponse, StatsResponse, TaskInfo,
 };
 use super::service::{
@@ -380,7 +380,9 @@ pub async fn purge_tasks(State(state): State<AppState>) -> Result<Json<PurgeResp
     }))
 }
 
-/// List entries in the dead letter queue.
+// ───────────────────── DLQ handlers ─────────────────────
+
+/// List all entries in the Dead Letter Queue (tasks that exhausted all retries).
 #[utoipa::path(
     get,
     path = "/api/v1/queue/dlq",
@@ -426,9 +428,10 @@ pub async fn get_dlq_stats(State(state): State<AppState>) -> Result<Json<DlqStat
     post,
     path = "/api/v1/queue/dlq/{task_id}/requeue",
     tag = "Async Queue",
-    params(("task_id" = String, Path, description = "Task ID")),
+    params(("task_id" = String, Path, description = "Task ID to requeue")),
     responses(
-        (status = 200, description = "Requeue result", body = RequeueResponse)
+        (status = 200, description = "Requeue result", body = RequeueResponse),
+        (status = 404, description = "Task not found or not in DLQ", body = ApiError),
     )
 )]
 pub async fn requeue_from_dlq(
@@ -436,22 +439,25 @@ pub async fn requeue_from_dlq(
     Path(task_id): Path<String>,
 ) -> Result<Json<RequeueResponse>, ApiError> {
     use crate::handlers::error::codes;
+    use noti_queue::TaskStatus;
 
-    // First check if the task exists in the DLQ
-    let entries = state
+    // Fetch the task and verify it is in the Failed state (which means it's in the DLQ)
+    let task = state
         .queue
-        .list_dlq(1000)
+        .get_task(&task_id)
         .await
-        .map_err(queue_error)?;
+        .map_err(queue_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!("task '{}' not found", task_id))
+                .with_code(codes::TASK_NOT_FOUND)
+        })?;
 
-    let exists = entries.iter().any(|e| e.task.id == task_id);
-
-    if !exists {
-        return Err(ApiError::not_found(format!(
-            "DLQ entry '{}' not found",
-            task_id
+    if task.status != TaskStatus::Failed {
+        return Err(ApiError::bad_request(format!(
+            "task '{}' is not in the DLQ (status: {}); only failed tasks can be requeued",
+            task_id, task.status
         ))
-        .with_code(codes::TASK_NOT_FOUND));
+        .with_code(codes::INVALID_PARAMETER));
     }
 
     state
@@ -468,38 +474,40 @@ pub async fn requeue_from_dlq(
         message: "Task requeued from DLQ successfully".to_string(),
     }))
 }
-
-/// Permanently delete a task from the DLQ.
 #[utoipa::path(
     delete,
     path = "/api/v1/queue/dlq/{task_id}",
     tag = "Async Queue",
-    params(("task_id" = String, Path, description = "Task ID")),
+    params(("task_id" = String, Path, description = "Task ID to delete from DLQ")),
     responses(
-        (status = 200, description = "Delete result", body = DeleteFromDlqResponse)
+        (status = 200, description = "Delete result", body = DeleteDlqResponse),
+        (status = 404, description = "Task not found or not in DLQ", body = ApiError),
     )
 )]
 pub async fn delete_from_dlq(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
-) -> Result<Json<DeleteFromDlqResponse>, ApiError> {
+) -> Result<Json<DeleteDlqResponse>, ApiError> {
     use crate::handlers::error::codes;
+    use noti_queue::TaskStatus;
 
-    // First check if the task exists in the DLQ
-    let entries = state
+    // Verify task exists and is in Failed state (which means it's in the DLQ)
+    let task = state
         .queue
-        .list_dlq(1000)
+        .get_task(&task_id)
         .await
-        .map_err(queue_error)?;
+        .map_err(queue_error)?
+        .ok_or_else(|| {
+            ApiError::not_found(format!("task '{}' not found", task_id))
+                .with_code(codes::TASK_NOT_FOUND)
+        })?;
 
-    let exists = entries.iter().any(|e| e.task.id == task_id);
-
-    if !exists {
-        return Err(ApiError::not_found(format!(
-            "DLQ entry '{}' not found",
-            task_id
+    if task.status != TaskStatus::Failed {
+        return Err(ApiError::bad_request(format!(
+            "task '{}' is not in the DLQ (status: {}); only failed tasks can be deleted via DLQ endpoint",
+            task_id, task.status
         ))
-        .with_code(codes::TASK_NOT_FOUND));
+        .with_code(codes::INVALID_PARAMETER));
     }
 
     state
@@ -510,9 +518,9 @@ pub async fn delete_from_dlq(
 
     info!(task_id = %task_id, "task deleted from DLQ");
 
-    Ok(Json(DeleteFromDlqResponse {
+    Ok(Json(DeleteDlqResponse {
         task_id,
-        deleted: true,
-        message: "Task deleted from DLQ successfully".to_string(),
+        success: true,
+        message: "Task permanently removed from DLQ".to_string(),
     }))
 }
