@@ -129,9 +129,22 @@ use noti_core::ProviderRegistry;
 use reqwest::Client;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::time::Duration;
 
-/// Shared HTTP client for all providers (created once, reused)
-static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(Client::new);
+/// Shared HTTP client for all providers (created once, reused).
+///
+/// Configured with connection pooling and keepalive for high-throughput scenarios:
+/// - `pool_max_idle_per_host(8)`: limit idle connections per host to avoid resource exhaustion
+/// - `tcp_keepalive(Duration::from_secs(30))`: detect half-open connections
+/// - `tcp_nodelay(true)`: disable Nagle's algorithm for lower latency
+static HTTP_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .pool_max_idle_per_host(8)
+        .tcp_keepalive(Duration::from_secs(30))
+        .tcp_nodelay(true)
+        .build()
+        .expect("reqwest Client::builder should always succeed")
+});
 
 /// Register all built-in notification providers into the given registry.
 pub fn register_all_providers(registry: &mut ProviderRegistry) {
