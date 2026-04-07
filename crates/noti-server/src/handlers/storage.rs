@@ -5,7 +5,7 @@
 //! - `GET /api/v1/storage/{file_id}` — download stored file
 //! - `GET /api/v1/storage/{file_id}/thumbnail` — get image thumbnail (images only)
 
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 
 use axum::{
     extract::{Multipart, Path, State},
@@ -56,9 +56,8 @@ pub struct FileMetadata {
 // ───────────────────── Storage Service ─────────────────────
 
 /// Store a file on disk and return its metadata.
-#[allow(clippy::ptr_arg)]
 pub async fn store_file(
-    storage_root: &PathBuf,
+    storage_root: &FsPath,
     data: Vec<u8>,
     original_name: &str,
     _mime_type: &str,
@@ -79,10 +78,9 @@ pub async fn store_file(
 
 /// Generate a thumbnail for an image file.
 /// Returns the path to the thumbnail on success, or None if thumbnail generation fails.
-#[allow(clippy::ptr_arg)]
 pub async fn generate_thumbnail(
-    source_path: &PathBuf,
-    thumbnail_dir: &PathBuf,
+    source_path: &FsPath,
+    thumbnail_dir: &FsPath,
     file_id: &str,
 ) -> Result<Option<PathBuf>, std::io::Error> {
     // Check if it's actually an image by trying to decode it
