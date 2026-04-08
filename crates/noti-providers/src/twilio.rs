@@ -3,6 +3,15 @@ use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
+/// Format the message body text, optionally prepending the title.
+pub(crate) fn format_body_text(message: &Message) -> String {
+    if let Some(ref title) = message.title {
+        format!("{title}\n\n{}", message.text)
+    } else {
+        message.text.clone()
+    }
+}
+
 /// Twilio SMS/MMS provider.
 ///
 /// Sends SMS messages via the Twilio REST API.
@@ -75,11 +84,7 @@ impl NotifyProvider for TwilioProvider {
         let base_url = config.get("base_url").unwrap_or("https://api.twilio.com");
         let url = format!("{}/2010-04-01/Accounts/{account_sid}/Messages.json", base_url.trim_end_matches('/'));
 
-        let body_text = if let Some(ref title) = message.title {
-            format!("{title}\n\n{}", message.text)
-        } else {
-            message.text.clone()
-        };
+        let body_text = format_body_text(message);
 
         let mut form_params: Vec<(&str, String)> = vec![
             ("From", from.to_string()),
@@ -104,7 +109,7 @@ impl NotifyProvider for TwilioProvider {
                     base_url.trim_end_matches('/')
                 );
 
-                let part = reqwest::multipart::Part::bytes(data)
+                let part = reqwest::multipart::Part::bytes(data.clone())
                     .file_name(file_name)
                     .mime_str(&mime_str)
                     .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
@@ -131,8 +136,7 @@ impl NotifyProvider for TwilioProvider {
                     }
                     _ => {
                         // Fallback: use data URI (works for some MMS gateways)
-                        let b64 = base64::engine::general_purpose::STANDARD
-                            .encode(attachment.read_bytes().await.unwrap_or_default());
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                         let data_uri = format!("data:{mime_str};base64,{b64}");
                         form_params.push(("MediaUrl", data_uri));
                     }
@@ -178,5 +182,180 @@ impl NotifyProvider for TwilioProvider {
                     .with_raw_response(raw),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // format_body_text tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_format_body_text_plain() {
+        let msg = Message::text("hello world");
+        assert_eq!(format_body_text(&msg), "hello world");
+    }
+
+    #[test]
+    fn test_format_body_text_with_title() {
+        let msg = Message::text("hello world").with_title("My Title");
+        assert_eq!(format_body_text(&msg), "My Title\n\nhello world");
+    }
+
+    #[test]
+    fn test_format_body_text_empty_body() {
+        let msg = Message::text("").with_title("Title Only");
+        assert_eq!(format_body_text(&msg), "Title Only\n\n");
+    }
+
+    #[test]
+    fn test_format_body_text_empty_title() {
+        let msg = Message {
+            text: "body only".into(),
+            title: Some("".into()),
+            format: Default::default(),
+            priority: Default::default(),
+            attachments: vec![],
+            extra: Default::default(),
+        };
+        // Empty title still gets formatted (title is Some(""))
+        assert_eq!(format_body_text(&msg), "\n\nbody only");
+    }
+
+    // -------------------------------------------------------------------------
+    // Provider metadata tests
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_twilio_provider_name() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        assert_eq!(provider.name(), "twilio");
+    }
+
+    #[tokio::test]
+    async fn test_twilio_provider_url_scheme() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        assert_eq!(provider.url_scheme(), "twilio");
+    }
+
+    #[tokio::test]
+    async fn test_twilio_provider_description() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        assert!(provider.description().contains("Twilio"));
+    }
+
+    #[tokio::test]
+    async fn test_twilio_provider_example_url() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        assert!(provider.example_url().contains("twilio://"));
+    }
+
+    #[tokio::test]
+    async fn test_twilio_provider_supports_attachments() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        assert!(provider.supports_attachments());
+    }
+
+    #[tokio::test]
+    async fn test_twilio_params_has_required_fields() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "account_sid" && p.required));
+        assert!(params.iter().any(|p| p.name == "auth_token" && p.required));
+        assert!(params.iter().any(|p| p.name == "from" && p.required));
+        assert!(params.iter().any(|p| p.name == "to" && p.required));
+    }
+
+    #[tokio::test]
+    async fn test_twilio_params_has_optional_fields() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "media_url" && !p.required));
+        assert!(params.iter().any(|p| p.name == "base_url" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_twilio_params_count() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        // 4 required + 2 optional = 6 total
+        assert_eq!(provider.params().len(), 6);
+    }
+
+    // -------------------------------------------------------------------------
+    // Config validation tests
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_validate_config_full() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            .set("auth_token", "auth_token")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_all() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_auth_token() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_from() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "tok")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_to() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "tok")
+            .set("from", "+15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_optional_base_url() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "tok")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", "https://api.twilio.com");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_optional_media_url() {
+        let provider = TwilioProvider::new(reqwest::Client::new());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "tok")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("media_url", "https://example.com/image.png");
+        assert!(provider.validate_config(&config).is_ok());
     }
 }

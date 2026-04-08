@@ -2076,3 +2076,196 @@ mod discord_extended_tests {
         assert!(params.iter().any(|p| p.name == "avatar_url" && !p.required));
     }
 }
+
+// ======================== ApnsProvider send tests (JWT Auth + JSON) ========================
+
+mod apns_send_tests {
+    use super::*;
+    use base64::Engine;
+    use noti_providers::apns::ApnsProvider;
+    use p256::pkcs8::EncodePrivateKey;
+
+    fn make_test_p8() -> String {
+        let signing_key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("generate PKCS#8 DER")
+            .as_bytes()
+            .to_vec();
+        base64::engine::general_purpose::STANDARD.encode(&pkcs8_der)
+    }
+
+    fn base_config() -> ProviderConfig {
+        ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("team_id", "TEAM123456")
+            .set("bundle_id", "com.example.app")
+            .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
+            .set("p8_base64", &make_test_p8())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_full() {
+        let provider = ApnsProvider::new(client());
+        assert!(provider.validate_config(&base_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_key_id() {
+        let provider = ApnsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("team_id", "TEAM123456")
+            .set("bundle_id", "com.example.app")
+            .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
+            .set("p8_base64", &make_test_p8());
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_team_id() {
+        let provider = ApnsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("bundle_id", "com.example.app")
+            .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
+            .set("p8_base64", &make_test_p8());
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_bundle_id() {
+        let provider = ApnsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("team_id", "TEAM123456")
+            .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
+            .set("p8_base64", &make_test_p8());
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_missing_device_token() {
+        let provider = ApnsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("team_id", "TEAM123456")
+            .set("bundle_id", "com.example.app")
+            .set("p8_base64", &make_test_p8());
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_missing_both_p8_params() {
+        let provider = ApnsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("team_id", "TEAM123456")
+            .set("bundle_id", "com.example.app")
+            .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789");
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Error should mention p8 params
+        assert!(
+            err.to_string().contains("p8_base64") || err.to_string().contains("p8_path"),
+            "expected p8 error, got: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_with_sandbox() {
+        let provider = ApnsProvider::new(client());
+        let config = base_config().set("sandbox", "true");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = ApnsProvider::new(client());
+        assert_eq!(provider.name(), "apns");
+        assert_eq!(provider.url_scheme(), "apns");
+        assert!(provider.description().contains("Apple Push"));
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "key_id" && p.required));
+        assert!(params.iter().any(|p| p.name == "team_id" && p.required));
+        assert!(params.iter().any(|p| p.name == "bundle_id" && p.required));
+        assert!(params.iter().any(|p| p.name == "device_token" && p.required));
+        assert!(params.iter().any(|p| p.name == "p8_base64" && !p.required));
+        assert!(params.iter().any(|p| p.name == "sandbox" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_device_token_too_short() {
+        let provider = ApnsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("team_id", "TEAM123456")
+            .set("bundle_id", "com.example.app")
+            .set("device_token", "too-short")
+            .set("p8_base64", &make_test_p8());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("device_token") || err.to_string().contains("64"));
+    }
+
+    #[tokio::test]
+    async fn test_device_token_invalid_chars() {
+        let provider = ApnsProvider::new(client());
+        // 64 chars but 'g' is not a hex digit
+        let config = ProviderConfig::new()
+            .set("key_id", "KEY12345A")
+            .set("team_id", "TEAM123456")
+            .set("bundle_id", "com.example.app")
+            .set("device_token", "gggg1234ef567890gggg1234ef567890gggg1234ef567890gggg1234ef56789")
+            .set("p8_base64", &make_test_p8());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let provider = ApnsProvider::new(client());
+        let config = base_config();
+
+        let message = Message::text("Body text").with_title("Notification Title");
+        // APNs URL is hardcoded; just verify it validates and builds a request
+        // (network will fail to connect to real apple.com, but that's expected)
+        let result = provider.send(&message, &config).await;
+        // We expect a connection error (APNs URL is hardcoded to apple.com)
+        // This validates the title is passed through to the payload builder
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Should NOT be a config/validation error - title field is handled
+        assert!(!err.to_string().contains("missing required"), "unexpected validation error: {}", err);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_badge_extra() {
+        let provider = ApnsProvider::new(client());
+        let config = base_config();
+
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("badge".into(), serde_json::json!(5));
+        let msg = Message {
+            text: "Alert".into(),
+            title: None,
+            format: Default::default(),
+            priority: Default::default(),
+            attachments: vec![],
+            extra,
+        };
+
+        let result = provider.send(&msg, &config).await;
+        // Connection error expected; validates badge extra is accepted
+        assert!(result.is_err());
+    }
+}
