@@ -52,6 +52,11 @@ impl NotifyProvider for SinchProvider {
                 "media_url",
                 "Public URL for MMS media (alternative to file attachments)",
             ),
+            ParamDef::optional(
+                "base_url",
+                "Override API base URL (useful for testing or Twilio-compatible APIs)",
+            )
+            .with_example("https://api.sms.sinch.com"),
         ]
     }
 
@@ -71,12 +76,16 @@ impl NotifyProvider for SinchProvider {
         let to = config.require("to", "sinch")?;
         let region = config.get("region").unwrap_or("us");
 
-        let base_url = match region {
-            "eu" => "https://eu.sms.api.sinch.com",
-            _ => "https://us.sms.api.sinch.com",
+        let api_base_url = if let Some(base_url) = config.get("base_url") {
+            base_url.to_string()
+        } else {
+            match region {
+                "eu" => "https://eu.sms.api.sinch.com".to_string(),
+                _ => "https://us.sms.api.sinch.com".to_string(),
+            }
         };
 
-        let url = format!("{base_url}/xms/v1/{service_plan_id}/batches");
+        let url = format!("{api_base_url}/xms/v1/{service_plan_id}/batches");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

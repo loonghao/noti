@@ -1,4 +1,51 @@
-## 2026-04-08 08:46 — Cleanup round: reviewed iteration agent commits ef17f60 + b3cfdfc + de989c8
+## 2026-04-08 13:08 — Cleanup round: reviewed iteration agent commits 6eba8fd + aa90675 + bcfa23d + 56a1770
+
+### Baseline
+- Branch: `auto-improve` (HEAD = 56a1770 before cleanup)
+- Tests: all passed / 0 failed / 2 ignored (同上轮)
+- Clippy: 1 error found (iter_nth_zero in apns.rs) → fixed
+- Known: 1 moderate Dependabot vulnerability (unchanged)
+
+### Iteration Agent Activity (since last cleanup round 5e1d554)
+- `6eba8fd` — test(providers): webpush VAPID JWT unit tests (5 new) — **clean**
+- `aa90675` — test(providers): APNs JWT + p8 key unit tests (15 new) — **2 bugs found**
+- `bcfa23d` — test(providers): FCM unit tests (25 new) — **clean**
+- `56a1770` — twilio: add `base_url` param + wiremock send() tests (6 new) — **clean; 1 defect noted**
+
+### Bugs Found in Iteration Agent Code
+1. **`apns.rs` APNs JWT ES256 double-DER encoding** — `generate_apns_jwt()` used `DerSignature` for signing, then called `der_to_rs()` to extract raw r||s, then `rs_to_der()` to re-encode; net effect: signature is DER-encoded in the JWT. RFC 7518 §3.4 mandates raw R||S (64 bytes). Fix: switch to `p256::ecdsa::Signature` (returns raw r||s via `.to_bytes()`), drop all three helper functions
+2. **`apns.rs` `#[derive(Clone, Debug)]` misindented** on `ApnsCredentials` struct — cosmetic only, fixed
+
+### Cleanup Actions (2 substantive commits + done tag)
+1. `3883f9a` — dead-code: fix APNs JWT ES256 double-DER bug; remove dead `der_to_rs`, `extract_der_scalar`, `rs_to_der` (3 functions) and their 3 unit tests; fix clippy `iter_nth_zero`; fix derive indent
+2. `a3c5f63` — assess: record twilio MMS `unwrap_or_default` silent error in CLEANUP_TODO
+
+### Full Scan Results
+- **Dead code**: 3 DER helper functions (`der_to_rs`, `extract_der_scalar`, `rs_to_der`) removed from `apns.rs` after ES256 fix
+- **Tests**: 0 `#[ignore]` markers; all passed (apns.rs lost 3 rs_to_der tests, offset by new unit tests from iteration agent)
+- **Code quality**: 0 `println!/dbg!` in production; 0 `.unwrap()` in production; clippy clean
+- **Dependencies**: `rand = "0.8"` added to workspace dev-deps and `noti-providers` dev-deps — justified, test-only
+
+### CLEANUP_TODO Status: 4 open structural items (up from 3)
+- `url.rs` — `parse_notification_url()` monolithic (deferred)
+- `lib.rs` — `register_all_providers()` long manual list (deferred)
+- `queue_throughput.rs` — Runtime recreated per bench iteration (deferred)
+- **NEW**: `twilio.rs:135` — MMS attachment fallback silently uses `unwrap_or_default()` on failed read → empty data URI
+
+### Quality Gate
+- Tests: all passed, 0 failed (≥ baseline) ✅
+- Clippy: 0 warnings ✅
+- No new lint warnings ✅
+- All changes pushed to origin ✅
+
+### Next Round Focus
+- Monitor iteration agent for new feature commits
+- 4 structural items remain deferred — twilio MMS error handling is new and should be fixed by iteration agent
+- APNs pattern repeated: iteration agent keeps re-introducing DER encoding helpers in JWT paths; watch other JWT-based providers (Twilio uses Basic Auth, not JWT — lower risk)
+
+---
+
+
 
 ### Baseline
 - Branch: `auto-improve` (HEAD = de989c8 before cleanup)

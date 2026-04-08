@@ -1656,6 +1656,256 @@ mod twilio_send_tests {
     }
 }
 
+// ======================== SinchProvider send tests ========================
+
+mod sinch_send_tests {
+    use super::*;
+    use noti_providers::sinch::SinchProvider;
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "token456")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_fields() {
+        let provider = SinchProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+        // Missing api_token, from, to
+        assert!(
+            provider
+                .validate_config(&ProviderConfig::new().set("service_plan_id", "plan123"))
+                .is_err()
+        );
+        // Missing from, to
+        assert!(
+            provider
+                .validate_config(
+                    &ProviderConfig::new()
+                        .set("service_plan_id", "plan123")
+                        .set("api_token", "token")
+                )
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = SinchProvider::new(client());
+        assert_eq!(provider.name(), "sinch");
+        assert_eq!(provider.url_scheme(), "sinch");
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "service_plan_id" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "api_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "from" && p.required)
+        );
+        assert!(provider.params().iter().any(|p| p.name == "to" && p.required));
+        assert!(provider.supports_attachments());
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/xms/v1/plan123/batches"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "batch_abc123",
+                "status": "queued",
+                "from": "+15551234567",
+                "to": ["+15559876543"],
+                "body": "Hello World"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "token456")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Hello World");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "sinch");
+        assert_eq!(response.status_code, Some(200));
+        assert!(response.message.contains("SMS sent"));
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_failure() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/xms/v1/plan123/batches"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "text": "Invalid recipient",
+                "code": 400
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "token456")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Hello");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(400));
+        assert!(response.message.contains("Invalid recipient"));
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/xms/v1/plan123/batches"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "batch_def456",
+                "status": "queued"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "token456")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Body text").with_title("Title Here");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.success);
+        // Sinch formats title as "Title Here\n\nBody text"
+        assert!(response.raw_response.as_ref().map(|v| v.is_object()).unwrap_or(false));
+    }
+
+    #[tokio::test]
+    async fn test_send_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/xms/v1/plan123/batches"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "text": "Authentication failed",
+                "code": 401
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "wrongtoken")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_mms_with_media_url_config() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/xms/v1/plan123/batches"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "batch_mms789",
+                "status": "queued"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "token456")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("media_url", "https://example.com/image.png")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Check this image");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.success);
+        // Note: media_url config sets mt_media type but still says "SMS" since no actual attachments
+        assert!(response.message.contains("SMS sent"));
+    }
+
+    #[tokio::test]
+    async fn test_region_eu() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/xms/v1/plan123/batches"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "batch_eu123",
+                "status": "queued"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SinchProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("service_plan_id", "plan123")
+            .set("api_token", "token456")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("region", "eu")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("EU region test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.success);
+    }
+}
+
 // ======================== IftttProvider send tests ========================
 
 mod ifttt_send_tests {
