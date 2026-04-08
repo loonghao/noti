@@ -53,6 +53,8 @@ impl NotifyProvider for DiscordProvider {
                 "embed_field",
                 "Embed field (can be repeated, format: title:value)",
             ),
+            ParamDef::optional("base_url", "Discord API base URL (default: https://discord.com)")
+                .with_example("https://discord.com"),
         ]
     }
 
@@ -69,17 +71,10 @@ impl NotifyProvider for DiscordProvider {
         let webhook_id = config.require("webhook_id", "discord")?;
         let webhook_token = config.require("webhook_token", "discord")?;
 
-        let mut url = format!("https://discord.com/api/webhooks/{webhook_id}/{webhook_token}");
+        let mut url = discord_url(webhook_id, webhook_token, config);
 
         // Add query parameters
-        let mut query_params = Vec::new();
-        if let Some(thread_id) = config.get("thread_id") {
-            query_params.push(("thread_id", thread_id));
-        }
-        if config.get("wait") == Some("true") {
-            query_params.push(("wait", "true"));
-        }
-
+        let query_params = build_query_params(config);
         if !query_params.is_empty() {
             let query_string = query_params
                 .iter()
@@ -191,9 +186,7 @@ impl DiscordProvider {
                 embed.insert("title".to_string(), json!(title));
             }
             if let Some(color_str) = config.get("embed_color") {
-                // Parse hex color (e.g., "0xFF0000" or "FF0000")
-                let color_str = color_str.trim_start_matches("0x");
-                if let Ok(color) = u32::from_str_radix(color_str, 16) {
+                if let Some(color) = parse_embed_color(color_str) {
                     embed.insert("color".to_string(), json!(color));
                 }
             }
@@ -217,21 +210,7 @@ impl DiscordProvider {
 
             // Parse embed fields (format: "title:value", can be repeated)
             if let Some(fields_str) = config.get("embed_field") {
-                let fields: Vec<serde_json::Value> = fields_str
-                    .split(',')
-                    .filter_map(|f| {
-                        let f = f.trim();
-                        if let Some((field_title, field_value)) = f.split_once(':') {
-                            Some(json!({
-                                "name": field_title.trim(),
-                                "value": field_value.trim(),
-                                "inline": false
-                            }))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let fields = parse_embed_fields(fields_str);
                 if !fields.is_empty() {
                     embed.insert("fields".to_string(), json!(fields));
                 }
@@ -258,5 +237,476 @@ impl DiscordProvider {
                 json!({ "content": message.text })
             }
         }
+    }
+}
+
+/// Build the Discord webhook URL, optionally using a custom base URL.
+fn discord_url(webhook_id: &str, webhook_token: &str, config: &ProviderConfig) -> String {
+    let base = config
+        .get("base_url")
+        .map(|s| s.trim_end_matches('/'))
+        .unwrap_or("https://discord.com");
+    format!("{base}/api/webhooks/{webhook_id}/{webhook_token}")
+}
+
+/// Build query parameters for the Discord webhook URL.
+fn build_query_params(config: &ProviderConfig) -> Vec<(&'static str, String)> {
+    let mut params = Vec::new();
+    if let Some(thread_id) = config.get("thread_id") {
+        params.push(("thread_id", thread_id.to_string()));
+    }
+    if config.get("wait") == Some("true") {
+        params.push(("wait", "true".to_string()));
+    }
+    params
+}
+
+/// Parse a hex color string (e.g., "0xFF0000" or "FF0000") to a u32.
+fn parse_embed_color(color_str: &str) -> Option<u32> {
+    let color_str = color_str.trim_start_matches("0x");
+    u32::from_str_radix(color_str, 16).ok()
+}
+
+/// Parse embed fields from a comma-separated string (format: "title:value,title2:value2").
+fn parse_embed_fields(fields_str: &str) -> Vec<serde_json::Value> {
+    fields_str
+        .split(',')
+        .filter_map(|f| {
+            let f = f.trim();
+            if let Some((field_title, field_value)) = f.split_once(':') {
+                Some(json!({
+                    "name": field_title.trim(),
+                    "value": field_value.trim(),
+                    "inline": false
+                }))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new()
+            .set("webhook_id", "1234567890")
+            .set("webhook_token", "abcdefg_hijklmn")
+    }
+
+    // ---- discord_url tests ----
+
+    #[test]
+    fn test_discord_url_default() {
+        let config = make_config();
+        let url = discord_url("1234567890", "abcdefg_hijklmn", &config);
+        assert_eq!(
+            url,
+            "https://discord.com/api/webhooks/1234567890/abcdefg_hijklmn"
+        );
+    }
+
+    #[test]
+    fn test_discord_url_custom_base() {
+        let config = make_config().set("base_url", "https://custom.discord.server.com");
+        let url = discord_url("1234567890", "abcdefg_hijklmn", &config);
+        assert_eq!(
+            url,
+            "https://custom.discord.server.com/api/webhooks/1234567890/abcdefg_hijklmn"
+        );
+    }
+
+    #[test]
+    fn test_discord_url_trailing_slash_stripped() {
+        let config = make_config().set("base_url", "https://custom.server.com/");
+        let url = discord_url("1234567890", "abcdefg_hijklmn", &config);
+        assert_eq!(
+            url,
+            "https://custom.server.com/api/webhooks/1234567890/abcdefg_hijklmn"
+        );
+    }
+
+    // ---- build_query_params tests ----
+
+    #[test]
+    fn test_build_query_params_empty() {
+        let config = make_config();
+        let params = build_query_params(&config);
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn test_build_query_params_thread_id() {
+        let config = make_config().set("thread_id", "123456");
+        let params = build_query_params(&config);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].0, "thread_id");
+        assert_eq!(params[0].1, "123456");
+    }
+
+    #[test]
+    fn test_build_query_params_wait() {
+        let config = make_config().set("wait", "true");
+        let params = build_query_params(&config);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].0, "wait");
+        assert_eq!(params[0].1, "true");
+    }
+
+    #[test]
+    fn test_build_query_params_wait_false_ignored() {
+        let config = make_config().set("wait", "false");
+        let params = build_query_params(&config);
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn test_build_query_params_thread_and_wait() {
+        let config = make_config()
+            .set("thread_id", "999")
+            .set("wait", "true");
+        let params = build_query_params(&config);
+        assert_eq!(params.len(), 2);
+    }
+
+    // ---- parse_embed_color tests ----
+
+    #[test]
+    fn test_parse_embed_color_hex_only() {
+        assert_eq!(parse_embed_color("FF0000"), Some(0xFF0000));
+    }
+
+    #[test]
+    fn test_parse_embed_color_0x_prefix() {
+        assert_eq!(parse_embed_color("0xFF0000"), Some(0xFF0000));
+    }
+
+    #[test]
+    fn test_parse_embed_color_lowercase() {
+        assert_eq!(parse_embed_color("ff0000"), Some(0xFF0000));
+    }
+
+    #[test]
+    fn test_parse_embed_color_invalid() {
+        assert_eq!(parse_embed_color("not-a-color"), None);
+    }
+
+    #[test]
+    fn test_parse_embed_color_empty() {
+        assert_eq!(parse_embed_color(""), None);
+    }
+
+    // ---- parse_embed_fields tests ----
+
+    #[test]
+    fn test_parse_embed_fields_single() {
+        let fields = parse_embed_fields("CPU:85%");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0]["name"], "CPU");
+        assert_eq!(fields[0]["value"], "85%");
+        assert_eq!(fields[0]["inline"], false);
+    }
+
+    #[test]
+    fn test_parse_embed_fields_multiple() {
+        let fields = parse_embed_fields("CPU:85%, Memory:72%");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0]["name"], "CPU");
+        assert_eq!(fields[0]["value"], "85%");
+        assert_eq!(fields[1]["name"], "Memory");
+        assert_eq!(fields[1]["value"], "72%");
+    }
+
+    #[test]
+    fn test_parse_embed_fields_no_colon_ignored() {
+        let fields = parse_embed_fields("no-colon, CPU:85%");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0]["name"], "CPU");
+    }
+
+    #[test]
+    fn test_parse_embed_fields_empty() {
+        let fields = parse_embed_fields("");
+        assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn test_parse_embed_fields_whitespace_trimmed() {
+        let fields = parse_embed_fields("  CPU  :  85%  ");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0]["name"], "CPU");
+        assert_eq!(fields[0]["value"], "85%");
+    }
+
+    // ---- build_payload tests ----
+
+    #[test]
+    fn test_build_payload_text_plain() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("Hello Discord!");
+        let config = ProviderConfig::new();
+        let payload = provider.build_payload(&message, &config);
+        assert_eq!(payload["content"], "Hello Discord!");
+        assert!(payload.get("embeds").is_none());
+    }
+
+    #[test]
+    fn test_build_payload_text_with_title() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("Details here").with_title("Alert");
+        let config = ProviderConfig::new();
+        let payload = provider.build_payload(&message, &config);
+        // Text format with title still uses content
+        assert_eq!(payload["content"], "Details here");
+    }
+
+    #[test]
+    fn test_build_payload_markdown_no_title() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::markdown("Hello **bold**");
+        let config = ProviderConfig::new();
+        let payload = provider.build_payload(&message, &config);
+        assert_eq!(payload["content"], "Hello **bold**");
+    }
+
+    #[test]
+    fn test_build_payload_markdown_with_title() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::markdown("Hello **bold**").with_title("Alert");
+        let config = ProviderConfig::new();
+        let payload = provider.build_payload(&message, &config);
+        // Markdown with title uses embeds
+        assert!(payload.get("embeds").is_some());
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds.len(), 1);
+        assert_eq!(embeds[0]["title"], "Alert");
+        assert_eq!(embeds[0]["description"], "Hello **bold**");
+    }
+
+    #[test]
+    fn test_build_payload_with_embed_title() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body text");
+        let config = ProviderConfig::new().set("embed_title", "Custom Title");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds[0]["title"], "Custom Title");
+    }
+
+    #[test]
+    fn test_build_payload_with_embed_color() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body");
+        let config = ProviderConfig::new()
+            .set("embed_title", "Title")
+            .set("embed_color", "0xFF0000");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds[0]["color"], 0xFF0000);
+    }
+
+    #[test]
+    fn test_build_payload_with_embed_description() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("ignored body");
+        let config = ProviderConfig::new()
+            .set("embed_title", "Title")
+            .set("embed_description", "Custom description");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds[0]["description"], "Custom description");
+    }
+
+    #[test]
+    fn test_build_payload_embed_description_fallback_to_text() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("message text");
+        let config = ProviderConfig::new().set("embed_title", "Title");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        // When no embed_description, message.text is used
+        assert_eq!(embeds[0]["description"], "message text");
+    }
+
+    #[test]
+    fn test_build_payload_with_embed_footer() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body");
+        let config = ProviderConfig::new()
+            .set("embed_title", "Title")
+            .set("embed_footer", "Sent by bot");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds[0]["footer"]["text"], "Sent by bot");
+    }
+
+    #[test]
+    fn test_build_payload_with_embed_thumbnail() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body");
+        let config = ProviderConfig::new()
+            .set("embed_title", "Title")
+            .set("embed_thumbnail", "https://example.com/thumb.png");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(
+            embeds[0]["thumbnail"]["url"],
+            "https://example.com/thumb.png"
+        );
+    }
+
+    #[test]
+    fn test_build_payload_with_embed_fields() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body");
+        let config = ProviderConfig::new()
+            .set("embed_title", "Status")
+            .set("embed_field", "CPU:85%,Memory:72%");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        let fields = embeds[0]["fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0]["name"], "CPU");
+        assert_eq!(fields[0]["value"], "85%");
+        assert_eq!(fields[1]["name"], "Memory");
+        assert_eq!(fields[1]["value"], "72%");
+    }
+
+    #[test]
+    fn test_build_payload_message_title_fills_embed_title_if_missing() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body").with_title("Message Title");
+        // When embed_color is set but embed_title is not, message.title fills in
+        let config = ProviderConfig::new().set("embed_color", "0xFF0000");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds[0]["title"], "Message Title");
+    }
+
+    #[test]
+    fn test_build_payload_embed_title_takes_precedence_over_message_title() {
+        let provider = DiscordProvider::new(Client::new());
+        let message = Message::text("body").with_title("Message Title");
+        let config =
+            ProviderConfig::new().set("embed_title", "Embed Title").set("embed_color", "0xFF0000");
+        let payload = provider.build_payload(&message, &config);
+        let embeds = payload["embeds"].as_array().unwrap();
+        assert_eq!(embeds[0]["title"], "Embed Title");
+    }
+
+    // ---- Provider metadata tests ----
+
+    #[test]
+    fn test_discord_provider_name() {
+        let provider = DiscordProvider::new(Client::new());
+        assert_eq!(provider.name(), "discord");
+    }
+
+    #[test]
+    fn test_discord_provider_url_scheme() {
+        let provider = DiscordProvider::new(Client::new());
+        assert_eq!(provider.url_scheme(), "discord");
+    }
+
+    #[test]
+    fn test_discord_provider_description() {
+        let provider = DiscordProvider::new(Client::new());
+        assert!(!provider.description().is_empty());
+    }
+
+    #[test]
+    fn test_discord_provider_example_url() {
+        let provider = DiscordProvider::new(Client::new());
+        assert!(provider.example_url().contains("discord://"));
+    }
+
+    #[test]
+    fn test_discord_provider_supports_attachments() {
+        let provider = DiscordProvider::new(Client::new());
+        assert!(provider.supports_attachments());
+    }
+
+    #[test]
+    fn test_discord_provider_params_required() {
+        let provider = DiscordProvider::new(Client::new());
+        let params = provider.params();
+        let required: Vec<_> = params.iter().filter(|p| p.required).collect();
+        assert_eq!(required.len(), 2);
+        let names: Vec<_> = required.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"webhook_id"));
+        assert!(names.contains(&"webhook_token"));
+    }
+
+    #[test]
+    fn test_discord_provider_params_optional() {
+        let provider = DiscordProvider::new(Client::new());
+        let params = provider.params();
+        let optional: Vec<_> = params
+            .iter()
+            .filter(|p| !p.required)
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(optional.contains(&"username"));
+        assert!(optional.contains(&"avatar_url"));
+        assert!(optional.contains(&"thread_id"));
+        assert!(optional.contains(&"wait"));
+        assert!(optional.contains(&"embed_title"));
+        assert!(optional.contains(&"embed_color"));
+        assert!(optional.contains(&"embed_description"));
+        assert!(optional.contains(&"embed_footer"));
+        assert!(optional.contains(&"embed_thumbnail"));
+        assert!(optional.contains(&"embed_field"));
+        assert!(optional.contains(&"base_url"));
+    }
+
+    #[test]
+    fn test_discord_provider_params_count() {
+        let provider = DiscordProvider::new(Client::new());
+        assert_eq!(provider.params().len(), 13); // 2 required + 11 optional
+    }
+
+    // ---- Config validation tests ----
+
+    #[test]
+    fn test_validate_config_full() {
+        let provider = DiscordProvider::new(Client::new());
+        let config = ProviderConfig::new()
+            .set("webhook_id", "123")
+            .set("webhook_token", "abc");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_missing_webhook_id() {
+        let provider = DiscordProvider::new(Client::new());
+        let config = ProviderConfig::new().set("webhook_token", "abc");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_validate_config_missing_webhook_token() {
+        let provider = DiscordProvider::new(Client::new());
+        let config = ProviderConfig::new().set("webhook_id", "123");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_validate_config_empty() {
+        let provider = DiscordProvider::new(Client::new());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[test]
+    fn test_validate_config_with_optional_params() {
+        let provider = DiscordProvider::new(Client::new());
+        let config = ProviderConfig::new()
+            .set("webhook_id", "123")
+            .set("webhook_token", "abc")
+            .set("username", "MyBot")
+            .set("thread_id", "999")
+            .set("wait", "true");
+        assert!(provider.validate_config(&config).is_ok());
     }
 }

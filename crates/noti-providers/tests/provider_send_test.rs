@@ -3472,3 +3472,280 @@ mod onesignal_send_tests {
         // This test just validates config; actual send without mock would hit real API
     }
 }
+
+// ======================== DiscordProvider send tests (webhook + base_url) ========================
+
+mod discord_send_tests {
+    use super::*;
+    use noti_providers::discord::DiscordProvider;
+    use serde_json::json;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new()
+            .set("webhook_id", "1234567890")
+            .set("webhook_token", "abcdefg_hijklmn")
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = DiscordProvider::new(client());
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_webhook_id() {
+        let provider = DiscordProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_token", "abc");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_webhook_token() {
+        let provider = DiscordProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_id", "123");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_empty() {
+        let provider = DiscordProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = DiscordProvider::new(client());
+        assert_eq!(provider.name(), "discord");
+        assert_eq!(provider.url_scheme(), "discord");
+        assert!(!provider.description().is_empty());
+        assert!(provider.supports_attachments());
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "webhook_id" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "webhook_token" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "base_url" && !p.required)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_success_204() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+
+        let message = Message::text("Hello Discord!");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "discord");
+        assert_eq!(response.status_code, Some(204));
+    }
+
+    #[tokio::test]
+    async fn test_send_success_200_with_wait() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "1234567890123456789",
+                "type": 0,
+                "content": "Hello Discord!",
+                "channel_id": "1234567890"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config()
+            .set("base_url", mock_server.uri())
+            .set("wait", "true");
+
+        let message = Message::text("Hello Discord!");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title_markdown() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+
+        let message = Message::markdown("Details here").with_title("Alert");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_username_and_avatar() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config()
+            .set("base_url", mock_server.uri())
+            .set("username", "CustomBot")
+            .set("avatar_url", "https://example.com/avatar.png");
+
+        let message = Message::text("Custom bot message");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_thread_id() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config()
+            .set("base_url", mock_server.uri())
+            .set("thread_id", "999888777");
+
+        let message = Message::text("Thread message");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_embed_params() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config()
+            .set("base_url", mock_server.uri())
+            .set("embed_title", "Build Status")
+            .set("embed_color", "0x00FF00")
+            .set("embed_description", "All tests passed!")
+            .set("embed_footer", "CI Pipeline")
+            .set("embed_field", "Tests:1500,Duration:3m");
+
+        let message = Message::text("ignored in embed mode");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_400() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "message": "Cannot send an empty message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(400));
+        assert!(response.message.contains("Cannot send an empty message"));
+    }
+
+    #[tokio::test]
+    async fn test_send_unauthorized_401() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "message": "Invalid webhook token"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/webhooks/1234567890/abcdefg_hijklmn"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let provider = DiscordProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+
+        let message = Message::text("using custom base url");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = DiscordProvider::new(client());
+        // No base_url set - should use default https://discord.com
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+}
