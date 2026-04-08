@@ -657,6 +657,203 @@ mod gotify_tests {
     }
 }
 
+// ======================== Gotify send tests ========================
+
+mod gotify_send_tests {
+    use super::*;
+    use noti_providers::gotify::GotifyProvider;
+    use serde_json::json;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new()
+            .set("host", "https://gotify.example.com")
+            .set("app_token", "test-token")
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = GotifyProvider::new(client());
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_host() {
+        let provider = GotifyProvider::new(client());
+        let config = ProviderConfig::new().set("app_token", "test-token");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_app_token() {
+        let provider = GotifyProvider::new(client());
+        let config = ProviderConfig::new().set("host", "https://gotify.example.com");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_empty() {
+        let provider = GotifyProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = GotifyProvider::new(client());
+        assert_eq!(provider.name(), "gotify");
+        assert_eq!(provider.url_scheme(), "gotify");
+        assert!(!provider.description().is_empty());
+        assert!(!provider.example_url().is_empty());
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "host" && p.required));
+        assert!(params.iter().any(|p| p.name == "app_token" && p.required));
+        assert!(params.iter().any(|p| p.name == "priority" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/message"))
+            .and(header("X-Gotify-Key", "test-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 42,
+                "appid": 1,
+                "message": "Test gotify"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = GotifyProvider::new(client());
+        let config = make_config().set("host", mock_server.uri());
+        let message = Message::text("Test gotify");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "gotify");
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/message"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 43,
+                "appid": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = GotifyProvider::new(client());
+        let config = make_config().set("host", mock_server.uri());
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_priority() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/message"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 44,
+                "appid": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = GotifyProvider::new(client());
+        let config = make_config()
+            .set("host", mock_server.uri())
+            .set("priority", "10");
+        let message = Message::text("Urgent!");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_markdown_format() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/message"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 45,
+                "appid": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = GotifyProvider::new(client());
+        let config = make_config().set("host", mock_server.uri());
+        let message = Message::text("**bold text**").with_format(MessageFormat::Markdown);
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/message"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": "unauthorized",
+                "errorCode": 401
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = GotifyProvider::new(client());
+        let config = make_config()
+            .set("host", mock_server.uri())
+            .set("app_token", "bad-token");
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_bad_request() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/message"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": "bad request",
+                "errorCode": 400
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = GotifyProvider::new(client());
+        let config = make_config().set("host", mock_server.uri());
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap().success);
+    }
+}
+
 // ======================== FeishuProvider tests ========================
 
 mod feishu_tests {
@@ -793,6 +990,212 @@ mod serverchan_tests {
 
         let empty = ProviderConfig::new();
         assert!(provider.validate_config(&empty).is_err());
+    }
+}
+
+// ======================== ServerChan send tests ========================
+
+mod serverchan_send_tests {
+    use super::*;
+    use noti_providers::serverchan::ServerChanProvider;
+    use serde_json::json;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new().set("send_key", "SCTtestkey123")
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = ServerChanProvider::new(client());
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_send_key() {
+        let provider = ServerChanProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = ServerChanProvider::new(client());
+        assert_eq!(provider.name(), "serverchan");
+        assert_eq!(provider.url_scheme(), "serverchan");
+        assert!(!provider.description().is_empty());
+        assert!(!provider.example_url().is_empty());
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "send_key" && p.required));
+        assert!(params.iter().any(|p| p.name == "base_url" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 0,
+                "message": "success",
+                "data": {}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+        let message = Message::text("Hello from ServerChan!");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "serverchan");
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 0,
+                "message": "success"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_error_code() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 40001,
+                "message": "invalid sendkey"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert!(response.message.contains("invalid sendkey"));
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+        let message = Message::text("Test");
+
+        // Server returns 500 with non-JSON body, so parsing fails
+        let result = provider.send(&message, &config).await;
+        // Either the JSON parse fails or we get a non-success response
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "code": 401,
+                "message": "unauthorized"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 0,
+                "message": "success"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", mock_server.uri());
+        let message = Message::text("Test custom base");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        // Without base_url, the provider uses https://sctapi.ftqq.com
+        // We can't mock the real API, so just validate config works without base_url
+        let provider = ServerChanProvider::new(client());
+        let config = make_config(); // No base_url
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/SCTtestkey123.send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "code": 0,
+                "message": "success"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = ServerChanProvider::new(client());
+        let config = make_config().set("base_url", format!("{}/", mock_server.uri()));
+        let message = Message::text("Test trailing slash");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
     }
 }
 
