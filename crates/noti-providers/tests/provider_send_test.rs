@@ -4216,3 +4216,272 @@ mod slack_send_tests {
         assert!(result.unwrap().success);
     }
 }
+
+// ======================== WeComProvider comprehensive send tests ========================
+
+mod wecom_send_tests {
+    use super::*;
+    use noti_providers::wecom::WeComProvider;
+    use serde_json::json;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new().set("key", "test-key-123")
+    }
+
+    fn make_config_with_base_url(mock_server: &MockServer) -> ProviderConfig {
+        make_config().set("base_url", mock_server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = WeComProvider::new(client());
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_key() {
+        let provider = WeComProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = WeComProvider::new(client());
+        assert_eq!(provider.name(), "wecom");
+        assert_eq!(provider.url_scheme(), "wecom");
+        assert!(!provider.description().is_empty());
+        assert!(!provider.example_url().is_empty());
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "key" && p.required));
+        assert!(params.iter().any(|p| p.name == "mentioned_list" && !p.required));
+        assert!(params.iter().any(|p| p.name == "type" && !p.required));
+        assert!(params.iter().any(|p| p.name == "base_url" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_send_text_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server);
+        let message = Message::text("Hello WeCom!");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "wecom");
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_markdown() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server);
+        let message = Message::markdown("**Bold** and > quote");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_text_with_mentions() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server)
+            .set("mentioned_list", "user1,user2")
+            .set("mentioned_mobile_list", "13800138000");
+        let message = Message::text("@all urgent");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_news_type() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server)
+            .set("type", "news")
+            .set("news_title", "Deploy Complete")
+            .set("news_desc", "All services running")
+            .set("news_url", "https://ci.example.com/build/123")
+            .set("news_picurl", "https://ci.example.com/chart.png");
+        let message = Message::text("Build passed");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_template_card_type() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server)
+            .set("type", "template_card")
+            .set("card_type", "text_notice")
+            .set("card_title", "System Alert")
+            .set("card_desc", "CPU usage > 90%")
+            .set("card_jump_url", "https://monitor.example.com")
+            .set("card_jump_title", "View Details");
+        let message = Message::text("CPU alert");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_errcode_nonzero() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 40001,
+                "errmsg": "invalid webhook key"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server);
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert!(response.message.contains("invalid webhook key"));
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+                "errcode": -1,
+                "errmsg": "internal server error"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server);
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        let config = make_config_with_base_url(&mock_server);
+        let message = Message::text("using custom base url");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = WeComProvider::new(client());
+        // No base_url set - should use default https://qyapi.weixin.qq.com
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/cgi-bin/webhook/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errcode": 0,
+                "errmsg": "ok"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WeComProvider::new(client());
+        // Trailing slash should be stripped
+        let config = make_config().set("base_url", format!("{}/", mock_server.uri()));
+        let message = Message::text("test trailing slash");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+}

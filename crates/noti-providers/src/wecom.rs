@@ -15,12 +15,22 @@ impl WeComProvider {
         Self { client }
     }
 
-    fn build_webhook_url(key: &str) -> String {
-        format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}")
+    /// Returns the WeCom API base URL, optionally overridden by config.
+    fn api_base_url(config: &ProviderConfig) -> String {
+        config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| "https://qyapi.weixin.qq.com".to_string())
     }
 
-    fn build_upload_url(key: &str) -> String {
-        format!("https://qyapi.weixin.qq.com/cgi-bin/webhook/upload_media?key={key}&type=file")
+    fn build_webhook_url(key: &str, config: &ProviderConfig) -> String {
+        let base = Self::api_base_url(config);
+        format!("{base}/cgi-bin/webhook/send?key={key}")
+    }
+
+    fn build_upload_url(key: &str, config: &ProviderConfig) -> String {
+        let base = Self::api_base_url(config);
+        format!("{base}/cgi-bin/webhook/upload_media?key={key}&type=file")
     }
 }
 
@@ -66,6 +76,11 @@ impl NotifyProvider for WeComProvider {
             ParamDef::optional("card_desc", "Template card description"),
             ParamDef::optional("card_jump_url", "Template card jump URL"),
             ParamDef::optional("card_jump_title", "Template card jump button title"),
+            ParamDef::optional(
+                "base_url",
+                "WeCom API base URL (default: https://qyapi.weixin.qq.com)",
+            )
+            .with_example("https://qyapi.weixin.qq.com"),
         ]
     }
 
@@ -80,7 +95,7 @@ impl NotifyProvider for WeComProvider {
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
         let key = config.require("key", "wecom")?;
-        let url = Self::build_webhook_url(key);
+        let url = Self::build_webhook_url(key, config);
 
         // Handle news message type
         if config.get("type") == Some("news") {
@@ -193,7 +208,7 @@ impl NotifyProvider for WeComProvider {
             let file_name = attachment.effective_file_name();
             let mime_str = attachment.effective_mime();
 
-            let upload_url = Self::build_upload_url(key);
+            let upload_url = Self::build_upload_url(key, config);
             let part = reqwest::multipart::Part::bytes(data)
                 .file_name(file_name)
                 .mime_str(&mime_str)
