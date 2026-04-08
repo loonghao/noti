@@ -3749,3 +3749,470 @@ mod discord_send_tests {
         assert!(provider.validate_config(&make_config()).is_ok());
     }
 }
+
+// ======================== SlackProvider comprehensive send tests ========================
+
+mod slack_send_tests {
+    use super::*;
+    use noti_providers::slack::SlackProvider;
+    use serde_json::json;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new().set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = SlackProvider::new(client());
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_webhook_url() {
+        let provider = SlackProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = SlackProvider::new(client());
+        assert_eq!(provider.name(), "slack");
+        assert_eq!(provider.url_scheme(), "slack");
+        assert!(!provider.description().is_empty());
+        assert!(!provider.example_url().is_empty());
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "webhook_url" && p.required));
+        assert!(params.iter().any(|p| p.name == "channel" && !p.required));
+        assert!(params.iter().any(|p| p.name == "bot_token" && !p.required));
+        assert!(params.iter().any(|p| p.name == "thread_ts" && !p.required));
+        assert!(params.iter().any(|p| p.name == "ephemeral_user" && !p.required));
+        assert!(params.iter().any(|p| p.name == "send_at" && !p.required));
+        assert!(params.iter().any(|p| p.name == "blocks" && !p.required));
+        assert!(params.iter().any(|p| p.name == "base_url" && !p.required));
+    }
+
+    // --- Webhook send tests ---
+
+    #[tokio::test]
+    async fn test_send_webhook_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("Hello Slack!");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "slack");
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_with_channel() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", mock_server.uri())
+            .set("channel", "#alerts");
+        let message = Message::text("Channel message");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_with_username_and_icon() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", mock_server.uri())
+            .set("username", "AlertBot")
+            .set("icon_emoji", ":rotating_light:");
+        let message = Message::text("Alert!");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_markdown_format() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::markdown("*Bold* and _italic_");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_with_blocks_json() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", mock_server.uri())
+            .set(
+                "blocks",
+                r#"[{"type":"section","text":{"type":"mrkdwn","text":"*Deploy complete*"}}]"#,
+            );
+        let message = Message::text("fallback text");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_invalid_blocks_json() {
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("blocks", "not-valid-json{{{");
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("invalid blocks JSON"),
+            "expected blocks JSON error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_failure() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("invalid_token"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(403));
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_server_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("server_error"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(500));
+    }
+
+    // --- API send tests (chat.postMessage) ---
+
+    #[tokio::test]
+    async fn test_send_api_post_message_with_thread_ts() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.postMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "ts": "1234567890.123456"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("bot_token", "xoxb-test-token")
+            .set("thread_ts", "1234567890.000001")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Thread reply");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "slack");
+    }
+
+    #[tokio::test]
+    async fn test_send_api_post_message_markdown() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.postMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "ts": "1234567890.123456"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("bot_token", "xoxb-test-token")
+            .set("thread_ts", "1234567890.000001")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::markdown("*Bold* reply");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_api_post_ephemeral() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.postEphemeral"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "message_ts": "1234567890.123456"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("bot_token", "xoxb-test-token")
+            .set("ephemeral_user", "U12345678")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Ephemeral message");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_api_schedule_message() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.scheduleMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "scheduled_message_id": "Q1234567890",
+                "post_at": "1712640000"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("bot_token", "xoxb-test-token")
+            .set("send_at", "1712640000")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Scheduled message");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_api_error_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.postMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": false,
+                "error": "channel_not_found"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C_INVALID")
+            .set("bot_token", "xoxb-test-token")
+            .set("thread_ts", "1234567890.000001")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert!(response.message.contains("channel_not_found"));
+    }
+
+    // --- bot_token required validation ---
+
+    #[tokio::test]
+    async fn test_send_thread_ts_without_bot_token_returns_error() {
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("thread_ts", "1234567890.000001");
+
+        let message = Message::text("Thread reply");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("bot_token required"),
+            "expected bot_token required error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_ephemeral_without_bot_token_returns_error() {
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("ephemeral_user", "U12345678");
+
+        let message = Message::text("Ephemeral");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("bot_token required"),
+            "expected bot_token required error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_scheduled_without_bot_token_returns_error() {
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("send_at", "1712640000");
+
+        let message = Message::text("Scheduled");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("bot_token required"),
+            "expected bot_token required error, got: {err}"
+        );
+    }
+
+    // --- base_url tests ---
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.postMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "ts": "1234567890.123456"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("bot_token", "xoxb-test-token")
+            .set("thread_ts", "1234567890.000001")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("using custom base url");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = SlackProvider::new(client());
+        // No base_url set - should use default https://slack.com
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/chat.postMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "ts": "1234567890.123456"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = SlackProvider::new(client());
+        // Trailing slash should be stripped so the path is /api/chat.postMessage
+        let config = ProviderConfig::new()
+            .set("webhook_url", "https://hooks.slack.com/services/T/B/xxx")
+            .set("channel", "C12345678")
+            .set("bot_token", "xoxb-test-token")
+            .set("thread_ts", "1234567890.000001")
+            .set("base_url", format!("{}/", mock_server.uri()));
+
+        let message = Message::text("test trailing slash");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+}

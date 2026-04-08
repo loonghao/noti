@@ -58,6 +58,8 @@ impl NotifyProvider for SlackProvider {
                 .with_example(
                     r#"[{"type":"section","text":{"type":"mrkdwn","text":"*Build passed*"}}]"#,
                 ),
+            ParamDef::optional("base_url", "Slack API base URL (default: https://slack.com)")
+                .with_example("https://slack.com"),
         ]
     }
 
@@ -162,6 +164,14 @@ impl NotifyProvider for SlackProvider {
 }
 
 impl SlackProvider {
+    /// Returns the Slack API base URL, optionally overridden by config.
+    fn api_base_url(config: &ProviderConfig) -> String {
+        config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| "https://slack.com".to_string())
+    }
+
     /// Upload files to Slack using the files.uploadV2 equivalent (files.upload).
     async fn send_with_files(
         &self,
@@ -170,6 +180,7 @@ impl SlackProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         let channel = config.get("channel").unwrap_or("general");
+        let base_url = Self::api_base_url(config);
 
         for attachment in &message.attachments {
             let data = attachment.read_bytes().await?;
@@ -189,7 +200,7 @@ impl SlackProvider {
 
             let resp = self
                 .client
-                .post("https://slack.com/api/files.upload")
+                .post(format!("{base_url}/api/files.upload"))
                 .bearer_auth(bot_token)
                 .multipart(form)
                 .send()
@@ -233,6 +244,7 @@ impl SlackProvider {
         let thread_ts = config.get("thread_ts");
         let ephemeral_user = config.get("ephemeral_user");
         let send_at = config.get("send_at");
+        let base_url = Self::api_base_url(config);
 
         let mut payload = match message.format {
             MessageFormat::Markdown => {
@@ -283,7 +295,7 @@ impl SlackProvider {
 
         let resp = self
             .client
-            .post(format!("https://slack.com/api/{api_method}"))
+            .post(format!("{base_url}/api/{api_method}"))
             .bearer_auth(bot_token)
             .json(&payload)
             .send()
