@@ -59,7 +59,7 @@ impl ApnsProvider {
 }
 
 /// APNs authentication credentials extracted from provider config.
-    #[derive(Clone, Debug)]
+#[derive(Clone, Debug)]
 struct ApnsCredentials {
     /// DER-encoded PKCS#8 private key bytes.
     pkcs8_der: Vec<u8>,
@@ -220,123 +220,14 @@ fn generate_apns_jwt(credentials: &ApnsCredentials) -> Result<String, NotiError>
     let signing_key = SigningKey::from_pkcs8_der(&credentials.pkcs8_der)
         .map_err(|e| NotiError::Config(format!("failed to parse p8 private key: {e}")))?;
 
-    // Sign with ES256: p256::ecdsa::SigningKey::sign returns DerSignature.
-    let der_sig: p256::ecdsa::DerSignature = signing_key.sign(signing_bytes);
-
-    // Extract raw r||s using the Encoding trait (available via ecdsa::der re-export).
-    // This gives the 64-byte raw concatenation needed for JWT.
-    let raw_rs = der_to_rs(&der_sig.to_bytes())?;
-    let jwt_der = rs_to_der(&raw_rs)?;
-    let sig_b64 = b64url_encode(&jwt_der);
+    // Sign with ES256: use Signature (raw r||s, 64 bytes) as required by RFC 7518 §3.4.
+    // JWT ES256 signatures MUST be the 64-byte raw R || S concatenation — NOT DER-encoded.
+    let sig: p256::ecdsa::Signature = signing_key.sign(signing_bytes);
+    let sig_b64 = b64url_encode(&sig.to_bytes());
 
     Ok(format!("{}.{}.{}", header_b64, claims_b64, sig_b64))
 }
 
-/// Parse a DER-encoded ECDSA signature and extract raw r||s bytes (64 bytes for P-256).
-///
-/// DER format: SEQUENCE { INTEGER r, INTEGER s }
-/// Each INTEGER has: tag(1) + length(1) + content(n)
-///
-/// Returns the raw concatenation of r and s (each 32 bytes, big-endian).
-fn der_to_rs(der: &[u8]) -> Result<[u8; 64], NotiError> {
-    // Minimum: SEQUENCE(2) + r INTEGER(34) + s INTEGER(34) = 70 bytes
-    if der.len() < 70 || der[0] != 0x30 {
-        return Err(NotiError::Config(
-            "invalid DER signature: expected SEQUENCE tag".into(),
-        ));
-    }
-
-    let content_len = der[1] as usize;
-    let content = &der[2..2 + content_len];
-
-    // Parse INTEGER r: tag(0x02) + length + content
-    if content[0] != 0x02 {
-        return Err(NotiError::Config(
-            "invalid DER signature: expected INTEGER tag for r".into(),
-        ));
-    }
-    let r_len = content[1] as usize; // typically 33 (leading 0x00 + 32 scalar bytes)
-    let r_content_start = 2; // byte index within content where r value starts
-    let r_scalar = extract_der_scalar(&content[r_content_start..r_content_start + r_len]);
-
-    // Parse INTEGER s: follows r INTEGER in content
-    let r_integer_len = 2 + r_len; // tag + length + content
-    let s_content_start = r_integer_len;
-    if content[s_content_start] != 0x02 {
-        return Err(NotiError::Config(
-            "invalid DER signature: expected INTEGER tag for s".into(),
-        ));
-    }
-    let s_len = content[s_content_start + 1] as usize;
-    let s_scalar = extract_der_scalar(
-        &content[s_content_start + 2..s_content_start + 2 + s_len],
-    );
-
-    // Combine r || s
-    let mut raw = [0u8; 64];
-    raw[..32].copy_from_slice(&r_scalar);
-    raw[32..].copy_from_slice(&s_scalar);
-    Ok(raw)
-}
-
-/// Extract a 32-byte scalar from a DER INTEGER's content bytes.
-///
-/// DER INTEGER content format: [0x00, <31-32 bytes>] or [<32 bytes>]
-/// The leading 0x00 (when present) is a DER sign-extension byte.
-/// We right-align into a 32-byte array (big-endian for JWT ES256).
-fn extract_der_scalar(content: &[u8]) -> [u8; 32] {
-    // The DER INTEGER content starts with 0x00 (leading zero if high bit set)
-    // followed by the actual scalar bytes. Extract the last 32 bytes.
-    let skip = if !content.is_empty() && content[0] == 0x00 { 1 } else { 0 };
-    let scalar_len = content.len() - skip;
-    let mut scalar = [0u8; 32];
-    scalar[32 - scalar_len..].copy_from_slice(&content[skip..]);
-    scalar
-}
-
-/// Convert raw r||s bytes (64 bytes for P-256) to DER-encoded ECDSA signature.
-///
-/// JWT ES256 signatures use DER encoding, not raw r||s concatenation.
-/// DER format: SEQUENCE { INTEGER r, INTEGER s }
-fn rs_to_der(rs_bytes: &[u8]) -> Result<Vec<u8>, NotiError> {
-    if rs_bytes.len() != 64 {
-        return Err(NotiError::Config(format!(
-            "expected 64-byte r||s signature, got {} bytes",
-            rs_bytes.len()
-        )));
-    }
-
-    let r = &rs_bytes[..32];
-    let s = &rs_bytes[32..];
-
-    // Compute DER-encoded length for each INTEGER (32 bytes).
-    // Leading 0x00 is added when the high bit is set (to keep integer positive in DER).
-    let r_len = if r[0] >= 0x80 { 33 } else { 32 };
-    let s_len = if s[0] >= 0x80 { 33 } else { 32 };
-    let content_len = 2 + r_len + 2 + s_len; // 2 INTag/length + r + 2 INTag/length + s
-
-    let mut der = Vec::with_capacity(2 + content_len);
-    der.push(0x30); // SEQUENCE tag
-    der.push(content_len as u8);
-
-    // INTEGER r.
-    der.push(0x02);
-    der.push(r_len as u8);
-    if r[0] >= 0x80 {
-        der.push(0x00);
-    }
-    der.extend_from_slice(r);
-
-    // INTEGER s.
-    der.push(0x02);
-    der.push(s_len as u8);
-    if s[0] >= 0x80 {
-        der.push(0x00);
-    }
-    der.extend_from_slice(s);
-
-    Ok(der)
-}
 
 /// APNs endpoint host.
 fn apns_host(sandbox: bool) -> &'static str {
@@ -570,47 +461,6 @@ mod tests {
     use super::*;
 
     // -------------------------------------------------------------------------
-    // rs_to_der tests
-    // -------------------------------------------------------------------------
-
-    #[test]
-    fn test_rs_to_der_valid() {
-        // Valid 64-byte r||s signature (P-256 produces 64 bytes)
-        let rs = vec![0x01; 64];
-        let der = rs_to_der(&rs).expect("valid signature should encode");
-        // DER SEQUENCE header + r INTEGER + s INTEGER
-        assert!(!der.is_empty());
-        assert_eq!(der[0], 0x30); // SEQUENCE tag
-    }
-
-    #[test]
-    fn test_rs_to_der_wrong_length() {
-        // Too short (63 bytes)
-        let rs = vec![0x01; 63];
-        let result = rs_to_der(&rs);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("64-byte"));
-
-        // Too long (65 bytes)
-        let rs = vec![0x01; 65];
-        let result = rs_to_der(&rs);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_rs_to_der_high_bit_set_adds_leading_zero() {
-        // r with high bit set (byte 0 >= 0x80) requires leading 0x00 in DER INTEGER
-        // Using a signature where first byte of r is >= 0x80
-        let mut rs = vec![0x00; 64];
-        rs[0] = 0x80; // Set high bit
-        let der = rs_to_der(&rs).expect("valid");
-        // After SEQUENCE tag (2 bytes), r INTEGER header is at index 2
-        assert_eq!(der[2], 0x02); // INTEGER tag
-        // With leading 0x00, length should be 0x21 (33 bytes)
-        assert_eq!(der[3], 0x21);
-    }
-
-    // -------------------------------------------------------------------------
     // decode_p8_to_der tests
     // -------------------------------------------------------------------------
 
@@ -785,7 +635,7 @@ mod tests {
         };
 
         let jwt = generate_apns_jwt(&credentials).unwrap();
-        let header_b64 = jwt.split('.').nth(0).unwrap();
+        let header_b64 = jwt.split('.').next().unwrap();
         let header_json = String::from_utf8(
             base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(header_b64)
