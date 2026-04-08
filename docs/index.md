@@ -4,7 +4,7 @@ layout: home
 hero:
   name: noti
   text: Unified Multi-Channel Notification CLI
-  tagline: One binary. One command. 125+ notification channels. Built for AI agents & automation.
+  tagline: One binary. One command. 126+ notification channels. Built for AI agents & automation.
   actions:
     - theme: brand
       text: Get Started
@@ -18,7 +18,7 @@ features:
     title: CLI-first Design
     details: Built for agent/script integration — one-line commands, no config files needed. Works perfectly in CI/CD pipelines.
   - icon: 📡
-    title: 125+ Built-in Providers
+    title: 126+ Built-in Providers
     details: Chat, SMS, email, push, webhooks, incident management, IoT — all in one binary. No plugins, no extensions.
   - icon: 🔗
     title: URL Scheme Addressing

@@ -3,15 +3,17 @@
 //! This module contains the `register_all_providers()` function that registers
 //! all notification providers into a `ProviderRegistry`. Providers are organized
 //! by category for clarity:
-//! - Chat / IM (20+)
-//! - Push notifications (20+)
-//! - SMS / telephony (30+)
-//! - Email (10+)
+//! - Chat / IM (22)
+//! - Push notifications (22)
+//! - SMS / telephony (29)
+//! - Email (11)
 //! - Webhooks (4)
 //! - Automation / incident (7)
 //! - Home automation (2)
 //! - Media / cloud (6)
 //! - Misc (23)
+//!
+//! Total: 126 providers
 
 use noti_core::ProviderRegistry;
 use reqwest::Client;
