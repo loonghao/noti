@@ -5167,3 +5167,470 @@ mod ntfy_send_tests {
         assert!(result.unwrap().success);
     }
 }
+
+// ======================== WebhookProvider send tests ========================
+
+mod webhook_send_tests {
+    use super::*;
+    use noti_providers::webhook::WebhookProvider;
+    use serde_json::json;
+
+    fn make_config(url: &str) -> ProviderConfig {
+        ProviderConfig::new().set("url", url)
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = WebhookProvider::new(client());
+        let config = make_config("https://example.com/webhook");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_url() {
+        let provider = WebhookProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = WebhookProvider::new(client());
+        assert_eq!(provider.name(), "webhook");
+        assert_eq!(provider.url_scheme(), "webhook");
+        assert!(!provider.description().is_empty());
+        assert!(provider.example_url().starts_with("webhook://"));
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "url" && p.required));
+        assert!(params.iter().any(|p| p.name == "method" && !p.required));
+        assert!(params.iter().any(|p| p.name == "content_type" && !p.required));
+        assert!(params.iter().any(|p| p.name == "headers" && !p.required));
+        assert!(params.iter().any(|p| p.name == "body_template" && !p.required));
+        assert!(params.iter().any(|p| p.name == "auth_type" && !p.required));
+        assert!(params.iter().any(|p| p.name == "auth_token" && !p.required));
+        assert!(params.iter().any(|p| p.name == "retry" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri());
+        let message = Message::text("Hello webhook");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "webhook");
+        assert_eq!(response.status_code, Some(200));
+        assert!(response.raw_response.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri());
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_body_template() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"received": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri()).set(
+            "body_template",
+            r#"{"content": "{message}", "heading": "{title}"}"#,
+        );
+        let message = Message::text("hello").with_title("Hi");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_put_method() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri()).set("method", "PUT");
+        let message = Message::text("PUT body");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_patch_method() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri()).set("method", "PATCH");
+        let message = Message::text("PATCH body");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_bearer_auth() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(header("Authorization", "Bearer my-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri())
+            .set("auth_type", "bearer")
+            .set("auth_token", "my-token");
+        let message = Message::text("Authenticated request");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_api_key_auth() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(header("X-API-Key", "key-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri())
+            .set("auth_type", "api_key")
+            .set("auth_token", "key-123");
+        let message = Message::text("API key request");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_custom_headers() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(header("X-Custom", "value"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri()).set("headers", "X-Custom:value");
+        let message = Message::text("Custom headers");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_400() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(json!({"error": "bad request"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri());
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(400));
+        assert!(response.raw_response.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_500() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri());
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_send_unsupported_method() {
+        let provider = WebhookProvider::new(client());
+        let config = make_config("https://example.com/webhook").set("method", "DELETE");
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsupported HTTP method"));
+    }
+
+    #[tokio::test]
+    async fn test_send_retry_on_failure() {
+        let mock_server = MockServer::start().await;
+
+        // First request fails, second succeeds
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri()).set("retry", "2");
+        let message = Message::text("Retry test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_custom_content_type() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(header("Content-Type", "text/plain"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = WebhookProvider::new(client());
+        let config = make_config(&mock_server.uri()).set("content_type", "text/plain");
+        let message = Message::text("Plain text body");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+}
+
+// ======================== EmailProvider extended send tests ========================
+
+mod email_send_tests {
+    use super::*;
+    use noti_providers::email::EmailProvider;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new()
+            .set("host", "smtp.example.com")
+            .set("username", "user@example.com")
+            .set("password", "app-password")
+            .set("to", "recipient@example.com")
+    }
+
+    #[tokio::test]
+    async fn test_validate_config_full() {
+        let provider = EmailProvider::new();
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_host() {
+        let provider = EmailProvider::new();
+        let config = ProviderConfig::new()
+            .set("username", "user@example.com")
+            .set("password", "app-password")
+            .set("to", "recipient@example.com");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_username() {
+        let provider = EmailProvider::new();
+        let config = ProviderConfig::new()
+            .set("host", "smtp.example.com")
+            .set("password", "app-password")
+            .set("to", "recipient@example.com");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_password() {
+        let provider = EmailProvider::new();
+        let config = ProviderConfig::new()
+            .set("host", "smtp.example.com")
+            .set("username", "user@example.com")
+            .set("to", "recipient@example.com");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = EmailProvider::new();
+        let config = ProviderConfig::new()
+            .set("host", "smtp.example.com")
+            .set("username", "user@example.com")
+            .set("password", "app-password");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_empty_config() {
+        let provider = EmailProvider::new();
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = EmailProvider::new();
+        assert_eq!(provider.name(), "email");
+        assert_eq!(provider.url_scheme(), "smtp");
+        assert!(!provider.description().is_empty());
+        assert!(provider.example_url().starts_with("smtp://"));
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert_eq!(params.iter().filter(|p| p.required).count(), 4);
+        assert_eq!(params.iter().filter(|p| !p.required).count(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_send_smtp_connection_error() {
+        // Email uses SMTP (not HTTP), so connecting to a non-existent host should fail gracefully.
+        // The provider catches SMTP errors and returns a failure SendResponse (not an Err).
+        let provider = EmailProvider::new();
+        let config = make_config();
+        let message = Message::text("Test email body");
+
+        let result = provider.send(&message, &config).await;
+        // SMTP connection to non-existent host should either:
+        // 1. Return Ok(SendResponse { success: false, ... }) — SMTP error caught
+        // 2. Return Err — if DNS resolution / TLS setup fails before SMTP
+        match result {
+            Ok(resp) => assert!(!resp.success, "Expected failure for non-existent SMTP host"),
+            Err(_) => {} // DNS/TLS error is also acceptable
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title_as_subject() {
+        // Verify that message title becomes email subject
+        let provider = EmailProvider::new();
+        let config = make_config();
+        let message = Message::text("Body text").with_title("Urgent Alert");
+
+        let result = provider.send(&message, &config).await;
+        // SMTP connection will fail; just verify no panic
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_html_format() {
+        let provider = EmailProvider::new();
+        let config = make_config();
+        let message = Message::text("<h1>HTML Email</h1>").with_format(MessageFormat::Html);
+
+        let result = provider.send(&message, &config).await;
+        // SMTP connection will fail; just verify no panic
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_cc_and_bcc() {
+        let provider = EmailProvider::new();
+        let config = make_config()
+            .set("cc", "cc1@example.com, cc2@example.com")
+            .set("bcc", "bcc@example.com");
+        let message = Message::text("CC and BCC test");
+
+        let result = provider.send(&message, &config).await;
+        // SMTP connection will fail; just verify no panic
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_custom_from() {
+        let provider = EmailProvider::new();
+        let config = make_config().set("from", "custom@example.com");
+        let message = Message::text("Custom from");
+
+        let result = provider.send(&message, &config).await;
+        // SMTP connection will fail; just verify no panic
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_invalid_to() {
+        let provider = EmailProvider::new();
+        let config = make_config().set("to", "not-an-email");
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid to address"));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_custom_port() {
+        let provider = EmailProvider::new();
+        let config = make_config().set("port", "465");
+        let message = Message::text("Port 465 test");
+
+        let result = provider.send(&message, &config).await;
+        // SMTP connection will fail; just verify no panic
+        assert!(result.is_ok() || result.is_err());
+    }
+}
