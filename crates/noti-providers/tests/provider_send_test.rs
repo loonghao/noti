@@ -20,33 +20,13 @@ mod wecom_tests {
     use noti_providers::wecom::WeComProvider;
 
     #[tokio::test]
-    async fn test_send_success() {
-        let mock_server = MockServer::start().await;
-
-        Mock::given(method("POST"))
-            .and(path("/cgi-bin/webhook/send"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "errcode": 0,
-                "errmsg": "ok"
-            })))
-            .mount(&mock_server)
-            .await;
-
-        let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
-        let provider = WeComProvider::new(client);
-
-        // We need to use a config that points to mock server
-        // Since WeComProvider builds URL from key, we need to override
-        // by setting the full URL in a way the provider understands.
-        // WeComProvider uses build_webhook_url(key) => https://qyapi.weixin.qq.com/...
-        // We can't easily mock this, so test validate_config instead
+    async fn test_validate_config_and_metadata() {
+        // WeComProvider hardcodes the URL from `key`; no base_url override available.
+        // Test validates config and metadata without a mock server.
+        let provider = WeComProvider::new(client());
         let config = ProviderConfig::new().set("key", "test-key-123");
         assert!(provider.validate_config(&config).is_ok());
 
-        // Test metadata
         assert_eq!(provider.name(), "wecom");
         assert_eq!(provider.url_scheme(), "wecom");
         assert!(!provider.description().is_empty());
@@ -186,18 +166,10 @@ mod discord_tests {
     use noti_providers::discord::DiscordProvider;
 
     #[tokio::test]
-    async fn test_send_success_204() {
-        let mock_server = MockServer::start().await;
-
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(204))
-            .mount(&mock_server)
-            .await;
-
+    async fn test_validate_config() {
+        // DiscordProvider builds URL from webhook_id/webhook_token; no base_url override.
+        // Test validates config and metadata without a mock server.
         let provider = DiscordProvider::new(client());
-
-        // Discord builds URL from webhook_id/webhook_token,
-        // so we test metadata and validation
         let config = ProviderConfig::new()
             .set("webhook_id", "123456")
             .set("webhook_token", "abcdef");
