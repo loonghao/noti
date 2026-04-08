@@ -54,6 +54,8 @@ impl NotifyProvider for VonageProvider {
                 "private_key",
                 "Vonage Application private key (required for MMS)",
             ),
+            ParamDef::optional("base_url", "Base URL override for API (default: https://rest.nexmo.com)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -71,6 +73,8 @@ impl NotifyProvider for VonageProvider {
         let api_secret = config.require("api_secret", "vonage")?;
         let from = config.require("from", "vonage")?;
         let to = config.require("to", "vonage")?;
+
+        let base_url = config.get("base_url").unwrap_or("https://rest.nexmo.com").trim_end_matches('/');
 
         let text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)
@@ -102,9 +106,12 @@ impl NotifyProvider for VonageProvider {
                     "channel": "mms",
                 });
 
+                let messages_base = config.get("base_url")
+                    .map(|s| s.trim_end_matches('/'))
+                    .unwrap_or("https://api.nexmo.com");
                 let resp = self
                     .client
-                    .post("https://api.nexmo.com/v1/messages")
+                    .post(format!("{messages_base}/v1/messages"))
                     .basic_auth(api_key, Some(api_secret))
                     .json(&payload)
                     .send()
@@ -154,7 +161,7 @@ impl NotifyProvider for VonageProvider {
 
         let resp = self
             .client
-            .post("https://rest.nexmo.com/sms/json")
+            .post(format!("{base_url}/sms/json"))
             .json(&payload)
             .send()
             .await

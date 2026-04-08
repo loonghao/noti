@@ -46,6 +46,8 @@ impl NotifyProvider for MailgunProvider {
                 .with_example("noti <noti@mg.example.com>"),
             ParamDef::optional("region", "Mailgun region: us or eu (default: us)")
                 .with_example("us"),
+            ParamDef::optional("base_url", "Base URL override for API (default: auto from region)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -67,10 +69,12 @@ impl NotifyProvider for MailgunProvider {
         let region = config.get("region").unwrap_or("us");
         let subject = message.title.as_deref().unwrap_or("Notification");
 
-        let api_base = match region {
-            "eu" => "https://api.eu.mailgun.net/v3",
-            _ => "https://api.mailgun.net/v3",
-        };
+        let api_base = config.get("base_url").map(|s| s.trim_end_matches('/')).unwrap_or_else(|| {
+            match region {
+                "eu" => "https://api.eu.mailgun.net/v3",
+                _ => "https://api.mailgun.net/v3",
+            }
+        });
 
         let url = format!("{api_base}/{domain}/messages");
 

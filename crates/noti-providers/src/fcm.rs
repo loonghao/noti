@@ -110,6 +110,8 @@ impl NotifyProvider for FcmProvider {
                 .with_example("default"),
             ParamDef::optional("click_action", "Action on notification click"),
             ParamDef::optional("image", "Image URL for rich notification"),
+            ParamDef::optional("base_url", "Base URL override for FCM API (default: https://fcm.googleapis.com/fcm)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -125,7 +127,12 @@ impl NotifyProvider for FcmProvider {
         self.validate_config(config)?;
         let server_key = config.require("server_key", "fcm")?;
 
-        let url = fcm_url();
+        let url = config.get("base_url")
+            .map(|s| {
+                let base = s.trim_end_matches('/');
+                format!("{base}/send")
+            })
+            .unwrap_or_else(|| fcm_url().to_string());
 
         let mut notification = build_fcm_notification(message, config);
 
@@ -461,7 +468,7 @@ mod tests {
     fn test_fcm_provider_params_count() {
         let provider = FcmProvider::new(reqwest::Client::new());
         let params = provider.params();
-        // 2 required + 9 optional = 11 total
-        assert_eq!(params.len(), 11);
+        // 2 required + 10 optional = 12 total
+        assert_eq!(params.len(), 12);
     }
 }

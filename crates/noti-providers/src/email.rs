@@ -17,10 +17,7 @@ impl EmailProvider {
 
     /// Resolve the sender address (defaults to username if `from` not set).
     pub fn resolve_from(config: &ProviderConfig) -> &str {
-        let username = match config.get("username") {
-            Some(u) => u,
-            None => "unknown",
-        };
+        let username = config.get("username").unwrap_or("unknown");
         config.get("from").unwrap_or(username)
     }
 

@@ -51,6 +51,8 @@ impl NotifyProvider for SendGridProvider {
                 .with_example("cc@example.com"),
             ParamDef::optional("bcc", "BCC email address(es), comma-separated")
                 .with_example("bcc@example.com"),
+            ParamDef::optional("base_url", "Base URL override for API (default: https://api.sendgrid.com)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -131,9 +133,10 @@ impl NotifyProvider for SendGridProvider {
             payload["attachments"] = json!(attachments_json);
         }
 
+        let base_url = config.get("base_url").unwrap_or("https://api.sendgrid.com").trim_end_matches('/');
         let resp = self
             .client
-            .post("https://api.sendgrid.com/v3/mail/send")
+            .post(format!("{base_url}/v3/mail/send"))
             .header("Authorization", format!("Bearer {api_key}"))
             .json(&payload)
             .send()
