@@ -1500,6 +1500,160 @@ mod twilio_send_tests {
                 .any(|p| p.name == "to" && p.required)
         );
     }
+
+    #[tokio::test]
+    async fn test_send_sms_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/2010-04-01/Accounts/ACxxx/Messages.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sid": "SM1234567890abcdef",
+                "status": "queued",
+                "to": "+15559876543",
+                "from": "+15551234567",
+                "body": "Hello World"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TwilioProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "authToken")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Hello World");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "twilio");
+        assert_eq!(response.status_code, Some(200));
+        assert!(response.message.contains("SMS sent"));
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_failure() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/2010-04-01/Accounts/ACxxx/Messages.json"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "code": 21211,
+                "message": "Invalid phone number",
+                "status": 400
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TwilioProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "authtoken")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Hello");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(400));
+        assert!(response.message.contains("Invalid phone number"));
+    }
+
+    #[tokio::test]
+    async fn test_send_mms_with_media_url_config() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/2010-04-01/Accounts/ACxxx/Messages.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sid": "SM9876543210fedcba",
+                "status": "queued"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TwilioProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "authtoken")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("media_url", "https://example.com/image.png")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Check this image");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.success);
+        // media_url config doesn't set has_attachments(), so it says SMS not MMS
+        assert!(response.message.contains("SMS sent"));
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/2010-04-01/Accounts/ACxxx/Messages.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sid": "SM11111111111111111",
+                "status": "queued"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TwilioProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "authtoken")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Body text").with_title("Title Here");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/2010-04-01/Accounts/ACxxx/Messages.json"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "code": 20003,
+                "message": "Authentication failed",
+                "status": 401
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TwilioProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("account_sid", "ACxxx")
+            .set("auth_token", "wrongtoken")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
 }
 
 // ======================== IftttProvider send tests ========================
