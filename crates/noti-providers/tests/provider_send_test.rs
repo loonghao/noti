@@ -4485,3 +4485,282 @@ mod wecom_send_tests {
         assert!(result.unwrap().success);
     }
 }
+
+// ======================== NtfyProvider comprehensive send tests ========================
+
+mod ntfy_send_tests {
+    use super::*;
+    use noti_providers::ntfy::NtfyProvider;
+    use serde_json::json;
+
+    fn make_config() -> ProviderConfig {
+        ProviderConfig::new().set("topic", "test-topic")
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = NtfyProvider::new(client());
+        assert!(provider.validate_config(&make_config()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_topic() {
+        let provider = NtfyProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = NtfyProvider::new(client());
+        assert_eq!(provider.name(), "ntfy");
+        assert_eq!(provider.url_scheme(), "ntfy");
+        assert!(!provider.description().is_empty());
+        assert!(!provider.example_url().is_empty());
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "topic" && p.required));
+        assert!(params.iter().any(|p| p.name == "server" && !p.required));
+        assert!(params.iter().any(|p| p.name == "priority" && !p.required));
+        assert!(params.iter().any(|p| p.name == "tags" && !p.required));
+        assert!(params.iter().any(|p| p.name == "token" && !p.required));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "time": 1712640000,
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config().set("server", mock_server.uri());
+        let message = Message::text("Hello ntfy!");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "ntfy");
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config().set("server", mock_server.uri());
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_priority() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config()
+            .set("server", mock_server.uri())
+            .set("priority", "5");
+        let message = Message::text("Urgent");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_tags() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config()
+            .set("server", mock_server.uri())
+            .set("tags", "warning,skull");
+        let message = Message::text("Tagged message");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_token_auth() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config()
+            .set("server", mock_server.uri())
+            .set("token", "tk_secret123");
+        let message = Message::text("Authenticated message");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_markdown_format() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config().set("server", mock_server.uri());
+        let message = Message::markdown("**Bold** and _italic_");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_html_format() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_abc123",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config().set("server", mock_server.uri());
+        let message = Message::text("<b>Bold</b>").with_format(MessageFormat::Html);
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_json(json!({"error": "unauthorized"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config()
+            .set("server", mock_server.uri())
+            .set("token", "bad-token");
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_forbidden() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/test-topic"))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_json(json!({"error": "forbidden"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = make_config().set("server", mock_server.uri());
+        let message = Message::text("test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(403));
+    }
+
+    #[tokio::test]
+    async fn test_send_all_options_combined() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/alerts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "msg_combined",
+                "event": "message"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = NtfyProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("topic", "alerts")
+            .set("server", mock_server.uri())
+            .set("priority", "5")
+            .set("tags", "rotating_light,critical")
+            .set("token", "tk_abc");
+        let message = Message::text("Critical alert!").with_title("System Down");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        assert!(result.unwrap().success);
+    }
+}
