@@ -188,25 +188,34 @@ fn rs_to_der(rs_bytes: &[u8]) -> Result<Vec<u8>, NotiError> {
     let r = &rs_bytes[..32];
     let s = &rs_bytes[32..];
 
-    // Capacity: SEQUENCE header + r INTEGER + s INTEGER ≤ 72 bytes.
-    let mut der = Vec::with_capacity(72);
+    // DER INTEGER needs a leading 0x00 byte when the high bit is set (negative sign bit).
+    let r_pad = u8::from(r[0] >= 0x80);
+    let s_pad = u8::from(s[0] >= 0x80);
+
+    // Each INTEGER: 0x02 tag + 1-byte length + optional 0x00 + 32 data bytes.
+    let r_len = 32 + r_pad as usize;
+    let s_len = 32 + s_pad as usize;
+    // SEQUENCE content = 2 (tag+len for r) + r_len + 2 (tag+len for s) + s_len.
+    let content_len = 2 + r_len + 2 + s_len;
+
+    let mut der = Vec::with_capacity(2 + content_len);
 
     // DER SEQUENCE header.
     der.push(0x30);
-    der.push(0x44); // 68 bytes content.
+    der.push(content_len as u8);
 
-    // INTEGER r (32 bytes, leading 0x00 if high bit set).
+    // INTEGER r.
     der.push(0x02);
-    der.push(0x21);
-    if r[0] >= 0x80 {
+    der.push(r_len as u8);
+    if r_pad == 1 {
         der.push(0x00);
     }
     der.extend_from_slice(r);
 
     // INTEGER s.
     der.push(0x02);
-    der.push(0x21);
-    if s[0] >= 0x80 {
+    der.push(s_len as u8);
+    if s_pad == 1 {
         der.push(0x00);
     }
     der.extend_from_slice(s);
@@ -396,14 +405,41 @@ mod tests {
 
     #[test]
     fn test_rs_to_der_valid() {
-        // Valid 64-byte signature (32 bytes r || 32 bytes s)
-        let rs = vec![0u8; 64];
+        // Valid 64-byte signature (32 bytes r || 32 bytes s), both high bits clear — no padding.
+        let rs = vec![0x01u8; 64]; // 0x01 < 0x80, no padding needed
         let result = rs_to_der(&rs);
         assert!(result.is_ok());
         let der = result.unwrap();
-        assert!(!der.is_empty());
         // DER signature should start with SEQUENCE (0x30)
         assert_eq!(der[0], 0x30);
+        // Content length = 2 + 32 + 2 + 32 = 68 = 0x44
+        assert_eq!(der[1], 0x44);
+        assert_eq!(der.len(), 2 + 68);
+    }
+
+    #[test]
+    fn test_rs_to_der_with_r_padding() {
+        // r high bit set (0x80) → needs 0x00 padding, s does not
+        let mut rs = vec![0x01u8; 64];
+        rs[0] = 0x80; // r[0] has high bit set
+        let der = rs_to_der(&rs).unwrap();
+        assert_eq!(der[0], 0x30);
+        // r_len = 33, s_len = 32 → content = 2+33+2+32 = 69
+        assert_eq!(der[1], 0x45);
+        assert_eq!(der.len(), 2 + 69);
+    }
+
+    #[test]
+    fn test_rs_to_der_with_both_padding() {
+        // Both r and s high bits set → both need 0x00 padding
+        let mut rs = vec![0x01u8; 64];
+        rs[0] = 0x80; // r[0] high bit
+        rs[32] = 0x80; // s[0] high bit
+        let der = rs_to_der(&rs).unwrap();
+        assert_eq!(der[0], 0x30);
+        // r_len = 33, s_len = 33 → content = 2+33+2+33 = 70
+        assert_eq!(der[1], 0x46);
+        assert_eq!(der.len(), 2 + 70);
     }
 
     #[test]

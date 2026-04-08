@@ -35,7 +35,7 @@ use crate::routes::{self, ApiVersion, ApiVersionsResponse};
     info(
         title = "noti — Notification Service API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "A unified notification service supporting 125+ providers with sync/async delivery, \
+        description = "A unified notification service supporting 126+ providers with sync/async delivery, \
             message templates, priority queuing, and delivery status tracking.",
         license(name = "MIT", url = "https://github.com/loonghao/noti/blob/main/LICENSE"),
         contact(name = "noti", url = "https://github.com/loonghao/noti"),
