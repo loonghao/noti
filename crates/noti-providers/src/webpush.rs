@@ -121,13 +121,11 @@ fn generate_vapid_jwt(
     let claims_b64 = b64url_encode(claims_json.as_bytes());
 
     // Sign the signing input (header_b64.claims_b64).
+    // JWT ES256 requires raw r||s format (64 bytes), NOT DER encoding.
     let signing_input = format!("{}.{}", header_b64, claims_b64);
-    let signature_der: p256::ecdsa::DerSignature = signing_key.sign(signing_input.as_bytes());
-    let sig_bytes = signature_der.to_bytes();
-
-    // Convert raw r||s bytes to DER encoding.
-    let sig_der = rs_to_der(&sig_bytes)?;
-    let sig_b64 = b64url_encode(&sig_der);
+    let signature: p256::ecdsa::Signature = signing_key.sign(signing_input.as_bytes());
+    // to_bytes() on Signature (not DerSignature) returns the raw 64-byte r||s.
+    let sig_b64 = b64url_encode(&signature.to_bytes());
 
     Ok(format!("{}.{}.{}", header_b64, claims_b64, sig_b64))
 }
@@ -174,60 +172,12 @@ fn extract_origin(endpoint: &str) -> Result<String, NotiError> {
     Ok(format!("{}://{}{}", scheme, host, port_str))
 }
 
-/// Convert raw r||s bytes (64 bytes for P-256) to DER-encoded ECDSA signature.
-///
-/// JWT ES256 signatures use DER encoding, not raw r||s concatenation.
-fn rs_to_der(rs_bytes: &[u8]) -> Result<Vec<u8>, NotiError> {
-    if rs_bytes.len() != 64 {
-        return Err(NotiError::Config(format!(
-            "expected 64-byte r||s signature, got {} bytes",
-            rs_bytes.len()
-        )));
-    }
-
-    let r = &rs_bytes[..32];
-    let s = &rs_bytes[32..];
-
-    // DER INTEGER needs a leading 0x00 byte when the high bit is set (negative sign bit).
-    let r_pad = u8::from(r[0] >= 0x80);
-    let s_pad = u8::from(s[0] >= 0x80);
-
-    // Each INTEGER: 0x02 tag + 1-byte length + optional 0x00 + 32 data bytes.
-    let r_len = 32 + r_pad as usize;
-    let s_len = 32 + s_pad as usize;
-    // SEQUENCE content = 2 (tag+len for r) + r_len + 2 (tag+len for s) + s_len.
-    let content_len = 2 + r_len + 2 + s_len;
-
-    let mut der = Vec::with_capacity(2 + content_len);
-
-    // DER SEQUENCE header.
-    der.push(0x30);
-    der.push(content_len as u8);
-
-    // INTEGER r.
-    der.push(0x02);
-    der.push(r_len as u8);
-    if r_pad == 1 {
-        der.push(0x00);
-    }
-    der.extend_from_slice(r);
-
-    // INTEGER s.
-    der.push(0x02);
-    der.push(s_len as u8);
-    if s_pad == 1 {
-        der.push(0x00);
-    }
-    der.extend_from_slice(s);
-
-    Ok(der)
-}
-
 #[async_trait]
 impl NotifyProvider for WebPushProvider {
     fn name(&self) -> &str {
         "webpush"
     }
+
 
     fn url_scheme(&self) -> &str {
         "webpush"
@@ -400,53 +350,6 @@ mod tests {
     #[test]
     fn test_extract_origin_empty_host() {
         let result = extract_origin("https:///v1/push");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_rs_to_der_valid() {
-        // Valid 64-byte signature (32 bytes r || 32 bytes s), both high bits clear — no padding.
-        let rs = vec![0x01u8; 64]; // 0x01 < 0x80, no padding needed
-        let result = rs_to_der(&rs);
-        assert!(result.is_ok());
-        let der = result.unwrap();
-        // DER signature should start with SEQUENCE (0x30)
-        assert_eq!(der[0], 0x30);
-        // Content length = 2 + 32 + 2 + 32 = 68 = 0x44
-        assert_eq!(der[1], 0x44);
-        assert_eq!(der.len(), 2 + 68);
-    }
-
-    #[test]
-    fn test_rs_to_der_with_r_padding() {
-        // r high bit set (0x80) → needs 0x00 padding, s does not
-        let mut rs = vec![0x01u8; 64];
-        rs[0] = 0x80; // r[0] has high bit set
-        let der = rs_to_der(&rs).unwrap();
-        assert_eq!(der[0], 0x30);
-        // r_len = 33, s_len = 32 → content = 2+33+2+32 = 69
-        assert_eq!(der[1], 0x45);
-        assert_eq!(der.len(), 2 + 69);
-    }
-
-    #[test]
-    fn test_rs_to_der_with_both_padding() {
-        // Both r and s high bits set → both need 0x00 padding
-        let mut rs = vec![0x01u8; 64];
-        rs[0] = 0x80; // r[0] high bit
-        rs[32] = 0x80; // s[0] high bit
-        let der = rs_to_der(&rs).unwrap();
-        assert_eq!(der[0], 0x30);
-        // r_len = 33, s_len = 33 → content = 2+33+2+33 = 70
-        assert_eq!(der[1], 0x46);
-        assert_eq!(der.len(), 2 + 70);
-    }
-
-    #[test]
-    fn test_rs_to_der_invalid_length() {
-        // Invalid length (not 64 bytes)
-        let rs = vec![0u8; 32];
-        let result = rs_to_der(&rs);
         assert!(result.is_err());
     }
 
