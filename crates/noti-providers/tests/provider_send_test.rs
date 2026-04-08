@@ -2275,6 +2275,287 @@ mod telegram_extended_tests {
     }
 }
 
+// ======================== TelegramProvider send tests ========================
+
+mod telegram_send_tests {
+    use super::*;
+    use noti_providers::telegram::TelegramProvider;
+
+    #[tokio::test]
+    async fn test_send_text_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {
+                    "message_id": 123
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Hello World");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "telegram");
+        assert_eq!(response.status_code, Some(200));
+        assert!(response.message.contains("message sent successfully"));
+    }
+
+    #[tokio::test]
+    async fn test_send_text_with_markdown() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendMessage"))
+            .and(header("Content-Type", "application/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {"message_id": 456}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("*bold* text")
+            .with_format(MessageFormat::Markdown);
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_text_with_html() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {"message_id": 789}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("<b>bold</b> text").with_format(MessageFormat::Html);
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_text_failure() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendMessage"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "ok": false,
+                "error_code": 400,
+                "description": "Bad request: chat not found"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-9999999999999")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(400));
+        assert!(response.message.contains("chat not found"));
+    }
+
+    #[tokio::test]
+    async fn test_send_text_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/botBADTOKEN:WRONG/sendMessage"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "ok": false,
+                "error_code": 401,
+                "description": "Unauthorized"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "BADTOKEN:WRONG")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_text_with_optional_params() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {"message_id": 111}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri())
+            .set("disable_notification", "true")
+            .set("thread_id", "42")
+            .set("protect", "true");
+
+        let message = Message::text("Silent protected message");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_chat_action_typing() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendChatAction"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": true
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri())
+            .set("action", "typing");
+
+        let message = Message::text("ignored when action is set");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_chat_action_upload_photo() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendChatAction"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": true
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri())
+            .set("action", "upload_photo");
+
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_edit_message_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/editMessageText"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {
+                    "message_id": 999,
+                    "text": "Updated text"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("edit_message_id", "999")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Updated text");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_text_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot123456:ABCDEF/sendMessage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": {"message_id": 222}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TelegramProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("bot_token", "123456:ABCDEF")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("Body text").with_title("Title Here");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+}
+
 // ======================== DiscordProvider extended tests ========================
 
 mod discord_extended_tests {
