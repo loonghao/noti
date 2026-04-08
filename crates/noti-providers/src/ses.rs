@@ -122,6 +122,8 @@ impl NotifyProvider for SesProvider {
             ParamDef::optional("bcc", "BCC recipients (comma-separated)")
                 .with_example("bcc@example.com"),
             ParamDef::optional("from_name", "Sender display name").with_example("noti"),
+            ParamDef::optional("base_url", "Base URL override for SES API (default: auto from region)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -141,7 +143,9 @@ impl NotifyProvider for SesProvider {
         let from = config.require("from", "ses")?;
         let to = config.require("to", "ses")?;
 
-        let url = format!("https://email.{region}.amazonaws.com/");
+        let url = config.get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| format!("https://email.{region}.amazonaws.com/"));
 
         let subject = message.title.as_deref().unwrap_or("noti notification");
         let from_name = config.get("from_name").unwrap_or("noti");

@@ -61,6 +61,8 @@ impl NotifyProvider for PagerDutyProvider {
             )
             .with_example("trigger"),
             ParamDef::optional("dedup_key", "Deduplication key for event correlation"),
+            ParamDef::optional("base_url", "Base URL override for API (default: https://events.pagerduty.com)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -79,7 +81,9 @@ impl NotifyProvider for PagerDutyProvider {
         let source = config.get("source").unwrap_or("noti");
         let action = config.get("action").unwrap_or("trigger");
 
-        let url = "https://events.pagerduty.com/v2/enqueue";
+        let url = config.get("base_url")
+            .map(|s| format!("{}/v2/enqueue", s.trim_end_matches('/')))
+            .unwrap_or_else(|| "https://events.pagerduty.com/v2/enqueue".to_string());
 
         let summary = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)

@@ -48,6 +48,8 @@ impl NotifyProvider for SparkPostProvider {
             ParamDef::optional("region", "API region: us or eu (default: us)").with_example("us"),
             ParamDef::optional("cc", "CC email addresses (comma-separated)"),
             ParamDef::optional("bcc", "BCC email addresses (comma-separated)"),
+            ParamDef::optional("base_url", "Base URL override for API (default: auto from region)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -71,11 +73,13 @@ impl NotifyProvider for SparkPostProvider {
             .clone()
             .unwrap_or_else(|| "Notification".into());
 
-        let base_url = if region == "eu" {
-            "https://api.eu.sparkpost.com/api/v1/transmissions"
-        } else {
-            "https://api.sparkpost.com/api/v1/transmissions"
-        };
+        let base_url = config.get("base_url").map(|s| s.trim_end_matches('/').to_string()).unwrap_or_else(|| {
+            if region == "eu" {
+                "https://api.eu.sparkpost.com/api/v1/transmissions".to_string()
+            } else {
+                "https://api.sparkpost.com/api/v1/transmissions".to_string()
+            }
+        });
 
         // Build recipients list
         let mut recipients = vec![json!({"address": {"email": to_email}})];

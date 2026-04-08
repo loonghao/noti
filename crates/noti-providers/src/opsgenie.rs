@@ -50,6 +50,8 @@ impl NotifyProvider for OpsgenieProvider {
             ParamDef::optional("entity", "Entity field for the alert").with_example("my-service"),
             ParamDef::optional("responders", "Comma-separated responder names or IDs")
                 .with_example("team1,user@example.com"),
+            ParamDef::optional("base_url", "Base URL override for API (default: auto from region)")
+                .with_example("http://localhost:8080"),
         ]
     }
 
@@ -66,10 +68,12 @@ impl NotifyProvider for OpsgenieProvider {
         let api_key = config.require("api_key", "opsgenie")?;
         let region = config.get("region").unwrap_or("us");
 
-        let base_url = match region {
-            "eu" => "https://api.eu.opsgenie.com",
-            _ => "https://api.opsgenie.com",
-        };
+        let base_url = config.get("base_url").map(|s| s.trim_end_matches('/').to_string()).unwrap_or_else(|| {
+            match region {
+                "eu" => "https://api.eu.opsgenie.com".to_string(),
+                _ => "https://api.opsgenie.com".to_string(),
+            }
+        });
         let url = format!("{base_url}/v2/alerts");
 
         let alert_message = message
