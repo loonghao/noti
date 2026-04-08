@@ -369,4 +369,152 @@ mod tests {
         let result = decode_vapid_private_key(invalid_key);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_generate_vapid_jwt_valid() {
+        use p256::pkcs8::EncodePrivateKey;
+
+        // Generate a valid P-256 key at runtime for testing
+        let signing_key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("generate PKCS#8 DER")
+            .as_bytes()
+            .to_vec();
+
+        // Encode as PEM using URL-safe base64 (no padding) - matches what decode_vapid_private_key expects
+        let pem_body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pkcs8_der);
+        let pem_key = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----",
+            pem_body
+        );
+
+        let email = "mailto:admin@example.com";
+        let endpoint = "https://push.example.com/v1/push/abc123";
+
+        let result = generate_vapid_jwt(&pem_key, email, endpoint);
+        assert!(result.is_ok(), "generate_vapid_jwt failed: {:?}", result.err());
+
+        let jwt = result.unwrap();
+        // JWT format: header.payload.signature (3 parts separated by dots)
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3, "JWT should have 3 parts");
+
+        // All parts should be non-empty
+        assert!(!parts[0].is_empty(), "JWT header should not be empty");
+        assert!(!parts[1].is_empty(), "JWT payload should not be empty");
+        assert!(!parts[2].is_empty(), "JWT signature should not be empty");
+    }
+
+    #[test]
+    fn test_generate_vapid_jwt_base64url_key() {
+        use p256::pkcs8::EncodePrivateKey;
+
+        // Generate a valid P-256 key and encode as base64url (no PEM)
+        let signing_key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("generate PKCS#8 DER")
+            .as_bytes()
+            .to_vec();
+
+        // Encode as base64url (URL-safe, no padding) - this is the raw DER bytes
+        let der_b64url = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pkcs8_der);
+
+        let email = "mailto:test@example.com";
+        let endpoint = "https://fcm.googleapis.com/fcm/send/abc123";
+
+        let result = generate_vapid_jwt(&der_b64url, email, endpoint);
+        assert!(result.is_ok(), "generate_vapid_jwt with base64url key failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_generate_vapid_jwt_invalid_key() {
+        let invalid_key = "-----BEGIN PRIVATE KEY-----INVALID-----END PRIVATE KEY-----";
+        let email = "mailto:admin@example.com";
+        let endpoint = "https://push.example.com/v1/push/abc123";
+
+        let result = generate_vapid_jwt(invalid_key, email, endpoint);
+        assert!(result.is_err(), "generate_vapid_jwt should fail with invalid key");
+    }
+
+    #[test]
+    fn test_generate_vapid_jwt_invalid_endpoint() {
+        use p256::pkcs8::EncodePrivateKey;
+
+        // Generate a valid key for this test
+        let signing_key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("generate PKCS#8 DER")
+            .as_bytes()
+            .to_vec();
+
+        let pem_body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pkcs8_der);
+        let pem_key = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----",
+            pem_body
+        );
+
+        let email = "mailto:admin@example.com";
+        let invalid_endpoint = "push.example.com/no-scheme"; // missing scheme
+
+        let result = generate_vapid_jwt(&pem_key, email, invalid_endpoint);
+        assert!(result.is_err(), "generate_vapid_jwt should fail with invalid endpoint");
+    }
+
+    #[test]
+    fn test_generate_vapid_jwt_claims_structure() {
+        use base64::Engine;
+        use p256::pkcs8::EncodePrivateKey;
+
+        // Generate a valid key for this test
+        let signing_key = p256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let pkcs8_der = signing_key
+            .to_pkcs8_der()
+            .expect("generate PKCS#8 DER")
+            .as_bytes()
+            .to_vec();
+
+        let pem_body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pkcs8_der);
+        let pem_key = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----",
+            pem_body
+        );
+
+        let email = "mailto:admin@example.com";
+        let endpoint = "https://push.example.com:8080/v1/push/abc123";
+
+        let jwt = generate_vapid_jwt(&pem_key, email, endpoint).unwrap();
+
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3);
+
+        // Decode header
+        let header_json = String::from_utf8(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(parts[0])
+                .expect("valid base64 header")
+        ).expect("valid UTF-8 header");
+
+        // Decode claims
+        let claims_json = String::from_utf8(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(parts[1])
+                .expect("valid base64 claims")
+        ).expect("valid UTF-8 claims");
+
+        // Verify header contains ES256
+        assert!(header_json.contains("\"alg\":\"ES256\""), "Header should contain ES256");
+        assert!(header_json.contains("\"typ\":\"JWT\""), "Header should contain typ: JWT");
+
+        // Verify claims
+        assert!(claims_json.contains("\"aud\""), "Claims should contain aud");
+        assert!(claims_json.contains("\"exp\""), "Claims should contain exp");
+        assert!(claims_json.contains("\"iss\""), "Claims should contain iss");
+        // The audience should be the origin of the endpoint
+        assert!(claims_json.contains("https://push.example.com:8080"), "aud should match endpoint origin");
+        // The issuer should be the email
+        assert!(claims_json.contains("mailto:admin@example.com"), "iss should match email");
+    }
 }
