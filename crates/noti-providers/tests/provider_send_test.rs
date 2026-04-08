@@ -2037,6 +2037,13 @@ mod teams_send_tests {
     }
 
     #[tokio::test]
+    async fn test_validate_config_missing_webhook_url() {
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new().set("theme_color", "FF0000");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
     async fn test_metadata() {
         let provider = TeamsProvider::new(client());
         assert_eq!(provider.name(), "teams");
@@ -2048,6 +2055,122 @@ mod teams_send_tests {
                 .iter()
                 .any(|p| p.name == "webhook_url" && p.required)
         );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "theme_color" && !p.required)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("Deployment complete");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "teams");
+        assert_eq!(response.status_code, Some(200));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("Service is up and running")
+            .with_title("Health Check Passed");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_theme_color() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("Content-Type", "application/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("webhook_url", mock_server.uri())
+            .set("theme_color", "FF5733");
+        let message = Message::text("Urgent alert");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_send_unauthorized() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("Test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_markdown_title_and_body() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("Content-Type", "application/json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("OK"))
+            .mount(&mock_server)
+            .await;
+
+        let provider = TeamsProvider::new(client());
+        let config = ProviderConfig::new().set("webhook_url", mock_server.uri());
+        let message = Message::text("## Build Summary\n- Tests: passed\n- Coverage: 85%")
+            .with_title("CI Pipeline Complete")
+            .with_format(MessageFormat::Markdown);
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().success);
     }
 }
 
