@@ -3064,3 +3064,288 @@ mod brevo_send_tests {
         assert!(result.is_err() || result.as_ref().is_ok());
     }
 }
+
+// ======================== OneSignalProvider send tests (REST API + JSON) ========================
+
+mod onesignal_send_tests {
+    use super::*;
+    use noti_providers::onesignal::OneSignalProvider;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_fields() {
+        let provider = OneSignalProvider::new(client());
+        assert!(provider.validate_config(&ProviderConfig::new()).is_err());
+        assert!(provider
+            .validate_config(&ProviderConfig::new().set("app_id", "test-app"))
+            .is_err());
+        assert!(provider
+            .validate_config(&ProviderConfig::new().set("api_key", "test-key"))
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = OneSignalProvider::new(client());
+        assert_eq!(provider.name(), "onesignal");
+        assert_eq!(provider.url_scheme(), "onesignal");
+        assert!(provider.supports_attachments());
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "app_id" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "api_key" && p.required)
+        );
+        assert!(
+            provider
+                .params()
+                .iter()
+                .any(|p| p.name == "base_url" && !p.required)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "abc-123-def-456",
+                "recipients": 1,
+                "id": "notification-id"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("hello world");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert_eq!(response.provider, "onesignal");
+        assert_eq!(response.status_code, Some(200));
+        assert!(response.message.contains("1 recipients"));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "notification-id",
+                "recipients": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("body text").with_title("Notification Title");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_with_player_ids() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "notification-id",
+                "recipients": 2
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key")
+            .set("player_ids", "player-1,player-2")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("targeted message");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert!(response.message.contains("2 recipients"));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_segments() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "notification-id",
+                "recipients": 100
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key")
+            .set("include_segments", "Active Users,Inactive Users")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("segment broadcast");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+        assert!(response.message.contains("100 recipients"));
+    }
+
+    #[tokio::test]
+    async fn test_send_with_click_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "notification-id",
+                "recipients": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key")
+            .set("url", "https://example.com/landing")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("click me");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "errors": ["Invalid app_id provided"]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "bad-app-id")
+            .set("api_key", "test-api-key")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(400));
+        assert!(response.message.contains("Invalid app_id"));
+    }
+
+    #[tokio::test]
+    async fn test_send_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "errors": ["Invalid API key"]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "wrong-api-key")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("test");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(!response.success);
+        assert_eq!(response.status_code, Some(401));
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/notifications"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "notification-id",
+                "recipients": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let provider = OneSignalProvider::new(client());
+        // Use wiremock server URI as base_url to verify custom URL is used
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key")
+            .set("base_url", mock_server.uri());
+
+        let message = Message::text("using custom base url");
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_ok(), "send failed: {:?}", result);
+        let response = result.unwrap();
+        assert!(response.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = OneSignalProvider::new(client());
+        let config = ProviderConfig::new()
+            .set("app_id", "test-app-id")
+            .set("api_key", "test-api-key");
+        // No base_url set - should use default https://onesignal.com/api/v1/notifications
+        assert!(provider.validate_config(&config).is_ok());
+        // This test just validates config; actual send without mock would hit real API
+    }
+}

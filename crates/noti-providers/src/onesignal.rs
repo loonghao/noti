@@ -21,8 +21,11 @@ impl OneSignalProvider {
 }
 
 /// Returns the OneSignal API endpoint URL.
-fn onesignal_url() -> &'static str {
-    "https://onesignal.com/api/v1/notifications"
+fn onesignal_url(config: &ProviderConfig) -> String {
+    match config.get("base_url") {
+        Some(base) => format!("{}/api/v1/notifications", base.trim_end_matches('/')),
+        None => "https://onesignal.com/api/v1/notifications".to_string(),
+    }
 }
 
 /// Parses target segments from config, returning the list of segments to target.
@@ -95,6 +98,11 @@ impl NotifyProvider for OneSignalProvider {
                 .with_example("https://example.com"),
             ParamDef::optional("image", "Image URL for the notification")
                 .with_example("https://example.com/img.png"),
+            ParamDef::optional(
+                "base_url",
+                "OneSignal API base URL (default: https://onesignal.com)",
+            )
+            .with_example("https://onesignal.com"),
         ]
     }
 
@@ -111,7 +119,7 @@ impl NotifyProvider for OneSignalProvider {
         let app_id = config.require("app_id", "onesignal")?;
         let api_key = config.require("api_key", "onesignal")?;
 
-        let url = onesignal_url();
+        let url = onesignal_url(config);
 
         let mut payload = json!({
             "app_id": app_id,
@@ -199,7 +207,26 @@ mod tests {
 
     #[test]
     fn test_onesignal_url() {
-        assert_eq!(onesignal_url(), "https://onesignal.com/api/v1/notifications");
+        let cfg = make_config();
+        assert_eq!(onesignal_url(&cfg), "https://onesignal.com/api/v1/notifications");
+    }
+
+    #[test]
+    fn test_onesignal_url_with_custom_base() {
+        let cfg = make_config().set("base_url", "https://custom.onesignal.com");
+        assert_eq!(
+            onesignal_url(&cfg),
+            "https://custom.onesignal.com/api/v1/notifications"
+        );
+    }
+
+    #[test]
+    fn test_onesignal_url_trailing_slash_stripped() {
+        let cfg = make_config().set("base_url", "https://custom.onesignal.com/");
+        assert_eq!(
+            onesignal_url(&cfg),
+            "https://custom.onesignal.com/api/v1/notifications"
+        );
     }
 
     // ======================== Target parsing tests ========================
@@ -351,17 +378,25 @@ mod tests {
         let provider = OneSignalProvider::new(reqwest::Client::new());
         let params = provider.params();
         let optional: Vec<_> = params.iter().filter(|p| !p.required).collect();
-        assert_eq!(optional.len(), 4);
+        assert_eq!(optional.len(), 5);
         assert!(optional.iter().any(|p| p.name == "include_segments"));
         assert!(optional.iter().any(|p| p.name == "player_ids"));
         assert!(optional.iter().any(|p| p.name == "url"));
         assert!(optional.iter().any(|p| p.name == "image"));
+        assert!(optional.iter().any(|p| p.name == "base_url"));
     }
 
     #[test]
     fn test_onesignal_params_count() {
         let provider = OneSignalProvider::new(reqwest::Client::new());
-        assert_eq!(provider.params().len(), 6);
+        assert_eq!(provider.params().len(), 7);
+    }
+
+    #[test]
+    fn test_onesignal_params_optional_base_url() {
+        let provider = OneSignalProvider::new(reqwest::Client::new());
+        let params = provider.params();
+        assert!(params.iter().any(|p| p.name == "base_url" && !p.required));
     }
 
     // ======================== Config validation tests ========================
