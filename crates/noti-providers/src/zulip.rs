@@ -17,6 +17,26 @@ impl ZulipProvider {
         Self { client }
     }
 
+    /// Build Zulip API URL with optional base_url override.
+    fn zulip_api_url(domain: &str, config: &ProviderConfig) -> String {
+        if let Some(base) = config.get("base_url") {
+            let base = base.trim_end_matches('/');
+            format!("{base}/api/v1/messages")
+        } else {
+            format!("https://{domain}/api/v1/messages")
+        }
+    }
+
+    /// Build Zulip upload URL with optional base_url override.
+    fn zulip_upload_url(domain: &str, config: &ProviderConfig) -> String {
+        if let Some(base) = config.get("base_url") {
+            let base = base.trim_end_matches('/');
+            format!("{base}/api/v1/user_uploads")
+        } else {
+            format!("https://{domain}/api/v1/user_uploads")
+        }
+    }
+
     /// Upload a file to Zulip and return the markdown link for embedding.
     async fn upload_file(
         &self,
@@ -24,8 +44,9 @@ impl ZulipProvider {
         bot_email: &str,
         api_key: &str,
         attachment: &noti_core::Attachment,
+        config: &ProviderConfig,
     ) -> Result<String, NotiError> {
-        let url = format!("https://{domain}/api/v1/user_uploads");
+        let url = Self::zulip_upload_url(domain, config);
         let data = attachment.read_bytes().await?;
         let file_name = attachment.effective_file_name();
         let mime_str = attachment.effective_mime();
@@ -96,6 +117,8 @@ impl NotifyProvider for ZulipProvider {
             .with_example("user@example.com"),
             ParamDef::optional("type", "Message type: stream or direct (default: stream)")
                 .with_example("stream"),
+            ParamDef::optional("base_url", "Zulip API base URL (default: https://{domain})")
+                .with_example("https://yourorg.zulipchat.com"),
         ]
     }
 
@@ -113,7 +136,7 @@ impl NotifyProvider for ZulipProvider {
         let bot_email = config.require("bot_email", "zulip")?;
         let api_key = config.require("api_key", "zulip")?;
 
-        let url = format!("https://{domain}/api/v1/messages");
+        let url = Self::zulip_api_url(domain, config);
 
         let msg_type = config.get("type").unwrap_or("stream");
         let mut content = match message.format {
@@ -137,7 +160,7 @@ impl NotifyProvider for ZulipProvider {
         if message.has_attachments() {
             for attachment in &message.attachments {
                 let link = self
-                    .upload_file(domain, bot_email, api_key, attachment)
+                    .upload_file(domain, bot_email, api_key, attachment, config)
                     .await?;
                 content.push_str(&format!("\n{link}"));
             }

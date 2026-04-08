@@ -18,6 +18,18 @@ impl RocketChatProvider {
         Self { client }
     }
 
+    /// Build the Rocket.Chat base URL with optional base_url override.
+    fn rocketchat_base_url(config: &ProviderConfig) -> String {
+        if let Some(base) = config.get("base_url") {
+            let base = base.trim_end_matches('/');
+            return base.to_string();
+        }
+        let host = config.get("host").unwrap_or("localhost");
+        let url_scheme = config.get("scheme").unwrap_or("https");
+        let port = config.get("port").unwrap_or("443");
+        format!("{url_scheme}://{host}:{port}")
+    }
+
     /// Upload files via Rocket.Chat REST API.
     async fn send_with_files(
         &self,
@@ -121,6 +133,8 @@ impl NotifyProvider for RocketChatProvider {
             ),
             ParamDef::optional("user_id", "User ID (required for file uploads)"),
             ParamDef::optional("room_id", "Room ID (required for file uploads)"),
+            ParamDef::optional("base_url", "Override the full base URL (default: {scheme}://{host}:{port})")
+                .with_example("https://chat.example.com"),
         ]
     }
 
@@ -134,13 +148,11 @@ impl NotifyProvider for RocketChatProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
-        let host = config.require("host", "rocketchat")?;
+        let _host = config.require("host", "rocketchat")?;
         let token_a = config.require("token_a", "rocketchat")?;
         let token_b = config.require("token_b", "rocketchat")?;
-        let url_scheme = config.get("scheme").unwrap_or("https");
-        let port = config.get("port").unwrap_or("443");
 
-        let base_url = format!("{url_scheme}://{host}:{port}");
+        let base_url = Self::rocketchat_base_url(config);
 
         // Handle file attachments via REST API
         if message.has_attachments() {

@@ -17,6 +17,35 @@ impl MastodonProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
+
+    /// Build Mastodon status API URL with optional base_url override.
+    fn mastodon_status_url(instance: &str, config: &ProviderConfig) -> String {
+        if let Some(base) = config.get("base_url") {
+            let base = base.trim_end_matches('/');
+            format!("{base}/api/v1/statuses")
+        } else {
+            format!("https://{instance}/api/v1/statuses")
+        }
+    }
+
+    /// Build Mastodon media upload URL with optional base_url override.
+    fn mastodon_media_url(instance: &str, config: &ProviderConfig) -> String {
+        if let Some(base) = config.get("base_url") {
+            let base = base.trim_end_matches('/');
+            format!("{base}/api/v2/media")
+        } else {
+            format!("https://{instance}/api/v2/media")
+        }
+    }
+
+    /// Format status text with optional title prefix.
+    fn format_status_text(message: &Message) -> String {
+        if let Some(ref title) = message.title {
+            format!("{title}\n\n{}", message.text)
+        } else {
+            message.text.clone()
+        }
+    }
 }
 
 #[async_trait]
@@ -50,6 +79,8 @@ impl NotifyProvider for MastodonProvider {
             .with_example("unlisted"),
             ParamDef::optional("spoiler_text", "Content warning / spoiler text")
                 .with_example("Spoiler!"),
+            ParamDef::optional("base_url", "Mastodon API base URL (default: https://{instance})")
+                .with_example("https://mastodon.social"),
         ]
     }
 
@@ -82,7 +113,7 @@ impl NotifyProvider for MastodonProvider {
                 .part("file", file_part)
                 .text("description", file_name);
 
-            let upload_url = format!("https://{instance}/api/v2/media");
+            let upload_url = Self::mastodon_media_url(instance, config);
             let resp = self
                 .client
                 .post(&upload_url)
@@ -117,13 +148,9 @@ impl NotifyProvider for MastodonProvider {
             }
         }
 
-        let status_url = format!("https://{instance}/api/v1/statuses");
+        let status_url = Self::mastodon_status_url(instance, config);
 
-        let status_text = if let Some(ref title) = message.title {
-            format!("{title}\n\n{}", message.text)
-        } else {
-            message.text.clone()
-        };
+        let status_text = Self::format_status_text(message);
 
         let mut payload = json!({
             "status": status_text,

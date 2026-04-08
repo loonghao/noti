@@ -16,6 +16,15 @@ impl Smtp2GoProvider {
     pub fn new(client: Client) -> Self {
         Self { client }
     }
+
+    /// Build SMTP2Go API URL with optional base_url override.
+    fn smtp2go_api_url(config: &ProviderConfig) -> String {
+        let base = config
+            .get("base_url")
+            .unwrap_or("https://api.smtp2go.com");
+        let base = base.trim_end_matches('/');
+        format!("{base}/v3/email/send")
+    }
 }
 
 #[async_trait]
@@ -43,6 +52,8 @@ impl NotifyProvider for Smtp2GoProvider {
             ParamDef::required("to", "Recipient email address").with_example("user@example.com"),
             ParamDef::optional("cc", "CC recipients (comma-separated)"),
             ParamDef::optional("bcc", "BCC recipients (comma-separated)"),
+            ParamDef::optional("base_url", "SMTP2Go API base URL (default: https://api.smtp2go.com)")
+                .with_example("https://api.smtp2go.com"),
         ]
     }
 
@@ -60,7 +71,7 @@ impl NotifyProvider for Smtp2GoProvider {
         let from = config.require("from", "smtp2go")?;
         let to = config.require("to", "smtp2go")?;
 
-        let url = "https://api.smtp2go.com/v3/email/send";
+        let url = Self::smtp2go_api_url(config);
 
         let subject = message.title.as_deref().unwrap_or("Notification from noti");
 
