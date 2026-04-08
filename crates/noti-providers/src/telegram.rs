@@ -17,6 +17,14 @@ impl TelegramProvider {
         Self { client }
     }
 
+    /// Returns the API base URL, using config override if set.
+    fn base_url(config: &ProviderConfig) -> String {
+        config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| "https://api.telegram.org".to_string())
+    }
+
     /// Send a text-only message via sendMessage.
     async fn send_text(
         &self,
@@ -25,7 +33,7 @@ impl TelegramProvider {
         chat_id: &str,
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
-        let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+        let url = format!("{}/bot{}/sendMessage", Self::base_url(config), bot_token);
 
         let parse_mode = match message.format {
             MessageFormat::Markdown => Some("MarkdownV2"),
@@ -87,7 +95,7 @@ impl TelegramProvider {
                 AttachmentKind::File => ("sendDocument", "document"),
             };
 
-            let url = format!("https://api.telegram.org/bot{bot_token}/{method}");
+            let url = format!("{}/bot{}/{}", Self::base_url(config), bot_token, method);
             let file_name = attachment.effective_file_name();
             let mime_str = attachment.effective_mime();
 
@@ -176,8 +184,9 @@ impl TelegramProvider {
         bot_token: &str,
         chat_id: &str,
         action: &str,
+        base_url: &str,
     ) -> Result<SendResponse, NotiError> {
-        let url = format!("https://api.telegram.org/bot{bot_token}/sendChatAction");
+        let url = format!("{}/bot{}/sendChatAction", base_url, bot_token);
         let payload = json!({
             "chat_id": chat_id,
             "action": action,
@@ -201,9 +210,13 @@ impl TelegramProvider {
         bot_token: &str,
         chat_id: &str,
         message_id: &str,
-        _config: &ProviderConfig,
+        config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
-        let url = format!("https://api.telegram.org/bot{bot_token}/editMessageText");
+        let url = format!(
+            "{}/bot{}/editMessageText",
+            Self::base_url(config),
+            bot_token
+        );
 
         let parse_mode = match message.format {
             MessageFormat::Markdown => Some("MarkdownV2"),
@@ -260,6 +273,11 @@ impl NotifyProvider for TelegramProvider {
             ParamDef::required("bot_token", "Telegram bot token from @BotFather")
                 .with_example("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"),
             ParamDef::required("chat_id", "Target chat ID").with_example("-1001234567890"),
+            ParamDef::optional(
+                "base_url",
+                "Override API base URL (for testing or Telegram-compatible APIs)",
+            )
+            .with_example("https://api.telegram.org"),
             ParamDef::optional("disable_notification", "Send silently (true/false)"),
             ParamDef::optional(
                 "disable_web_page_preview",
@@ -298,7 +316,9 @@ impl NotifyProvider for TelegramProvider {
 
         // Handle sendChatAction (typing indicators, etc.)
         if let Some(action) = config.get("action") {
-            return self.send_chat_action(bot_token, chat_id, action).await;
+            return self
+                .send_chat_action(bot_token, chat_id, action, &Self::base_url(config))
+                .await;
         }
 
         // Handle editMessageText (in-place update)

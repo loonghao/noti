@@ -2351,7 +2351,7 @@ mod apns_send_tests {
             .set("team_id", "TEAM123456")
             .set("bundle_id", "com.example.app")
             .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
-            .set("p8_base64", &make_test_p8())
+            .set("p8_base64", make_test_p8())
     }
 
     #[tokio::test]
@@ -2367,7 +2367,7 @@ mod apns_send_tests {
             .set("team_id", "TEAM123456")
             .set("bundle_id", "com.example.app")
             .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
-            .set("p8_base64", &make_test_p8());
+            .set("p8_base64", make_test_p8());
         assert!(provider.validate_config(&config).is_err());
     }
 
@@ -2378,7 +2378,7 @@ mod apns_send_tests {
             .set("key_id", "KEY12345A")
             .set("bundle_id", "com.example.app")
             .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
-            .set("p8_base64", &make_test_p8());
+            .set("p8_base64", make_test_p8());
         assert!(provider.validate_config(&config).is_err());
     }
 
@@ -2389,7 +2389,7 @@ mod apns_send_tests {
             .set("key_id", "KEY12345A")
             .set("team_id", "TEAM123456")
             .set("device_token", "abcd1234ef567890abcd1234ef567890abcd1234ef567890abcd1234ef56789")
-            .set("p8_base64", &make_test_p8());
+            .set("p8_base64", make_test_p8());
         assert!(provider.validate_config(&config).is_err());
     }
 
@@ -2400,7 +2400,7 @@ mod apns_send_tests {
             .set("key_id", "KEY12345A")
             .set("team_id", "TEAM123456")
             .set("bundle_id", "com.example.app")
-            .set("p8_base64", &make_test_p8());
+            .set("p8_base64", make_test_p8());
         assert!(provider.validate_config(&config).is_err());
     }
 
@@ -2456,7 +2456,7 @@ mod apns_send_tests {
             .set("team_id", "TEAM123456")
             .set("bundle_id", "com.example.app")
             .set("device_token", "too-short")
-            .set("p8_base64", &make_test_p8());
+            .set("p8_base64", make_test_p8());
 
         let message = Message::text("test");
         let result = provider.send(&message, &config).await;
@@ -2474,7 +2474,7 @@ mod apns_send_tests {
             .set("team_id", "TEAM123456")
             .set("bundle_id", "com.example.app")
             .set("device_token", "gggg1234ef567890gggg1234ef567890gggg1234ef567890gggg1234ef56789")
-            .set("p8_base64", &make_test_p8());
+            .set("p8_base64", make_test_p8());
 
         let message = Message::text("test");
         let result = provider.send(&message, &config).await;
