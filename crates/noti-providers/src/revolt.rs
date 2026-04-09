@@ -91,6 +91,7 @@ impl NotifyProvider for RevoltProvider {
                 "api_url",
                 "Revolt API URL (default: https://api.revolt.chat)",
             ),
+            ParamDef::optional("base_url", "Override base URL for API requests (takes precedence over api_url)"),
         ]
     }
 
@@ -106,7 +107,7 @@ impl NotifyProvider for RevoltProvider {
         self.validate_config(config)?;
         let bot_token = config.require("bot_token", "revolt")?;
         let channel_id = config.require("channel_id", "revolt")?;
-        let api_url = config.get("api_url").unwrap_or("https://api.revolt.chat");
+        let api_url = config.get("base_url").or_else(|| config.get("api_url")).unwrap_or("https://api.revolt.chat");
 
         let url = format!("{api_url}/channels/{channel_id}/messages");
 

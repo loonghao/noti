@@ -44,6 +44,7 @@ impl NotifyProvider for ParseProvider {
             ParamDef::optional("host", "Parse Server host (default: api.parse.com)")
                 .with_example("api.parse.com"),
             ParamDef::optional("channel", "Push channel name (default: broadcasts to all)"),
+            ParamDef::optional("base_url", "Override base URL for API requests (takes precedence over host)"),
         ]
     }
 
@@ -61,6 +62,12 @@ impl NotifyProvider for ParseProvider {
         let rest_api_key = config.require("rest_api_key", "parse")?;
 
         let host = config.get("host").unwrap_or("api.parse.com");
+
+        let url = if let Some(base_url) = config.get("base_url") {
+            format!("{base_url}/1/push")
+        } else {
+            format!("https://{host}/1/push")
+        };
 
         let title = message.title.as_deref().unwrap_or("noti");
 
@@ -89,7 +96,7 @@ impl NotifyProvider for ParseProvider {
             "data": data
         });
 
-        let url = format!("https://{host}/1/push");
+
 
         let resp = self
             .client
