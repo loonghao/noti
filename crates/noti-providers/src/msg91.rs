@@ -49,6 +49,8 @@ impl NotifyProvider for Msg91Provider {
             .with_example("4"),
             ParamDef::optional("country", "Default country code (default: 91)").with_example("91"),
             ParamDef::optional("DLT_TE_ID", "DLT template entity ID (required for India)"),
+            ParamDef::optional("base_url", "API base URL override (default: https://control.msg91.com)")
+                .with_example("https://control.msg91.com"),
         ]
     }
 

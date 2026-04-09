@@ -49,6 +49,8 @@ impl NotifyProvider for FortySixElksProvider {
                 "media_url",
                 "Public URL for MMS image (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.46elks.com)")
+                .with_example("https://api.46elks.com"),
         ]
     }
 

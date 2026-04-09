@@ -47,6 +47,8 @@ impl NotifyProvider for HttpSmsProvider {
             ParamDef::required("to", "Recipient phone number (E.164 format)")
                 .with_example("+15559876543"),
             ParamDef::optional("encrypt", "Enable end-to-end encryption: true or false"),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.httpsms.com)")
+                .with_example("https://api.httpsms.com"),
         ]
     }
 
