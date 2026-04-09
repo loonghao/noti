@@ -97,9 +97,26 @@ impl NotifyProvider for ResendProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("resend", e))?;
 
         let status = resp.status().as_u16();
+
+        // Check for 429 rate limiting
+        if status == 429 {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::http_helpers::handle_http_error(
+                "resend",
+                status,
+                &body,
+                retry_after.as_deref(),
+            ));
+        }
+
         let raw: serde_json::Value = resp.json().await.unwrap_or(json!({"status": status}));
 
         if (200..300).contains(&(status as usize)) {

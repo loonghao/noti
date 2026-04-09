@@ -101,7 +101,7 @@ impl NotifyProvider for FeishuProvider {
             let resp = request
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
             return Self::parse_response(resp).await;
         }
 
@@ -128,7 +128,7 @@ impl NotifyProvider for FeishuProvider {
                 let resp = request
                     .send()
                     .await
-                    .map_err(|e| NotiError::Network(e.to_string()))?;
+                    .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
 
                 return Self::parse_response(resp).await;
             }
@@ -160,7 +160,7 @@ impl NotifyProvider for FeishuProvider {
             let resp = request
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
 
             return Self::parse_response(resp).await;
         }
@@ -202,7 +202,7 @@ impl NotifyProvider for FeishuProvider {
             let resp = request
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
 
             return Self::parse_response(resp).await;
         }
@@ -256,7 +256,7 @@ impl NotifyProvider for FeishuProvider {
         let resp = request
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
 
         Self::parse_response(resp).await
     }
@@ -404,7 +404,7 @@ impl FeishuProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
 
         let raw: serde_json::Value = resp
             .json()
@@ -455,7 +455,7 @@ impl FeishuProvider {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("feishu", e))?;
 
         let raw: serde_json::Value = resp
             .json()
@@ -483,6 +483,23 @@ impl FeishuProvider {
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
+
+        // Check for 429 rate limiting before parsing body
+        if status == 429 {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::http_helpers::handle_http_error(
+                "feishu",
+                status,
+                &body,
+                retry_after.as_deref(),
+            ));
+        }
+
         let raw: serde_json::Value = resp
             .json()
             .await

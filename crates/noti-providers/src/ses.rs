@@ -195,13 +195,24 @@ impl NotifyProvider for SesProvider {
                 .form(&params)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("ses", e))?;
 
             let status = resp.status().as_u16();
             let body = resp
                 .text()
                 .await
                 .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
+
+            // Check for 429/503 rate limiting (AWS SES throttling)
+            if status == 429 || status == 503 {
+                let retry_after = None; // AWS doesn't use Retry-After for SES throttling
+                return Err(crate::http_helpers::handle_http_error(
+                    "ses",
+                    status,
+                    &body,
+                    retry_after,
+                ));
+            }
 
             if (200..300).contains(&(status as usize)) {
                 Ok(
@@ -243,13 +254,23 @@ impl NotifyProvider for SesProvider {
                 .form(&params)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("ses", e))?;
 
             let status = resp.status().as_u16();
             let body = resp
                 .text()
                 .await
                 .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
+
+            // Check for 429/503 rate limiting (AWS SES throttling)
+            if status == 429 || status == 503 {
+                return Err(crate::http_helpers::handle_http_error(
+                    "ses",
+                    status,
+                    &body,
+                    None,
+                ));
+            }
 
             if (200..300).contains(&(status as usize)) {
                 Ok(SendResponse::success("ses", "email sent via SES")
