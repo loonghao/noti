@@ -46,6 +46,8 @@ impl NotifyProvider for RyverProvider {
                 .with_example("your-webhook-token"),
             ParamDef::optional("webhook_type", "Type: forum or team (default: forum)")
                 .with_example("forum"),
+            ParamDef::optional("base_url", "Ryver API base URL (default: https://{organization}.ryver.com)")
+                .with_example("https://mycompany.ryver.com"),
         ]
     }
 
@@ -63,7 +65,11 @@ impl NotifyProvider for RyverProvider {
         let token = config.require("token", "ryver")?;
         let _webhook_type = config.get("webhook_type").unwrap_or("forum");
 
-        let url = format!("https://{organization}.ryver.com/application/24/incoming/{token}");
+        let url = if let Some(base) = config.get("base_url") {
+            format!("{}/application/24/incoming/{token}", base.trim_end_matches('/'))
+        } else {
+            format!("https://{organization}.ryver.com/application/24/incoming/{token}")
+        };
 
         let mut body_text = if let Some(ref title) = message.title {
             if matches!(message.format, MessageFormat::Markdown) {

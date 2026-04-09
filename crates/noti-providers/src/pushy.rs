@@ -45,6 +45,8 @@ impl NotifyProvider for PushyProvider {
                 .with_example("device-token-here"),
             ParamDef::optional("sound", "Notification sound file name").with_example("ping.aiff"),
             ParamDef::optional("badge", "Badge count (iOS)").with_example("1"),
+            ParamDef::optional("base_url", "Pushy API base URL (default: https://api.pushy.me)")
+                .with_example("https://api.pushy.me"),
         ]
     }
 
@@ -61,7 +63,10 @@ impl NotifyProvider for PushyProvider {
         let api_key = config.require("api_key", "pushy")?;
         let device_token = config.require("device_token", "pushy")?;
 
-        let url = format!("https://api.pushy.me/push?api_key={api_key}");
+        let base = config
+            .get("base_url")
+            .unwrap_or("https://api.pushy.me");
+        let url = format!("{}/push?api_key={api_key}", base.trim_end_matches('/'));
 
         let title = message.title.as_deref().unwrap_or("noti");
 

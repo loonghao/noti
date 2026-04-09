@@ -43,6 +43,8 @@ impl NotifyProvider for WebexProvider {
             ParamDef::required("room_id", "Webex room/space ID to post to")
                 .with_example("Y2lzY29zcGFy..."),
             ParamDef::optional("to_person_email", "Send a direct message to a person email"),
+            ParamDef::optional("base_url", "Webex API base URL (default: https://webexapis.com)")
+                .with_example("https://webexapis.com"),
         ]
     }
 
@@ -59,7 +61,10 @@ impl NotifyProvider for WebexProvider {
         let access_token = config.require("access_token", "webex")?;
         let room_id = config.require("room_id", "webex")?;
 
-        let url = "https://webexapis.com/v1/messages";
+        let url = config
+            .get("base_url")
+            .map(|b| format!("{}/v1/messages", b.trim_end_matches('/')))
+            .unwrap_or_else(|| "https://webexapis.com/v1/messages".to_string());
 
         let text = if let Some(ref title) = message.title {
             format!("**{title}**\n\n{}", message.text)

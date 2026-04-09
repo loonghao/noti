@@ -44,6 +44,8 @@ impl NotifyProvider for LunaseaProvider {
                 .with_example("user"),
             ParamDef::optional("image", "Image URL to include")
                 .with_example("https://example.com/img.png"),
+            ParamDef::optional("base_url", "LunaSea API base URL (default: https://notify.lunasea.app)")
+                .with_example("https://notify.lunasea.app"),
         ]
     }
 
@@ -60,7 +62,10 @@ impl NotifyProvider for LunaseaProvider {
         let user_token = config.require("user_token", "lunasea")?;
         let target = config.get("target").unwrap_or("user");
 
-        let url = format!("https://notify.lunasea.app/v1/custom/{target}/{user_token}");
+        let base = config
+            .get("base_url")
+            .unwrap_or("https://notify.lunasea.app");
+        let url = format!("{}/v1/custom/{target}/{user_token}", base.trim_end_matches('/'));
 
         let mut payload = json!({
             "body": message.text
