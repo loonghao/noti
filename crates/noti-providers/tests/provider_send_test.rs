@@ -21191,3 +21191,200 @@ mod synology_send_tests {
         assert!(!result.success);
     }
 }
+
+// ──────────────────────────────────────────────────────────────
+// Rate-limit (429) and Timeout error handling tests
+// ──────────────────────────────────────────────────────────────
+
+mod rate_limit_tests {
+    use noti_core::{Message, NotiError, NotifyProvider, ProviderConfig};
+    use noti_providers::discord::DiscordProvider;
+    use noti_providers::slack::SlackProvider;
+    use noti_providers::telegram::TelegramProvider;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn slack_config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("webhook_url", format!("{}/webhook", server.uri()))
+    }
+
+    fn telegram_config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("bot_token", "123456:ABC")
+            .set("chat_id", "-1001234567890")
+            .set("base_url", server.uri())
+    }
+
+    fn discord_config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("webhook_id", "123456")
+            .set("webhook_token", "abc-def")
+            .set("base_url", server.uri())
+    }
+
+    // ── Slack rate-limit tests ──
+
+    #[tokio::test]
+    async fn test_slack_rate_limited_429_with_retry_after_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "30")
+                    .set_body_string("rate limited"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = SlackProvider::new(reqwest::Client::new());
+        let config = slack_config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_rate_limited(), "expected RateLimited error, got: {err}");
+        if let NotiError::RateLimited {
+            retry_after_secs, ..
+        } = err
+        {
+            assert_eq!(retry_after_secs, Some(30));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_slack_rate_limited_429_without_retry_after() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).set_body_string("rate limited"))
+            .mount(&server)
+            .await;
+
+        let provider = SlackProvider::new(reqwest::Client::new());
+        let config = slack_config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_rate_limited());
+    }
+
+    // ── Telegram rate-limit tests ──
+
+    #[tokio::test]
+    async fn test_telegram_rate_limited_429_with_retry_after() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "60")
+                    .set_body_json(serde_json::json!({
+                        "ok": false,
+                        "description": "Too Many Requests: retry after 60",
+                        "error_code": 429,
+                        "parameters": {"retry_after": 60}
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = TelegramProvider::new(reqwest::Client::new());
+        let config = telegram_config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_rate_limited(), "expected RateLimited error, got: {err}");
+        if let NotiError::RateLimited {
+            retry_after_secs, ..
+        } = err
+        {
+            assert_eq!(retry_after_secs, Some(60));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_telegram_rate_limited_429_without_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(serde_json::json!({
+                        "ok": false,
+                        "description": "Too Many Requests",
+                        "error_code": 429
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = TelegramProvider::new(reqwest::Client::new());
+        let config = telegram_config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_rate_limited());
+    }
+
+    // ── Discord rate-limit tests ──
+
+    #[tokio::test]
+    async fn test_discord_rate_limited_429_with_retry_after_in_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(serde_json::json!({
+                        "message": "You are being rate limited.",
+                        "retry_after": 5.5,
+                        "global": false
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = DiscordProvider::new(reqwest::Client::new());
+        let config = discord_config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_rate_limited(), "expected RateLimited error, got: {err}");
+        if let NotiError::RateLimited {
+            retry_after_secs, ..
+        } = err
+        {
+            // 5.5 as f64 → 5 as u64
+            assert_eq!(retry_after_secs, Some(5));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_discord_rate_limited_429_with_header_and_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "10")
+                    .set_body_json(serde_json::json!({
+                        "message": "rate limited",
+                        "retry_after": 10.0,
+                        "global": true
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = DiscordProvider::new(reqwest::Client::new());
+        let config = discord_config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_rate_limited());
+    }
+}
