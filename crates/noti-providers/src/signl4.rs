@@ -52,6 +52,8 @@ impl NotifyProvider for Signl4Provider {
             .with_example("2"),
             ParamDef::optional("s4_service", "Service name / category for the alert")
                 .with_example("noti-cli"),
+            ParamDef::optional("base_url", "SIGNL4 webhook base URL override (default: https://connect.signl4.com)")
+                .with_example("https://connect.signl4.com"),
         ]
     }
 
@@ -67,7 +69,11 @@ impl NotifyProvider for Signl4Provider {
         self.validate_config(config)?;
         let team_secret = config.require("team_secret", "signl4")?;
 
-        let url = format!("https://connect.signl4.com/webhook/{team_secret}");
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://connect.signl4.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/webhook/{team_secret}");
 
         let title = message.title.as_deref().unwrap_or("Alert");
 

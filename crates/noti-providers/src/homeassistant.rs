@@ -54,6 +54,8 @@ impl NotifyProvider for HomeAssistantProvider {
                 "Notification service name (default: notify.notify)",
             )
             .with_example("notify.mobile_app_phone"),
+            ParamDef::optional("base_url", "Full base URL override (replaces scheme://host)")
+                .with_example("http://homeassistant.local:8123"),
         ]
     }
 
@@ -74,7 +76,12 @@ impl NotifyProvider for HomeAssistantProvider {
 
         // Convert service name to API path: notify.mobile_app_phone -> notify/mobile_app_phone
         let service_path = target.replace('.', "/");
-        let url = format!("{scheme}://{host}/api/services/{service_path}");
+        let base_url = if let Some(url_override) = config.get("base_url") {
+            url_override.trim_end_matches('/').to_string()
+        } else {
+            format!("{scheme}://{host}")
+        };
+        let url = format!("{base_url}/api/services/{service_path}");
 
         let mut payload = json!({
             "message": message.text,

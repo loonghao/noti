@@ -47,6 +47,8 @@ impl NotifyProvider for SevenProvider {
             ParamDef::optional("from", "Sender name or phone number").with_example("noti"),
             ParamDef::optional("flash", "Send as flash SMS: 1 or 0 (default: 0)"),
             ParamDef::optional("foreign_id", "Your custom foreign ID for tracking"),
+            ParamDef::optional("base_url", "API base URL override (default: https://gateway.seven.io)")
+                .with_example("https://gateway.seven.io"),
         ]
     }
 
@@ -63,7 +65,11 @@ impl NotifyProvider for SevenProvider {
         let api_key = config.require("api_key", "seven")?;
         let to = config.require("to", "seven")?;
 
-        let url = "https://gateway.seven.io/api/sms";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://gateway.seven.io")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/api/sms");
 
         let mut text = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)
@@ -125,7 +131,7 @@ impl NotifyProvider for SevenProvider {
 
         let success_code = raw.get("success").and_then(|v| v.as_str()).unwrap_or("");
 
-        if success_code == "100" || (200..300).contains(&(status as usize)) {
+        if success_code == "100" {
             Ok(SendResponse::success("seven", "SMS sent via Seven.io")
                 .with_status_code(status)
                 .with_raw_response(raw))

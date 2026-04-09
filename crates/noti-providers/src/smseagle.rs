@@ -48,6 +48,8 @@ impl NotifyProvider for SmsEagleProvider {
                 .with_example("https"),
             ParamDef::optional("port", "Port number (default: auto)"),
             ParamDef::optional("priority", "Message priority: 0-9 (default: 0)").with_example("0"),
+            ParamDef::optional("base_url", "Full base URL override (replaces scheme://host[:port])")
+                .with_example("https://192.168.1.100"),
         ]
     }
 
@@ -72,7 +74,9 @@ impl NotifyProvider for SmsEagleProvider {
             message.text.clone()
         };
 
-        let base_url = if let Some(port) = config.get("port") {
+        let base_url = if let Some(url_override) = config.get("base_url") {
+            url_override.trim_end_matches('/').to_string()
+        } else if let Some(port) = config.get("port") {
             format!("{scheme}://{host}:{port}")
         } else {
             format!("{scheme}://{host}")
