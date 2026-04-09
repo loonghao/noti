@@ -48,6 +48,8 @@ impl NotifyProvider for PushsaferProvider {
             ParamDef::optional("url", "URL to attach"),
             ParamDef::optional("url_title", "Title for the attached URL"),
             ParamDef::optional("priority", "Priority: -2 to 2 (default: 0)").with_example("0"),
+            ParamDef::optional("base_url", "Pushsafer API base URL (default: https://www.pushsafer.com)")
+                .with_example("https://www.pushsafer.com"),
         ]
     }
 
@@ -110,9 +112,12 @@ impl NotifyProvider for PushsaferProvider {
             }
         }
 
+        let base = config.get("base_url").unwrap_or("https://www.pushsafer.com");
+        let api_url = format!("{}/api", base.trim_end_matches('/'));
+
         let resp = self
             .client
-            .post("https://www.pushsafer.com/api")
+            .post(&api_url)
             .form(&form)
             .send()
             .await

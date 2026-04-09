@@ -49,6 +49,8 @@ impl NotifyProvider for PushplusProvider {
                 .with_example("html"),
             ParamDef::optional("channel", "Push channel: wechat, webhook, mail, sms")
                 .with_example("wechat"),
+            ParamDef::optional("base_url", "Pushplus API base URL (default: http://www.pushplus.plus)")
+                .with_example("http://www.pushplus.plus"),
         ]
     }
 
@@ -64,7 +66,8 @@ impl NotifyProvider for PushplusProvider {
         self.validate_config(config)?;
         let token = config.require("token", "pushplus")?;
 
-        let url = "http://www.pushplus.plus/send";
+        let base = config.get("base_url").unwrap_or("http://www.pushplus.plus");
+        let url = format!("{}/send", base.trim_end_matches('/'));
 
         let title = message.title.as_deref().unwrap_or("Notification");
 

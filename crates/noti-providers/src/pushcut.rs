@@ -50,6 +50,8 @@ impl NotifyProvider for PushcutProvider {
             ParamDef::optional("url", "URL to open when the notification is tapped"),
             ParamDef::optional("image", "URL of an image to attach to the notification"),
             ParamDef::optional("sound", "Custom notification sound name"),
+            ParamDef::optional("base_url", "Pushcut API base URL (default: https://api.pushcut.io)")
+                .with_example("https://api.pushcut.io"),
         ]
     }
 
@@ -97,7 +99,8 @@ impl NotifyProvider for PushcutProvider {
 
         // URL-encode the notification name for the API path
         let encoded_name = notification_name.replace(' ', "%20");
-        let url = format!("https://api.pushcut.io/v1/notifications/{encoded_name}");
+        let base = config.get("base_url").unwrap_or("https://api.pushcut.io");
+        let url = format!("{}/v1/notifications/{encoded_name}", base.trim_end_matches('/'));
 
         let resp = self
             .client

@@ -45,6 +45,8 @@ impl NotifyProvider for ThreemaProvider {
                 .with_example("ABCD1234"),
             ParamDef::optional("to_phone", "Recipient phone number (alternative lookup)"),
             ParamDef::optional("to_email", "Recipient email (alternative lookup)"),
+            ParamDef::optional("base_url", "Threema Gateway API base URL (default: https://msgapi.threema.ch)")
+                .with_example("https://msgapi.threema.ch"),
         ]
     }
 
@@ -61,13 +63,16 @@ impl NotifyProvider for ThreemaProvider {
         let gateway_id = config.require("gateway_id", "threema")?;
         let api_secret = config.require("api_secret", "threema")?;
 
+        let base = config.get("base_url").unwrap_or("https://msgapi.threema.ch");
+        let base_url = base.trim_end_matches('/');
+
         // If has attachments, upload blob and send file message
         if message.has_attachments() {
             let attachment = &message.attachments[0];
             let data = attachment.read_bytes().await?;
 
             // Upload blob
-            let blob_url = "https://msgapi.threema.ch/upload_blob";
+            let blob_url = format!("{base_url}/upload_blob");
             let part = reqwest::multipart::Part::bytes(data)
                 .file_name(attachment.effective_file_name())
                 .mime_str(&attachment.effective_mime())
@@ -98,7 +103,7 @@ impl NotifyProvider for ThreemaProvider {
             }
 
             // Send file message referencing the blob
-            let send_url = "https://msgapi.threema.ch/send_simple";
+            let send_url = format!("{base_url}/send_simple");
             let text = if !message.text.is_empty() {
                 format!(
                     "{}\n\n[Attachment: {}]",
@@ -153,7 +158,7 @@ impl NotifyProvider for ThreemaProvider {
             };
         }
 
-        let url = "https://msgapi.threema.ch/send_simple";
+        let url = format!("{base_url}/send_simple");
 
         let text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

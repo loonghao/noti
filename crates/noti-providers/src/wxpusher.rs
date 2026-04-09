@@ -47,6 +47,8 @@ impl NotifyProvider for WxPusherProvider {
             ParamDef::optional("topic_id", "Topic ID for topic-based push").with_example("12345"),
             ParamDef::optional("content_type", "Content type: 1=text, 2=html, 3=markdown")
                 .with_example("1"),
+            ParamDef::optional("base_url", "WxPusher API base URL (default: https://wxpusher.zjiecode.com)")
+                .with_example("https://wxpusher.zjiecode.com"),
         ]
     }
 
@@ -63,7 +65,8 @@ impl NotifyProvider for WxPusherProvider {
         let app_token = config.require("app_token", "wxpusher")?;
         let uid = config.require("uid", "wxpusher")?;
 
-        let url = "https://wxpusher.zjiecode.com/api/send/message";
+        let base = config.get("base_url").unwrap_or("https://wxpusher.zjiecode.com");
+        let url = format!("{}/api/send/message", base.trim_end_matches('/'));
 
         let content_type = config
             .get("content_type")

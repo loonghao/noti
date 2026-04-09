@@ -49,6 +49,8 @@ impl NotifyProvider for PushedProvider {
                 "target_alias",
                 "Channel alias or pushed_id (when target_type is not app)",
             ),
+            ParamDef::optional("base_url", "Pushed API base URL (default: https://api.pushed.co)")
+                .with_example("https://api.pushed.co"),
         ]
     }
 
@@ -88,9 +90,12 @@ impl NotifyProvider for PushedProvider {
             }
         }
 
+        let base = config.get("base_url").unwrap_or("https://api.pushed.co");
+        let api_url = format!("{}/1/push", base.trim_end_matches('/'));
+
         let resp = self
             .client
-            .post("https://api.pushed.co/1/push")
+            .post(&api_url)
             .json(&payload)
             .send()
             .await

@@ -43,6 +43,8 @@ impl NotifyProvider for PushMeProvider {
                 "type",
                 "Message type: text, markdown, image (default: text)",
             ),
+            ParamDef::optional("base_url", "PushMe API base URL (default: https://push.i-i.me)")
+                .with_example("https://push.i-i.me"),
         ]
     }
 
@@ -92,9 +94,12 @@ impl NotifyProvider for PushMeProvider {
             "type": effective_type
         });
 
+        let base = config.get("base_url").unwrap_or("https://push.i-i.me");
+        let api_url = format!("{}/", base.trim_end_matches('/'));
+
         let resp = self
             .client
-            .post("https://push.i-i.me/")
+            .post(&api_url)
             .json(&body)
             .send()
             .await
