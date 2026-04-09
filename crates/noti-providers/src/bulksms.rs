@@ -43,6 +43,8 @@ impl NotifyProvider for BulkSmsProvider {
             ParamDef::required("to", "Recipient phone number (international format)")
                 .with_example("+15559876543"),
             ParamDef::optional("from", "Sender phone number or name").with_example("+15551234567"),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.bulksms.com)")
+                .with_example("https://api.bulksms.com"),
         ]
     }
 
@@ -56,7 +58,11 @@ impl NotifyProvider for BulkSmsProvider {
         let token_secret = config.require("token_secret", "bulksms")?;
         let to = config.require("to", "bulksms")?;
 
-        let url = "https://api.bulksms.com/v1/messages";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.bulksms.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/v1/messages");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

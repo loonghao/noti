@@ -53,6 +53,8 @@ impl NotifyProvider for PlivoProvider {
                 "media_url",
                 "Public URL for MMS media (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.plivo.com)")
+                .with_example("https://api.plivo.com"),
         ]
     }
 
@@ -71,7 +73,11 @@ impl NotifyProvider for PlivoProvider {
         let from = config.require("from", "plivo")?;
         let to = config.require("to", "plivo")?;
 
-        let url = format!("https://api.plivo.com/v1/Account/{auth_id}/Message/");
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.plivo.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/v1/Account/{auth_id}/Message/");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)

@@ -10653,3 +10653,1656 @@ mod wxpusher_send_tests {
         assert!(result.success);
     }
 }
+
+// ======================== BulkSMS send tests ========================
+
+mod bulksms_send_tests {
+    use super::*;
+    use noti_providers::bulksms::BulkSmsProvider;
+
+    fn provider() -> BulkSmsProvider {
+        BulkSmsProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("token_id", "test-token-id")
+            .set("token_secret", "test-token-secret")
+            .set("to", "+15559876543")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("token_id", "id")
+            .set("token_secret", "secret")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_token_id() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("token_secret", "secret")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("token_id", "id")
+            .set("token_secret", "secret");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "bulksms");
+        assert_eq!(provider.url_scheme(), "bulksms");
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg123"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from BulkSMS");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "bulksms");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg124"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "detail": "Invalid recipient"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "detail": "Internal server error"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg125"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("token_id", "id")
+            .set("token_secret", "secret")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg126"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("token_id", "test-token-id")
+            .set("token_secret", "test-token-secret")
+            .set("to", "+15559876543")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== ClickSend send tests ========================
+
+mod clicksend_send_tests {
+    use super::*;
+    use noti_providers::clicksend::ClickSendProvider;
+
+    fn provider() -> ClickSendProvider {
+        ClickSendProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("username", "testuser")
+            .set("api_key", "test-api-key")
+            .set("to", "+15551234567")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("username", "user")
+            .set("api_key", "key")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_username() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "key")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("username", "user")
+            .set("api_key", "key");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "clicksend");
+        assert_eq!(provider.url_scheme(), "clicksend");
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/sms/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "http_code": 200,
+                "response_msg": "OK"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from ClickSend");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "clicksend");
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/sms/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "http_code": 200,
+                "response_msg": "OK"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_sms_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/sms/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "http_code": 400,
+                "response_msg": "Invalid recipient"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/sms/send"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "http_code": 500,
+                "response_msg": "Server error"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "http_code": 200,
+                "response_msg": "OK"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("username", "user")
+            .set("api_key", "key")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "http_code": 200,
+                "response_msg": "OK"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("username", "testuser")
+            .set("api_key", "test-api-key")
+            .set("to", "+15551234567")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== D7Networks send tests ========================
+
+mod d7networks_send_tests {
+    use super::*;
+    use noti_providers::d7networks::D7NetworksProvider;
+
+    fn provider() -> D7NetworksProvider {
+        D7NetworksProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("api_token", "test-api-token")
+            .set("to", "+15559876543")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_token", "token")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_api_token() {
+        let provider = provider();
+        let config = ProviderConfig::new().set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new().set("api_token", "token");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "d7sms");
+        assert_eq!(provider.url_scheme(), "d7sms");
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages/v1/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "request_id": "req123"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from D7Networks");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "d7sms");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages/v1/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "request_id": "req124"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages/v1/send"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "detail": "Invalid request"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages/v1/send"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "detail": "Internal server error"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "request_id": "req125"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_token", "token")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "request_id": "req126"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_token", "test-api-token")
+            .set("to", "+15559876543")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== Kavenegar send tests ========================
+
+mod kavenegar_send_tests {
+    use super::*;
+    use noti_providers::kavenegar::KavenegarProvider;
+
+    fn provider() -> KavenegarProvider {
+        KavenegarProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("api_key", "test-api-key")
+            .set("to", "09121234567")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "key")
+            .set("to", "09121234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_api_key() {
+        let provider = provider();
+        let config = ProviderConfig::new().set("to", "09121234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new().set("api_key", "key");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "kavenegar");
+        assert_eq!(provider.url_scheme(), "kavenegar");
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "return": { "status": 200, "message": "OK" }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from Kavenegar");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "kavenegar");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "return": { "status": 200, "message": "OK" }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "return": { "status": 401, "message": "Invalid API key" }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "return": { "status": 500, "message": "Server error" }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "return": { "status": 200, "message": "OK" }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "key")
+            .set("to", "09121234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "return": { "status": 200, "message": "OK" }
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "test-api-key")
+            .set("to", "09121234567")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== MessageBird send tests ========================
+
+mod messagebird_send_tests {
+    use super::*;
+    use noti_providers::messagebird::MessageBirdProvider;
+
+    fn provider() -> MessageBirdProvider {
+        MessageBirdProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("access_key", "test-access-key")
+            .set("from", "MyApp")
+            .set("to", "+15551234567")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("from", "MyApp")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_access_key() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("from", "MyApp")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_from() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("from", "MyApp");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "messagebird");
+        assert_eq!(provider.url_scheme(), "msgbird");
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg123",
+                "status": "sent"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from MessageBird");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "messagebird");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg124",
+                "status": "sent"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "errors": [{ "description": "Invalid recipient" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "errors": [{ "description": "Invalid access key" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg125",
+                "status": "sent"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("from", "MyApp")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg126",
+                "status": "sent"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "test-access-key")
+            .set("from", "MyApp")
+            .set("to", "+15551234567")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== Plivo send tests ========================
+
+mod plivo_send_tests {
+    use super::*;
+    use noti_providers::plivo::PlivoProvider;
+
+    fn provider() -> PlivoProvider {
+        PlivoProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("auth_id", "MAXXXXXXXXXXXXXXXXXX")
+            .set("auth_token", "test-auth-token")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("auth_id", "id")
+            .set("auth_token", "token")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_auth_id() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("auth_token", "token")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_from() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("auth_id", "id")
+            .set("auth_token", "token")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("auth_id", "id")
+            .set("auth_token", "token")
+            .set("from", "+15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "plivo");
+        assert_eq!(provider.url_scheme(), "plivo");
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/Account/MAXXXXXXXXXXXXXXXXXX/Message/"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "message_uuid": ["uuid-123"]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from Plivo");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "plivo");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/Account/MAXXXXXXXXXXXXXXXXXX/Message/"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "message_uuid": ["uuid-124"]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/Account/MAXXXXXXXXXXXXXXXXXX/Message/"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "Invalid destination number"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/Account/MAXXXXXXXXXXXXXXXXXX/Message/"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": "Authentication failed"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "message_uuid": ["uuid-125"]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("auth_id", "id")
+            .set("auth_token", "token")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "message_uuid": ["uuid-126"]
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("auth_id", "MAXXXXXXXXXXXXXXXXXX")
+            .set("auth_token", "test-auth-token")
+            .set("from", "+15551234567")
+            .set("to", "+15559876543")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== SmsManager send tests ========================
+
+mod smsmanager_send_tests {
+    use super::*;
+    use noti_providers::smsmanager::SmsManagerProvider;
+
+    fn provider() -> SmsManagerProvider {
+        SmsManagerProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("api_key", "test-api-key")
+            .set("to", "+15551234567")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "key")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_api_key() {
+        let provider = provider();
+        let config = ProviderConfig::new().set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new().set("api_key", "key");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "smsmanager");
+        assert_eq!(provider.url_scheme(), "smsmanager");
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Send"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from SmsManager");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "smsmanager");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Send"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Send"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("Error: Invalid API key"))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/Send"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server error"))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "key")
+            .set("to", "+15551234567");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("api_key", "test-api-key")
+            .set("to", "+15551234567")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}
+
+// ======================== SNS send tests ========================
+
+mod sns_send_tests {
+    use super::*;
+    use noti_providers::sns::SnsProvider;
+
+    fn provider() -> SnsProvider {
+        SnsProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("access_key", "AKIAIOSFODNN7EXAMPLE")
+            .set("secret_key", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+            .set("region", "us-east-1")
+            .set("topic_arn", "arn:aws:sns:us-east-1:123456789012:my-topic")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("secret_key", "secret")
+            .set("region", "us-east-1")
+            .set("topic_arn", "arn:aws:sns:us-east-1:123456789012:my-topic");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_access_key() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("secret_key", "secret")
+            .set("region", "us-east-1")
+            .set("topic_arn", "arn:aws:sns:us-east-1:123456789012:my-topic");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_topic_arn() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("secret_key", "secret")
+            .set("region", "us-east-1");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "sns");
+        assert_eq!(provider.url_scheme(), "sns");
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    "<?xml version=\"1.0\"?><PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>msg123</MessageId></PublishResult></PublishResponse>"
+                )
+            )
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from SNS");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "sns");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    "<?xml version=\"1.0\"?><PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>msg124</MessageId></PublishResult></PublishResponse>"
+                )
+            )
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_string(
+                    "<?xml version=\"1.0\"?><ErrorResponse><Error><Code>InvalidClientTokenId</Code><Message>Invalid security token</Message></Error></ErrorResponse>"
+                )
+            )
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal server error"))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    "<?xml version=\"1.0\"?><PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>msg125</MessageId></PublishResult></PublishResponse>"
+                )
+            )
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("access_key", "key")
+            .set("secret_key", "secret")
+            .set("region", "us-east-1")
+            .set("topic_arn", "arn:aws:sns:us-east-1:123456789012:my-topic");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+}
+
+// ======================== VoipMs send tests ========================
+
+mod voipms_send_tests {
+    use super::*;
+    use noti_providers::voipms::VoipMsProvider;
+
+    fn provider() -> VoipMsProvider {
+        VoipMsProvider::new(client())
+    }
+
+    fn config(server: &MockServer) -> ProviderConfig {
+        ProviderConfig::new()
+            .set("email", "user@example.com")
+            .set("password", "test-password")
+            .set("did", "15551234567")
+            .set("to", "15559876543")
+            .set("base_url", &server.uri())
+    }
+
+    #[tokio::test]
+    async fn test_validate_config() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("email", "user@example.com")
+            .set("password", "pass")
+            .set("did", "15551234567")
+            .set("to", "15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_email() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("password", "pass")
+            .set("did", "15551234567")
+            .set("to", "15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_did() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("email", "user@example.com")
+            .set("password", "pass")
+            .set("to", "15559876543");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_missing_to() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("email", "user@example.com")
+            .set("password", "pass")
+            .set("did", "15551234567");
+        assert!(provider.validate_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_metadata() {
+        let provider = provider();
+        assert_eq!(provider.name(), "voipms");
+        assert_eq!(provider.url_scheme(), "voipms");
+        assert!(provider.supports_attachments());
+        let params = provider.params();
+        let param_names: Vec<_> = params.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"base_url"));
+    }
+
+    #[tokio::test]
+    async fn test_send_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "success"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Hello from VoipMs");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.provider, "voipms");
+    }
+
+    #[tokio::test]
+    async fn test_send_with_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "success"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Body text").with_title("Alert Title");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "error",
+                "message": "Invalid credentials"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server error"))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Test");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_custom_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "success"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = config(&server);
+        let message = Message::text("Custom base URL");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_send_no_base_url_uses_default() {
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("email", "user@example.com")
+            .set("password", "pass")
+            .set("did", "15551234567")
+            .set("to", "15559876543");
+        assert!(provider.validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_base_url_trailing_slash_stripped() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "status": "success"
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = provider();
+        let config = ProviderConfig::new()
+            .set("email", "user@example.com")
+            .set("password", "test-password")
+            .set("did", "15551234567")
+            .set("to", "15559876543")
+            .set("base_url", &format!("{}/", server.uri().trim_end_matches('/')));
+        let message = Message::text("Trailing slash");
+
+        let result = provider.send(&message, &config).await.unwrap();
+        assert!(result.success);
+    }
+}

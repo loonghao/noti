@@ -48,6 +48,8 @@ impl NotifyProvider for ClickSendProvider {
                 .with_example("+15551234567"),
             ParamDef::optional("from", "Sender phone number or name").with_example("+15559876543"),
             ParamDef::optional("schedule", "Unix timestamp for scheduled delivery"),
+            ParamDef::optional("base_url", "API base URL override (default: https://rest.clicksend.com)")
+                .with_example("https://rest.clicksend.com"),
         ]
     }
 
@@ -96,9 +98,14 @@ impl NotifyProvider for ClickSendProvider {
                 "messages": [mms_message],
             });
 
+            let base_url = config
+                .get("base_url")
+                .unwrap_or("https://rest.clicksend.com")
+                .trim_end_matches('/');
+
             let resp = self
                 .client
-                .post("https://rest.clicksend.com/v3/mms/send")
+                .post(format!("{base_url}/v3/mms/send"))
                 .header("Authorization", format!("Basic {auth}"))
                 .json(&payload)
                 .send()
@@ -132,7 +139,11 @@ impl NotifyProvider for ClickSendProvider {
         }
 
         // Standard SMS
-        let url = "https://rest.clicksend.com/v3/sms/send";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://rest.clicksend.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/v3/sms/send");
 
         let mut sms_message = json!({
             "body": message.text,

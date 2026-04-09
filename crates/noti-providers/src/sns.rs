@@ -54,6 +54,8 @@ impl NotifyProvider for SnsProvider {
                 .with_example("arn:aws:sns:us-east-1:123456789012:my-topic"),
             ParamDef::optional("subject", "Message subject (for email subscriptions)")
                 .with_example("Alert"),
+            ParamDef::optional("base_url", "SNS endpoint URL override (default: https://sns.{region}.amazonaws.com)")
+                .with_example("https://sns.us-east-1.amazonaws.com"),
         ]
     }
 
@@ -69,7 +71,11 @@ impl NotifyProvider for SnsProvider {
         let topic_arn = config.require("topic_arn", "sns")?;
 
         // Build SNS Publish API URL
-        let url = format!("https://sns.{region}.amazonaws.com/");
+        let url = if let Some(base) = config.get("base_url") {
+            base.trim_end_matches('/').to_string()
+        } else {
+            format!("https://sns.{region}.amazonaws.com/")
+        };
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

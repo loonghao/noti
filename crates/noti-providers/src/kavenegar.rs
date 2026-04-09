@@ -39,6 +39,8 @@ impl NotifyProvider for KavenegarProvider {
             ParamDef::required("api_key", "Kavenegar API key").with_example("your-api-key"),
             ParamDef::required("to", "Recipient phone number").with_example("09121234567"),
             ParamDef::optional("from", "Sender number (line number)").with_example("10004346"),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.kavenegar.com)")
+                .with_example("https://api.kavenegar.com"),
         ]
     }
 
@@ -57,7 +59,11 @@ impl NotifyProvider for KavenegarProvider {
             message.text.clone()
         };
 
-        let url = format!("https://api.kavenegar.com/v1/{api_key}/sms/send.json");
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.kavenegar.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/v1/{api_key}/sms/send.json");
 
         let mut params = vec![("receptor", to.to_string()), ("message", body_text)];
 

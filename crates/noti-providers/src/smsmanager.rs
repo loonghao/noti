@@ -40,6 +40,8 @@ impl NotifyProvider for SmsManagerProvider {
             ParamDef::required("api_key", "SMS Manager API key"),
             ParamDef::required("to", "Destination phone number").with_example("+15551234567"),
             ParamDef::optional("from", "Sender ID or phone number"),
+            ParamDef::optional("base_url", "API base URL override (default: https://http-api.smsmanager.com)")
+                .with_example("https://http-api.smsmanager.com"),
         ]
     }
 
@@ -63,9 +65,15 @@ impl NotifyProvider for SmsManagerProvider {
             payload["sender"] = json!(from);
         }
 
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://http-api.smsmanager.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/Send");
+
         let resp = self
             .client
-            .post("https://http-api.smsmanager.com/Send")
+            .post(&url)
             .json(&payload)
             .send()
             .await

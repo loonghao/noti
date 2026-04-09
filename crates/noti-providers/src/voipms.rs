@@ -48,6 +48,8 @@ impl NotifyProvider for VoipMsProvider {
             ParamDef::required("did", "Source DID (phone number) for sending SMS")
                 .with_example("15551234567"),
             ParamDef::required("to", "Destination phone number").with_example("15559876543"),
+            ParamDef::optional("base_url", "API base URL override (default: https://voip.ms)")
+                .with_example("https://voip.ms"),
         ]
     }
 
@@ -78,8 +80,13 @@ impl NotifyProvider for VoipMsProvider {
             ("sendSMS", "SMS")
         };
 
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://voip.ms")
+            .trim_end_matches('/');
+
         let mut url = format!(
-            "https://voip.ms/api/v1/rest.php?\
+            "{base_url}/api/v1/rest.php?\
             api_username={email}&api_password={password}&\
             method={method}&did={did}&dst={to}&message={}",
             urlencoding(&message.text)

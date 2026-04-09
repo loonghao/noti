@@ -50,6 +50,8 @@ impl NotifyProvider for D7NetworksProvider {
                 "media_url",
                 "Public URL for media attachment (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.d7networks.com)")
+                .with_example("https://api.d7networks.com"),
         ]
     }
 
@@ -68,7 +70,11 @@ impl NotifyProvider for D7NetworksProvider {
         let from = config.get("from").unwrap_or("SMSINFO");
         let channel = config.get("channel").unwrap_or("sms");
 
-        let url = "https://api.d7networks.com/messages/v1/send";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.d7networks.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/messages/v1/send");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

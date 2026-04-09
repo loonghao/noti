@@ -51,6 +51,8 @@ impl NotifyProvider for MessageBirdProvider {
                 "media_url",
                 "Public URL for MMS media (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://rest.messagebird.com)")
+                .with_example("https://rest.messagebird.com"),
         ]
     }
 
@@ -68,7 +70,11 @@ impl NotifyProvider for MessageBirdProvider {
         let from = config.require("from", "messagebird")?;
         let to = config.require("to", "messagebird")?;
 
-        let url = "https://rest.messagebird.com/messages";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://rest.messagebird.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/messages");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)
