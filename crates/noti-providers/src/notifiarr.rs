@@ -54,6 +54,8 @@ impl NotifyProvider for NotifiarrProvider {
             ParamDef::optional("ping_user", "Discord user ID to ping"),
             ParamDef::optional("ping_role", "Discord role ID to ping"),
             ParamDef::optional("image", "Image URL to include"),
+            ParamDef::optional("base_url", "Notifiarr API base URL (default: https://notifiarr.com)")
+                .with_example("https://notifiarr.com"),
         ]
     }
 
@@ -69,7 +71,11 @@ impl NotifyProvider for NotifiarrProvider {
         self.validate_config(config)?;
         let api_key = config.require("api_key", "notifiarr")?;
 
-        let url = "https://notifiarr.com/api/v1/notification/passthrough";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://notifiarr.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/api/v1/notification/passthrough");
 
         let mut notification = json!({
             "notification": {

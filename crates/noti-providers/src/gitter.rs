@@ -46,7 +46,10 @@ impl NotifyProvider for GitterProvider {
         vec![
             ParamDef::required("token", "Gitter personal access token")
                 .with_example("your-access-token"),
-            ParamDef::required("room_id", "Gitter room ID").with_example("5xxxxxxxxxxxxxxxxxxxxx"),
+            ParamDef::required("room_id", "Gitter room ID")
+                .with_example("5xxxxxxxxxxxxxxxxxxxxx"),
+            ParamDef::optional("base_url", "Gitter API base URL (default: https://api.gitter.im)")
+                .with_example("https://api.gitter.im"),
         ]
     }
 
@@ -63,7 +66,11 @@ impl NotifyProvider for GitterProvider {
         let token = config.require("token", "gitter")?;
         let room_id = config.require("room_id", "gitter")?;
 
-        let url = format!("https://api.gitter.im/v1/rooms/{room_id}/chatMessages");
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.gitter.im")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/v1/rooms/{room_id}/chatMessages");
 
         let mut text = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)

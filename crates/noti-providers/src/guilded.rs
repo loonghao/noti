@@ -45,6 +45,8 @@ impl NotifyProvider for GuildedProvider {
             ParamDef::optional("username", "Override webhook display name").with_example("noti"),
             ParamDef::optional("avatar_url", "Override webhook avatar URL")
                 .with_example("https://example.com/avatar.png"),
+            ParamDef::optional("base_url", "Guilded API base URL (default: https://media.guilded.gg)")
+                .with_example("https://media.guilded.gg"),
         ]
     }
 
@@ -61,7 +63,11 @@ impl NotifyProvider for GuildedProvider {
         let webhook_id = config.require("webhook_id", "guilded")?;
         let webhook_token = config.require("webhook_token", "guilded")?;
 
-        let url = format!("https://media.guilded.gg/webhooks/{webhook_id}/{webhook_token}");
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://media.guilded.gg")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/webhooks/{webhook_id}/{webhook_token}");
 
         let content = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)

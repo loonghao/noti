@@ -19,10 +19,9 @@ impl NcTalkProvider {
     /// Upload a file to Nextcloud via WebDAV and share it in Talk.
     async fn upload_and_share(
         &self,
+        base_url: &str,
         user: &str,
         password: &str,
-        host: &str,
-        scheme: &str,
         room_token: &str,
         attachment: &noti_core::Attachment,
     ) -> Result<(), NotiError> {
@@ -31,7 +30,7 @@ impl NcTalkProvider {
 
         // Upload to Nextcloud WebDAV (Talk attachments folder)
         let upload_path = format!("Talk/{file_name}");
-        let dav_url = format!("{scheme}://{host}/remote.php/dav/files/{user}/{upload_path}");
+        let dav_url = format!("{base_url}/remote.php/dav/files/{user}/{upload_path}");
 
         let upload_resp = self
             .client
@@ -52,7 +51,7 @@ impl NcTalkProvider {
         }
 
         // Share file in Talk room via the share API
-        let share_url = format!("{scheme}://{host}/ocs/v2.php/apps/files_sharing/api/v1/shares");
+        let share_url = format!("{base_url}/ocs/v2.php/apps/files_sharing/api/v1/shares");
 
         let share_body = serde_json::json!({
             "shareType": 10,
@@ -108,6 +107,8 @@ impl NotifyProvider for NcTalkProvider {
             ParamDef::required("host", "Nextcloud server host (e.g. cloud.example.com)"),
             ParamDef::required("room_token", "Talk room/conversation token"),
             ParamDef::optional("scheme", "URL scheme: https or http (default: https)"),
+            ParamDef::optional("base_url", "Nextcloud base URL override (default: {scheme}://{host})")
+                .with_example("https://cloud.example.com"),
         ]
     }
 
@@ -128,8 +129,13 @@ impl NotifyProvider for NcTalkProvider {
         let room_token = config.require("room_token", "nctalk")?;
         let scheme = config.get("scheme").unwrap_or("https");
 
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| format!("{scheme}://{host}"));
+
         // Send text message first
-        let url = format!("{scheme}://{host}/ocs/v2.php/apps/spreed/api/v1/chat/{room_token}");
+        let url = format!("{base_url}/ocs/v2.php/apps/spreed/api/v1/chat/{room_token}");
 
         let body = serde_json::json!({ "message": message.text });
 
@@ -158,7 +164,7 @@ impl NotifyProvider for NcTalkProvider {
         // Upload and share file attachments
         if message.has_attachments() {
             for attachment in &message.attachments {
-                self.upload_and_share(user, password, host, scheme, room_token, attachment)
+                self.upload_and_share(&base_url, user, password, room_token, attachment)
                     .await?;
             }
         }

@@ -52,6 +52,8 @@ impl NotifyProvider for LaMetricProvider {
             )
             .with_example("warning"),
             ParamDef::optional("cycles", "Number of display cycles (default: 1)").with_example("3"),
+            ParamDef::optional("base_url", "LaMetric API base URL override (default: https://{host}:4343)")
+                .with_example("https://192.168.1.100:4343"),
         ]
     }
 
@@ -68,7 +70,14 @@ impl NotifyProvider for LaMetricProvider {
         let api_key = config.require("api_key", "lametric")?;
         let host = config.require("host", "lametric")?;
 
-        let url = format!("https://{host}:4343/api/v2/device/notifications");
+        let url = if let Some(base_url) = config.get("base_url") {
+            format!(
+                "{}/api/v2/device/notifications",
+                base_url.trim_end_matches('/')
+            )
+        } else {
+            format!("https://{host}:4343/api/v2/device/notifications")
+        };
 
         let priority = config.get("priority").unwrap_or("info");
         let cycles = config

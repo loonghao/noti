@@ -48,6 +48,8 @@ impl NotifyProvider for NextcloudProvider {
             ParamDef::optional("target_user", "User to notify (defaults to self)")
                 .with_example("john"),
             ParamDef::optional("scheme", "HTTP scheme: https or http").with_example("https"),
+            ParamDef::optional("base_url", "Nextcloud base URL override (default: {scheme}://{host})")
+                .with_example("https://cloud.example.com"),
         ]
     }
 
@@ -68,13 +70,18 @@ impl NotifyProvider for NextcloudProvider {
         let target_user = config.get("target_user").unwrap_or(user);
         let scheme = config.get("scheme").unwrap_or("https");
 
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| format!("{scheme}://{host}"));
+
         // Upload attachments via WebDAV if present
         let mut uploaded_files: Vec<String> = Vec::new();
         for attachment in &message.attachments {
             if let Ok(data) = attachment.read_bytes().await {
                 let file_name = attachment.effective_file_name();
                 let webdav_url = format!(
-                    "{scheme}://{host}/remote.php/dav/files/{user}/noti-attachments/{file_name}"
+                    "{base_url}/remote.php/dav/files/{user}/noti-attachments/{file_name}"
                 );
 
                 // Ensure directory exists (MKCOL)
@@ -82,7 +89,7 @@ impl NotifyProvider for NextcloudProvider {
                     .client
                     .request(
                         reqwest::Method::from_bytes(b"MKCOL").unwrap_or(reqwest::Method::PUT),
-                        format!("{scheme}://{host}/remote.php/dav/files/{user}/noti-attachments/"),
+                        format!("{base_url}/remote.php/dav/files/{user}/noti-attachments/"),
                     )
                     .basic_auth(user, Some(password))
                     .send()
@@ -107,7 +114,7 @@ impl NotifyProvider for NextcloudProvider {
         }
 
         let url = format!(
-            "{scheme}://{host}/ocs/v2.php/apps/admin_notifications/api/v1/notifications/userToNotify/{target_user}"
+            "{base_url}/ocs/v2.php/apps/admin_notifications/api/v1/notifications/userToNotify/{target_user}"
         );
 
         let short_message = message.title.as_deref().unwrap_or("Notification");

@@ -20,11 +20,11 @@ impl MisskeyProvider {
     /// Upload a file to Misskey Drive and return the file ID.
     async fn upload_to_drive(
         &self,
-        instance: &str,
+        base_url: &str,
         access_token: &str,
         attachment: &noti_core::Attachment,
     ) -> Result<String, NotiError> {
-        let url = format!("https://{instance}/api/drive/files/create");
+        let url = format!("{base_url}/api/drive/files/create");
         let data = attachment.read_bytes().await?;
         let file_name = attachment.effective_file_name();
         let mime_str = attachment.effective_mime();
@@ -94,6 +94,8 @@ impl NotifyProvider for MisskeyProvider {
             )
             .with_example("public"),
             ParamDef::optional("cw", "Content warning / subject text").with_example("spoiler"),
+            ParamDef::optional("base_url", "Misskey API base URL override (default: https://{instance})")
+                .with_example("https://misskey.io"),
         ]
     }
 
@@ -110,7 +112,12 @@ impl NotifyProvider for MisskeyProvider {
         let access_token = config.require("access_token", "misskey")?;
         let instance = config.require("instance", "misskey")?;
 
-        let url = format!("https://{instance}/api/notes/create");
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| format!("https://{instance}"));
+
+        let url = format!("{base_url}/api/notes/create");
 
         let visibility = config.get("visibility").unwrap_or("public");
 
@@ -135,7 +142,7 @@ impl NotifyProvider for MisskeyProvider {
             let mut file_ids = Vec::new();
             for attachment in &message.attachments {
                 let file_id = self
-                    .upload_to_drive(instance, access_token, attachment)
+                    .upload_to_drive(&base_url, access_token, attachment)
                     .await?;
                 file_ids.push(file_id);
             }
