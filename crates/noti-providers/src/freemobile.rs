@@ -87,7 +87,7 @@ impl NotifyProvider for FreeMobileProvider {
                     .with_status_code(status),
             )
         } else {
-            let body = resp.text().await.unwrap_or_default();
+            let body = crate::http_helpers::read_response_body("freemobile", resp).await;
             Ok(
                 SendResponse::failure("freemobile", format!("API error ({status}): {body}"))
                     .with_status_code(status)

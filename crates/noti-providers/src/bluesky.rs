@@ -79,7 +79,7 @@ impl NotifyProvider for BlueskyProvider {
 
         let session_status = session_resp.status().as_u16();
         if !(200..300).contains(&(session_status as usize)) {
-            let body = session_resp.text().await.unwrap_or_default();
+            let body = crate::http_helpers::read_response_body("bluesky", session_resp).await;
             return Ok(
                 SendResponse::failure("bluesky", format!("authentication failed: {body}"))
                     .with_status_code(session_status),

@@ -147,7 +147,7 @@ impl NotifyProvider for DiscordProvider {
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
-            let body = resp.text().await.unwrap_or_default();
+            let body = crate::http_helpers::read_response_body("discord", resp).await;
             // Discord also includes retry_after in the JSON body
             let retry_from_body = serde_json::from_str::<serde_json::Value>(&body)
                 .ok()

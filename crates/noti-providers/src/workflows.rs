@@ -149,7 +149,7 @@ impl NotifyProvider for WorkflowsProvider {
             .map_err(|e| crate::http_helpers::classify_reqwest_error("workflows", e))?;
 
         let status = resp.status().as_u16();
-        let body_text = resp.text().await.unwrap_or_default();
+        let body_text = crate::http_helpers::read_response_body("workflows", resp).await;
         let raw: serde_json::Value = serde_json::from_str(&body_text)
             .unwrap_or_else(|_| json!({"status": status, "body": body_text}));
 

@@ -63,6 +63,29 @@ pub fn failure_from_status(provider: &str, status: u16, body_text: &str) -> Send
         .with_status_code(status)
 }
 
+/// Read the response body as text, logging a warning if the read fails
+/// instead of silently discarding the error like `unwrap_or_default()`.
+///
+/// Use this instead of `resp.text().await.unwrap_or_default()` to ensure
+/// that response body read failures are visible in logs, which aids in
+/// debugging provider API errors.
+pub async fn read_response_body(
+    provider: &str,
+    resp: reqwest::Response,
+) -> String {
+    match resp.text().await {
+        Ok(body) => body,
+        Err(e) => {
+            tracing::warn!(
+                provider = provider,
+                error = %e,
+                "failed to read response body, using empty string"
+            );
+            String::new()
+        }
+    }
+}
+
 /// Truncate a body string to `max_len` characters, appending "..." if truncated.
 fn truncate_body(body: &str, max_len: usize) -> &str {
     if body.len() <= max_len {

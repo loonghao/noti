@@ -147,7 +147,7 @@ impl NotifyProvider for TeamsProvider {
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
-            let body = resp.text().await.unwrap_or_default();
+            let body = crate::http_helpers::read_response_body("teams", resp).await;
             return Err(crate::http_helpers::handle_http_error(
                 "teams",
                 status,
