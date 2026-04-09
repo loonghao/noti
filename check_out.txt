@@ -1,0 +1,8 @@
+﻿cargo :     Checking noti-providers v0.1.9 (G:\PycharmProjects\github\noti\crates\noti-providers)
+At line:1 char:199
++ ... charmProjects/github/noti; cargo check -p noti-providers 2>&1 | Out-F ...
++                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking no...noti-providers):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.93s

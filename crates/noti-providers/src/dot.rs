@@ -49,6 +49,8 @@ impl NotifyProvider for DotProvider {
                 .with_example("aabbccddeeff"),
             ParamDef::optional("signature", "Footer text displayed on device"),
             ParamDef::optional("mode", "Display mode: text (default) or image"),
+            ParamDef::optional("base_url", "Override base URL for the Dot. API gateway")
+                .with_example("https://gateway.getdot.app"),
         ]
     }
 
@@ -76,7 +78,13 @@ impl NotifyProvider for DotProvider {
             config.get("mode").unwrap_or("text")
         };
 
-        let url = format!("https://gateway.getdot.app/api/device/{device_id}/{mode}");
+        let default_base = "https://gateway.getdot.app";
+        let base = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_base.to_string());
+
+        let url = format!("{base}/api/device/{device_id}/{mode}");
 
         let mut payload = json!({
             "body": message.text,

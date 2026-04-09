@@ -54,6 +54,8 @@ impl NotifyProvider for Enigma2Provider {
                 "Message type: 1=yes/no, 2=info, 3=message, 4=attention (default: 1)",
             )
             .with_example("1"),
+            ParamDef::optional("base_url", "Override base URL for the Enigma2 device")
+                .with_example("http://192.168.1.50:80"),
         ]
     }
 
@@ -78,8 +80,14 @@ impl NotifyProvider for Enigma2Provider {
         // URL-encode the text
         let encoded_text = urlencoded(&text);
 
+        let default_base = format!("{scheme}://{host}:{port}");
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or(default_base);
+
         let url = format!(
-            "{scheme}://{host}:{port}/api/message?text={encoded_text}&type={msg_type}&timeout={timeout}"
+            "{base_url}/api/message?text={encoded_text}&type={msg_type}&timeout={timeout}"
         );
 
         let mut request = self.client.get(&url);

@@ -49,6 +49,8 @@ impl NotifyProvider for DapnetProvider {
                 "emergency",
                 "Emergency priority (true/false, default: false)",
             ),
+            ParamDef::optional("base_url", "Override base URL for the DAPNET API")
+                .with_example("https://hampager.de"),
         ]
     }
 
@@ -67,7 +69,14 @@ impl NotifyProvider for DapnetProvider {
             .get("emergency")
             .is_some_and(|v| v == "true" || v == "1");
 
-        let url = "https://hampager.de/api/calls";
+        let default_url = "https://hampager.de/api/calls";
+        let url = config
+            .get("base_url")
+            .map(|s| {
+                let base = s.trim_end_matches('/');
+                format!("{base}/api/calls")
+            })
+            .unwrap_or_else(|| default_url.to_string());
 
         // Truncate message to POCSAG max (80 chars)
         let text = if message.text.len() > 80 {

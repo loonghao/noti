@@ -51,6 +51,8 @@ impl NotifyProvider for AppriseProvider {
             )
             .with_example("info"),
             ParamDef::optional("tag", "Filter tag for persistent config notifications"),
+            ParamDef::optional("base_url", "Override base URL for the Apprise API server")
+                .with_example("http://localhost:8000"),
         ]
     }
 
@@ -64,9 +66,11 @@ impl NotifyProvider for AppriseProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
-        let host = config.require("host", "apprise")?;
-
-        let host = host.trim_end_matches('/');
+        let default_host = config.require("host", "apprise")?;
+        let host = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_host.trim_end_matches('/').to_string());
 
         let notification_type = config.get("notification_type").unwrap_or("info");
 

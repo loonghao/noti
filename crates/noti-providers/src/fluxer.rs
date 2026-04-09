@@ -48,6 +48,8 @@ impl NotifyProvider for FluxerProvider {
             ParamDef::optional("avatar_url", "Bot avatar image URL"),
             ParamDef::optional("tts", "Enable text-to-speech (true/false)"),
             ParamDef::optional("host", "Private Fluxer server host (for self-hosted)"),
+            ParamDef::optional("base_url", "Override base URL for the Fluxer API")
+                .with_example("https://api.fluxer.app"),
         ]
     }
 
@@ -65,11 +67,15 @@ impl NotifyProvider for FluxerProvider {
         let webhook_token = config.require("webhook_token", "fluxer")?;
 
         let base_host = config.get("host").unwrap_or("https://api.fluxer.app");
-        let base_url = if base_host.starts_with("http") {
+        let default_base = if base_host.starts_with("http") {
             base_host.to_string()
         } else {
             format!("https://{base_host}")
         };
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or(default_base);
 
         let url = format!("{base_url}/webhooks/{webhook_id}/{webhook_token}");
 

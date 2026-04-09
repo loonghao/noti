@@ -47,6 +47,8 @@ impl NotifyProvider for BoxcarProvider {
             ParamDef::optional("source_name", "Source name for the notification")
                 .with_example("noti"),
             ParamDef::optional("icon_url", "URL of notification icon"),
+            ParamDef::optional("base_url", "Override base URL for the Boxcar API")
+                .with_example("https://new.boxcar.io"),
         ]
     }
 
@@ -62,7 +64,14 @@ impl NotifyProvider for BoxcarProvider {
         self.validate_config(config)?;
         let access_token = config.require("access_token", "boxcar")?;
 
-        let url = "https://new.boxcar.io/api/notifications";
+        let default_url = "https://new.boxcar.io/api/notifications";
+        let url = config
+            .get("base_url")
+            .map(|s| {
+                let base = s.trim_end_matches('/');
+                format!("{base}/api/notifications")
+            })
+            .unwrap_or_else(|| default_url.to_string());
 
         let mut payload = json!({
             "user_credentials": access_token,
