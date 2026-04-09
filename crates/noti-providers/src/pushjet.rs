@@ -51,6 +51,7 @@ impl NotifyProvider for PushjetProvider {
             ParamDef::optional("level", "Notification importance level 1-5 (default: 3)")
                 .with_example("3"),
             ParamDef::optional("link", "URL to attach to notification"),
+            ParamDef::optional("base_url", "Override base URL for API requests (takes precedence over server)"),
         ]
     }
 
@@ -65,7 +66,7 @@ impl NotifyProvider for PushjetProvider {
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
         let secret = config.require("secret", "pushjet")?;
-        let server = config.get("server").unwrap_or("https://api.pushjet.io");
+        let server = config.get("base_url").or_else(|| config.get("server")).unwrap_or("https://api.pushjet.io");
         let level = config
             .get("level")
             .and_then(|v| v.parse::<u8>().ok())

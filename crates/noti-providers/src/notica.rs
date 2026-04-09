@@ -43,7 +43,10 @@ impl NotifyProvider for NoticaProvider {
     }
 
     fn params(&self) -> Vec<ParamDef> {
-        vec![ParamDef::required("token", "Notica notification token").with_example("abc123")]
+        vec![
+            ParamDef::required("token", "Notica notification token").with_example("abc123"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
+        ]
     }
 
     async fn send(
@@ -54,7 +57,8 @@ impl NotifyProvider for NoticaProvider {
         self.validate_config(config)?;
         let token = config.require("token", "notica")?;
 
-        let url = format!("https://notica.us/?{token}");
+        let base_url = config.get("base_url").unwrap_or("https://notica.us");
+        let url = format!("{base_url}/?{token}");
 
         // Build notification text with embedded image data URIs
         let mut body_text = if let Some(ref title) = message.title {

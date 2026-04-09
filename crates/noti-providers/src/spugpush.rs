@@ -44,6 +44,7 @@ impl NotifyProvider for SpugPushProvider {
         vec![
             ParamDef::required("token", "SpugPush authentication token (32-64 chars)")
                 .with_example("abc123def456ghi789jkl012mno345pq"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -59,7 +60,8 @@ impl NotifyProvider for SpugPushProvider {
         self.validate_config(config)?;
         let token = config.require("token", "spugpush")?;
 
-        let url = format!("https://push.spug.dev/send/{token}");
+        let base_url = config.get("base_url").unwrap_or("https://push.spug.dev");
+        let url = format!("{base_url}/send/{token}");
 
         // Embed image attachments as base64 in content
         let mut content = message.text.clone();

@@ -55,6 +55,7 @@ impl NotifyProvider for NotificationApiProvider {
             )
             .with_example("order_tracking"),
             ParamDef::optional("region", "API region: us (default), ca, or eu"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -75,11 +76,11 @@ impl NotifyProvider for NotificationApiProvider {
         let notification_type = config.get("notification_type").unwrap_or("apprise");
         let region = config.get("region").unwrap_or("us");
 
-        let base_url = match region {
+        let base_url = config.get("base_url").unwrap_or(match region {
             "ca" => "https://api.ca.notificationapi.com",
             "eu" => "https://api.eu.notificationapi.com",
             _ => "https://api.notificationapi.com",
-        };
+        });
 
         let url = format!("{base_url}/{client_id}/sender");
 

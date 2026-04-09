@@ -53,6 +53,7 @@ impl NotifyProvider for WorkflowsProvider {
                 .with_example("xyzSignatureValue"),
             ParamDef::optional("api_version", "Power Automate API version")
                 .with_example("2016-06-01"),
+            ParamDef::optional("base_url", "Override full URL for API requests (takes precedence over host/port/workflow)"),
         ]
     }
 
@@ -70,16 +71,19 @@ impl NotifyProvider for WorkflowsProvider {
         let workflow = config.require("workflow", "workflows")?;
         let signature = config.require("signature", "workflows")?;
 
-        let port = config.get("port").unwrap_or("443");
-        let api_version = config.get("api_version").unwrap_or("2016-06-01");
-
-        let url = format!(
-            "https://{host}:{port}/workflows/{workflow}/triggers/manual/paths/invoke\
-             ?api-version={api_version}\
-             &sp=%2Ftriggers%2Fmanual%2Frun\
-             &sv=1.0\
-             &sig={signature}"
-        );
+        let url = if let Some(base_url) = config.get("base_url") {
+            base_url.to_string()
+        } else {
+            let port = config.get("port").unwrap_or("443");
+            let api_version = config.get("api_version").unwrap_or("2016-06-01");
+            format!(
+                "https://{host}:{port}/workflows/{workflow}/triggers/manual/paths/invoke\
+                 ?api-version={api_version}\
+                 &sp=%2Ftriggers%2Fmanual%2Frun\
+                 &sv=1.0\
+                 &sig={signature}"
+            )
+        };
 
         // Build Adaptive Card payload
         let title = message.title.clone().unwrap_or_else(|| "noti".to_string());

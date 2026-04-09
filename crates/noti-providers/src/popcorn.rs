@@ -41,6 +41,7 @@ impl NotifyProvider for PopcornProvider {
             ParamDef::required("api_key", "PopcornNotify API key").with_example("your-api-key"),
             ParamDef::required("from", "Sender phone number").with_example("+15551234567"),
             ParamDef::required("to", "Recipient phone number").with_example("+15559876543"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -54,7 +55,8 @@ impl NotifyProvider for PopcornProvider {
         let from = config.require("from", "popcorn")?;
         let to = config.require("to", "popcorn")?;
 
-        let url = "https://muncher.popcornnotify.com/send/message";
+        let base_url = config.get("base_url").unwrap_or("https://muncher.popcornnotify.com");
+        let url = format!("{base_url}/send/message");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}: {}", message.text)

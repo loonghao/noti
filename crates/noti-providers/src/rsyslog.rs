@@ -53,6 +53,7 @@ impl NotifyProvider for RsyslogProvider {
                 "severity",
                 "Syslog severity: emerg, alert, crit, err, warning, notice, info, debug (default: info)",
             ),
+            ParamDef::optional("base_url", "Override full URL for API requests (takes precedence over host/scheme/port)"),
         ]
     }
 
@@ -95,10 +96,15 @@ impl NotifyProvider for RsyslogProvider {
             }
         }
 
-        let mut url = format!("{scheme}://{host}");
-        if let Some(port) = config.get("port") {
-            url = format!("{scheme}://{host}:{port}");
-        }
+        let url = if let Some(base_url) = config.get("base_url") {
+            base_url.to_string()
+        } else {
+            let mut u = format!("{scheme}://{host}");
+            if let Some(port) = config.get("port") {
+                u = format!("{scheme}://{host}:{port}");
+            }
+            u
+        };
 
         let mut req = self.client.post(&url).json(&payload);
 

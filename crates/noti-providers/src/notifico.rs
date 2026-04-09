@@ -50,6 +50,7 @@ impl NotifyProvider for NotificoProvider {
                 "host",
                 "Notifico server URL (default: https://n2.notifico.tech)",
             ),
+            ParamDef::optional("base_url", "Override base URL for API requests (takes precedence over host)"),
         ]
     }
 
@@ -62,7 +63,7 @@ impl NotifyProvider for NotificoProvider {
 
         let project_id = config.require("project_id", "notifico")?;
         let msghook = config.require("msghook", "notifico")?;
-        let host = config.get("host").unwrap_or("https://n2.notifico.tech");
+        let host = config.get("base_url").or_else(|| config.get("host")).unwrap_or("https://n2.notifico.tech");
 
         let url = format!("{host}/hook/{project_id}/{msghook}");
 

@@ -45,6 +45,7 @@ impl NotifyProvider for SynologyProvider {
             ParamDef::required("token", "Incoming webhook token"),
             ParamDef::optional("port", "HTTPS port (default: 5001)"),
             ParamDef::optional("scheme", "URL scheme: https or http (default: https)"),
+            ParamDef::optional("base_url", "Override full URL for API requests (takes precedence over host/port/scheme)"),
         ]
     }
 
@@ -64,9 +65,13 @@ impl NotifyProvider for SynologyProvider {
         let port = config.get("port").unwrap_or("5001");
         let scheme = config.get("scheme").unwrap_or("https");
 
-        let url = format!(
-            "{scheme}://{host}:{port}/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=%22{token}%22"
-        );
+        let url = if let Some(base_url) = config.get("base_url") {
+            base_url.to_string()
+        } else {
+            format!(
+                "{scheme}://{host}:{port}/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=%22{token}%22"
+            )
+        };
 
         // Build payload with optional file_url for attachments
         let mut payload_obj = serde_json::json!({"text": message.text});

@@ -42,6 +42,7 @@ impl NotifyProvider for TwistProvider {
         vec![
             ParamDef::required("webhook_url", "Twist integration webhook URL")
                 .with_example("https://twist.com/api/v3/integration_incoming/post_data?install_id=XXX&install_token=YYY"),
+            ParamDef::optional("base_url", "Override base URL for API requests (takes precedence over webhook_url host)"),
         ]
     }
 
@@ -56,6 +57,13 @@ impl NotifyProvider for TwistProvider {
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
         let webhook_url = config.require("webhook_url", "twist")?;
+
+        // If base_url is set, replace the host in the webhook URL
+        let url = if let Some(base_url) = config.get("base_url") {
+            format!("{base_url}/api/v3/integration_incoming/post_data")
+        } else {
+            webhook_url.to_string()
+        };
 
         let mut content = if let Some(ref title) = message.title {
             format!("**{title}**\n{}", message.text)
@@ -84,7 +92,7 @@ impl NotifyProvider for TwistProvider {
 
         let resp = self
             .client
-            .post(webhook_url)
+            .post(&url)
             .json(&payload)
             .send()
             .await

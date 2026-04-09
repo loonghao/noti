@@ -52,6 +52,7 @@ impl NotifyProvider for ProwlProvider {
             ParamDef::optional("url", "URL to attach to the notification"),
             ParamDef::optional("application", "Application name (default: noti)")
                 .with_example("noti"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -68,6 +69,7 @@ impl NotifyProvider for ProwlProvider {
         let api_key = config.require("api_key", "prowl")?;
         let application = config.get("application").unwrap_or("noti");
         let priority = config.get("priority").unwrap_or("0");
+        let base_url = config.get("base_url").unwrap_or("https://api.prowlapp.com");
 
         // Embed first image attachment as base64 in description
         let mut description = message.text.clone();
@@ -107,7 +109,7 @@ impl NotifyProvider for ProwlProvider {
 
         let resp = self
             .client
-            .post("https://api.prowlapp.com/publicapi/add")
+            .post(format!("{base_url}/publicapi/add"))
             .form(&form)
             .send()
             .await

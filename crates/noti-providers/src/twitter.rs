@@ -26,12 +26,19 @@ impl TwitterProvider {
         bearer_token: &str,
         data: &[u8],
         mime: &str,
+        base_url: Option<&str>,
     ) -> Result<String, NotiError> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(data);
 
+        let upload_url = if let Some(base) = base_url {
+            format!("{base}/1.1/media/upload.json")
+        } else {
+            "https://upload.twitter.com/1.1/media/upload.json".to_string()
+        };
+
         let resp = self
             .client
-            .post("https://upload.twitter.com/1.1/media/upload.json")
+            .post(&upload_url)
             .header("Authorization", format!("Bearer {bearer_token}"))
             .form(&[("media_data", b64.as_str()), ("media_category", mime)])
             .send()
@@ -78,6 +85,7 @@ impl NotifyProvider for TwitterProvider {
             ParamDef::required("bearer_token", "X (Twitter) API v2 Bearer token"),
             ParamDef::optional("mode", "Send mode: tweet or dm (default: tweet)"),
             ParamDef::optional("dm_user_id", "Recipient user ID for DM mode"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -93,6 +101,7 @@ impl NotifyProvider for TwitterProvider {
         self.validate_config(config)?;
         let bearer_token = config.require("bearer_token", "twitter")?;
         let mode = config.get("mode").unwrap_or("tweet");
+        let base_url = config.get("base_url");
 
         // Upload image attachments and collect media IDs
         let mut media_ids: Vec<String> = Vec::new();
@@ -104,7 +113,7 @@ impl NotifyProvider for TwitterProvider {
                 ) {
                     let data = attachment.read_bytes().await?;
                     let mime = attachment.effective_mime();
-                    if let Ok(media_id) = self.upload_media(bearer_token, &data, &mime).await {
+                    if let Ok(media_id) = self.upload_media(bearer_token, &data, &mime, base_url).await {
                         media_ids.push(media_id);
                     }
                 }
@@ -122,8 +131,13 @@ impl NotifyProvider for TwitterProvider {
                         .collect::<Vec<_>>()
                 );
             }
+            let dm_url = if let Some(base) = base_url {
+                format!("{base}/2/dm_conversations/with/messages")
+            } else {
+                "https://api.x.com/2/dm_conversations/with/messages".to_string()
+            };
             (
-                "https://api.x.com/2/dm_conversations/with/messages".to_string(),
+                dm_url,
                 json!({
                     "participant_id": dm_user_id,
                     "message": msg_obj
@@ -134,7 +148,12 @@ impl NotifyProvider for TwitterProvider {
             if !media_ids.is_empty() {
                 tweet["media"] = json!({ "media_ids": media_ids });
             }
-            ("https://api.x.com/2/tweets".to_string(), tweet)
+            let tweet_url = if let Some(base) = base_url {
+                format!("{base}/2/tweets")
+            } else {
+                "https://api.x.com/2/tweets".to_string()
+            };
+            (tweet_url, tweet)
         };
 
         let resp = self

@@ -67,6 +67,7 @@ impl NotifyProvider for StatuspageProvider {
                 "Component status: operational, degraded_performance, partial_outage, major_outage",
             )
             .with_example("degraded_performance"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -82,7 +83,8 @@ impl NotifyProvider for StatuspageProvider {
         let status = config.get("status").unwrap_or("investigating");
         let impact = config.get("impact").unwrap_or("minor");
 
-        let url = format!("https://api.statuspage.io/v1/pages/{page_id}/incidents");
+        let base_url = config.get("base_url").unwrap_or("https://api.statuspage.io");
+        let url = format!("{base_url}/v1/pages/{page_id}/incidents");
 
         let incident_name = message
             .title

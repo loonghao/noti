@@ -20,8 +20,12 @@ impl WhatsAppProvider {
         Self { client }
     }
 
-    fn graph_url(api_version: &str, phone_number_id: &str, path: &str) -> String {
-        format!("https://graph.facebook.com/{api_version}/{phone_number_id}/{path}")
+    fn graph_url(api_version: &str, phone_number_id: &str, path: &str, base_url: Option<&str>) -> String {
+        if let Some(base) = base_url {
+            format!("{base}/{phone_number_id}/{path}")
+        } else {
+            format!("https://graph.facebook.com/{api_version}/{phone_number_id}/{path}")
+        }
     }
 }
 
@@ -62,6 +66,7 @@ impl NotifyProvider for WhatsAppProvider {
                 "preview_url",
                 "Enable link previews (true/false, default: false)",
             ),
+            ParamDef::optional("base_url", "Override base URL for Graph API requests"),
         ]
     }
 
@@ -80,6 +85,7 @@ impl NotifyProvider for WhatsAppProvider {
         let phone_number_id = config.require("phone_number_id", "whatsapp")?;
         let to = config.require("to", "whatsapp")?;
         let api_version = config.get("api_version").unwrap_or("v21.0");
+        let base_url = config.get("base_url");
 
         // Handle media attachments
         if message.has_attachments() {
@@ -89,7 +95,7 @@ impl NotifyProvider for WhatsAppProvider {
             let mime_str = attachment.effective_mime();
 
             // Step 1: Upload media
-            let upload_url = Self::graph_url(api_version, phone_number_id, "media");
+            let upload_url = Self::graph_url(api_version, phone_number_id, "media", base_url);
 
             let file_part = reqwest::multipart::Part::bytes(data)
                 .file_name(file_name)
@@ -127,7 +133,7 @@ impl NotifyProvider for WhatsAppProvider {
                 AttachmentKind::File => ("document", "document"),
             };
 
-            let messages_url = Self::graph_url(api_version, phone_number_id, "messages");
+            let messages_url = Self::graph_url(api_version, phone_number_id, "messages", base_url);
 
             let mut media_obj = json!({ "id": media_id });
             if !message.text.is_empty() {
@@ -155,7 +161,7 @@ impl NotifyProvider for WhatsAppProvider {
 
         // Text-only message
         let preview_url = config.get("preview_url").unwrap_or("false") == "true";
-        let url = Self::graph_url(api_version, phone_number_id, "messages");
+        let url = Self::graph_url(api_version, phone_number_id, "messages", base_url);
 
         let body = json!({
             "messaging_product": "whatsapp",

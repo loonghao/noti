@@ -45,6 +45,7 @@ impl NotifyProvider for RedditProvider {
             ParamDef::required("user", "Reddit username for authentication").with_example("mybot"),
             ParamDef::required("password", "Reddit password").with_example("mypassword"),
             ParamDef::required("to", "Recipient Reddit username").with_example("targetuser"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -63,11 +64,17 @@ impl NotifyProvider for RedditProvider {
         let user = config.require("user", "reddit")?;
         let password = config.require("password", "reddit")?;
         let to = config.require("to", "reddit")?;
+        let base_url = config.get("base_url");
 
         // Step 1: Get OAuth2 access token
+        let token_url = if let Some(base) = base_url {
+            format!("{base}/api/v1/access_token")
+        } else {
+            "https://www.reddit.com/api/v1/access_token".to_string()
+        };
         let token_resp = self
             .client
-            .post("https://www.reddit.com/api/v1/access_token")
+            .post(&token_url)
             .basic_auth(client_id, Some(client_secret))
             .header("User-Agent", "noti-cli/0.1.0")
             .form(&[
@@ -113,9 +120,15 @@ impl NotifyProvider for RedditProvider {
             }
         }
 
+        let compose_url = if let Some(base) = base_url {
+            format!("{base}/api/compose")
+        } else {
+            "https://oauth.reddit.com/api/compose".to_string()
+        };
+
         let resp = self
             .client
-            .post("https://oauth.reddit.com/api/compose")
+            .post(&compose_url)
             .bearer_auth(access_token)
             .header("User-Agent", "noti-cli/0.1.0")
             .form(&[

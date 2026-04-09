@@ -39,6 +39,7 @@ impl NotifyProvider for SfrProvider {
         vec![
             ParamDef::required("phone", "SFR phone number (10 digits)").with_example("0612345678"),
             ParamDef::required("password", "SFR account password or API key"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -51,7 +52,8 @@ impl NotifyProvider for SfrProvider {
         let phone = config.require("phone", "sfr")?;
         let password = config.require("password", "sfr")?;
 
-        let url = "https://www.sfr.fr/xmscomposer/mc/envoyer-texto-texto/";
+        let base_url = config.get("base_url").unwrap_or("https://www.sfr.fr");
+        let url = format!("{base_url}/xmscomposer/mc/envoyer-texto-texto/");
 
         let resp = self
             .client

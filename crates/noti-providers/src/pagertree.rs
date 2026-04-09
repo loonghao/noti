@@ -44,6 +44,7 @@ impl NotifyProvider for PagerTreeProvider {
                 .with_example("your-integration-id"),
             ParamDef::optional("urgency", "Incident urgency: low, medium, high, critical")
                 .with_example("high"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -59,7 +60,8 @@ impl NotifyProvider for PagerTreeProvider {
         self.validate_config(config)?;
         let integration_id = config.require("integration_id", "pagertree")?;
 
-        let url = format!("https://api.pagertree.com/integration/{integration_id}");
+        let base_url = config.get("base_url").unwrap_or("https://api.pagertree.com");
+        let url = format!("{base_url}/integration/{integration_id}");
 
         let title = message.title.as_deref().unwrap_or("Alert");
         let urgency = config.get("urgency").unwrap_or("high");

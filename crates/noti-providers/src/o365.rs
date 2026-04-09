@@ -49,6 +49,7 @@ impl NotifyProvider for O365Provider {
                 "save_to_sent",
                 "Save to Sent Items (true/false, default: true)",
             ),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -70,9 +71,14 @@ impl NotifyProvider for O365Provider {
         let to = config.require("to", "o365")?;
         let subject = message.title.as_deref().unwrap_or("Notification from noti");
         let save_to_sent = config.get("save_to_sent").unwrap_or("true") == "true";
+        let base_url = config.get("base_url");
 
         // Step 1: Get access token via client credentials
-        let token_url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
+        let token_url = if let Some(base) = base_url {
+            format!("{base}/{tenant_id}/oauth2/v2.0/token")
+        } else {
+            format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token")
+        };
 
         let token_resp = self
             .client
@@ -98,7 +104,11 @@ impl NotifyProvider for O365Provider {
             })?;
 
         // Step 2: Send email via Graph API
-        let send_url = format!("https://graph.microsoft.com/v1.0/users/{from}/sendMail");
+        let send_url = if let Some(base) = base_url {
+            format!("{base}/users/{from}/sendMail")
+        } else {
+            format!("https://graph.microsoft.com/v1.0/users/{from}/sendMail")
+        };
 
         let to_recipients = vec![serde_json::json!({
             "emailAddress": { "address": to }

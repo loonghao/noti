@@ -46,6 +46,7 @@ impl NotifyProvider for StreamlabsProvider {
             ParamDef::optional("image_href", "Custom image URL for the alert"),
             ParamDef::optional("sound_href", "Custom sound URL for the alert"),
             ParamDef::optional("duration", "Alert display duration in ms (default: 5000)"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -90,9 +91,12 @@ impl NotifyProvider for StreamlabsProvider {
             form.push(("duration", val.to_string()));
         }
 
+        let base_url = config.get("base_url").unwrap_or("https://streamlabs.com");
+        let url = format!("{base_url}/api/v1.0/alerts");
+
         let resp = self
             .client
-            .post("https://streamlabs.com/api/v1.0/alerts")
+            .post(&url)
             .form(&form)
             .send()
             .await

@@ -42,6 +42,7 @@ impl NotifyProvider for SpikeProvider {
         vec![
             ParamDef::required("webhook_url", "Spike.sh integration webhook URL")
                 .with_example("https://hooks.spike.sh/custom/xxx"),
+            ParamDef::optional("base_url", "Override base URL for API requests (takes precedence over webhook_url)"),
         ]
     }
 
@@ -56,6 +57,13 @@ impl NotifyProvider for SpikeProvider {
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
         let webhook_url = config.require("webhook_url", "spike")?;
+
+        // If base_url is set, use it instead of the webhook URL host
+        let url = if let Some(base_url) = config.get("base_url") {
+            base_url.to_string()
+        } else {
+            webhook_url.to_string()
+        };
 
         let title = message.title.as_deref().unwrap_or("Alert");
 
@@ -76,7 +84,7 @@ impl NotifyProvider for SpikeProvider {
 
         let resp = self
             .client
-            .post(webhook_url)
+            .post(&url)
             .json(&payload)
             .send()
             .await

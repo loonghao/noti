@@ -43,6 +43,7 @@ impl NotifyProvider for TechulusProvider {
             ParamDef::required("api_key", "Techulus Push API key").with_example("your-api-key"),
             ParamDef::optional("link", "URL to attach to the notification")
                 .with_example("https://example.com"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -58,7 +59,8 @@ impl NotifyProvider for TechulusProvider {
         self.validate_config(config)?;
         let api_key = config.require("api_key", "techulus")?;
 
-        let url = "https://push.techulus.com/api/v1/notify";
+        let base_url = config.get("base_url").unwrap_or("https://push.techulus.com");
+        let url = format!("{base_url}/api/v1/notify");
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

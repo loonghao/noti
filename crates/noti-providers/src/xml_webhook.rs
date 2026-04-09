@@ -49,6 +49,7 @@ impl NotifyProvider for XmlWebhookProvider {
                 .with_example("info"),
             ParamDef::optional("root", "XML root element name (default: notification)")
                 .with_example("notification"),
+            ParamDef::optional("base_url", "Override target URL (takes precedence over url param)"),
         ]
     }
 
@@ -62,7 +63,7 @@ impl NotifyProvider for XmlWebhookProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
-        let url = config.require("url", "xml")?;
+        let url = config.get("base_url").unwrap_or_else(|| config.require("url", "xml").unwrap());
         let method_str = config.get("method").unwrap_or("POST").to_uppercase();
         let noti_type = config.get("type").unwrap_or("info");
         let root = config.get("root").unwrap_or("notification");

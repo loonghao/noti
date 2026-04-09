@@ -47,6 +47,7 @@ impl NotifyProvider for VictorOpsProvider {
                 "Alert type: CRITICAL, WARNING, ACKNOWLEDGEMENT, INFO, RECOVERY",
             )
             .with_example("CRITICAL"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -63,9 +64,8 @@ impl NotifyProvider for VictorOpsProvider {
         let api_key = config.require("api_key", "victorops")?;
         let routing_key = config.require("routing_key", "victorops")?;
 
-        let url = format!(
-            "https://alert.victorops.com/integrations/generic/20131114/alert/{api_key}/{routing_key}"
-        );
+        let base_url = config.get("base_url").unwrap_or("https://alert.victorops.com");
+        let url = format!("{base_url}/integrations/generic/20131114/alert/{api_key}/{routing_key}");
 
         let message_type = config.get("message_type").unwrap_or("CRITICAL");
 

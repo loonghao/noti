@@ -45,6 +45,7 @@ impl NotifyProvider for SendPulseProvider {
             ParamDef::required("to", "Recipient email address"),
             ParamDef::optional("from_name", "Sender display name"),
             ParamDef::optional("to_name", "Recipient display name"),
+            ParamDef::optional("base_url", "Override base URL for API requests"),
         ]
     }
 
@@ -66,11 +67,12 @@ impl NotifyProvider for SendPulseProvider {
         let from_name = config.get("from_name").unwrap_or("noti");
         let to_name = config.get("to_name").unwrap_or("");
         let subject = message.title.as_deref().unwrap_or("Notification from noti");
+        let base_url = config.get("base_url").unwrap_or("https://api.sendpulse.com");
 
         // Step 1: Get access token
         let token_resp = self
             .client
-            .post("https://api.sendpulse.com/oauth/access_token")
+            .post(format!("{base_url}/oauth/access_token"))
             .json(&json!({
                 "grant_type": "client_credentials",
                 "client_id": client_id,
@@ -119,7 +121,7 @@ impl NotifyProvider for SendPulseProvider {
 
         let resp = self
             .client
-            .post("https://api.sendpulse.com/smtp/emails")
+            .post(format!("{base_url}/smtp/emails"))
             .bearer_auth(access_token)
             .json(&email_payload)
             .send()

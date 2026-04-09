@@ -52,6 +52,7 @@ impl NotifyProvider for MqttProvider {
             ParamDef::optional("qos", "Quality of Service level: 0, 1, or 2 (default: 0)")
                 .with_example("0"),
             ParamDef::optional("retain", "Retain message: true or false (default: false)"),
+            ParamDef::optional("base_url", "Override full URL for API requests (takes precedence over host/scheme)"),
         ]
     }
 
@@ -73,7 +74,11 @@ impl NotifyProvider for MqttProvider {
         let retain = config.get("retain").map(|r| r == "true").unwrap_or(false);
 
         // EMQX-style HTTP publish API
-        let url = format!("{scheme}://{host}/api/v5/publish");
+        let url = if let Some(base_url) = config.get("base_url") {
+            base_url.to_string()
+        } else {
+            format!("{scheme}://{host}/api/v5/publish")
+        };
 
         // Build payload: if attachments present, use structured JSON with base64 data
         let mqtt_payload = if message.has_attachments() {
