@@ -108,7 +108,7 @@ impl NotifyProvider for WebexProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("webex", e))?;
 
             return Self::parse_response(resp).await;
         }
@@ -140,7 +140,7 @@ impl NotifyProvider for WebexProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("webex", e))?;
 
         Self::parse_response(resp).await
     }

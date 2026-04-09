@@ -86,7 +86,7 @@ impl NotifyProvider for ThreemaProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("threema", e))?;
 
             let blob_status = blob_resp.status().as_u16();
             let blob_id = blob_resp
@@ -135,7 +135,7 @@ impl NotifyProvider for ThreemaProvider {
                 .form(&send_form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("threema", e))?;
 
             let status = resp.status().as_u16();
             let body = resp
@@ -187,7 +187,7 @@ impl NotifyProvider for ThreemaProvider {
             .form(&form)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("threema", e))?;
 
         let status = resp.status().as_u16();
         let body = resp

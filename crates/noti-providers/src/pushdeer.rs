@@ -87,7 +87,7 @@ impl NotifyProvider for PushDeerProvider {
                 .form(&form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("pushdeer", e))?;
 
             return Self::parse_response(resp).await;
         }
@@ -126,7 +126,7 @@ impl NotifyProvider for PushDeerProvider {
             .form(&form)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("pushdeer", e))?;
 
         Self::parse_response(resp).await
     }

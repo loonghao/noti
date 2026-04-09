@@ -122,7 +122,7 @@ impl NotifyProvider for PushoverProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("pushover", e))?
         } else {
             // Standard form POST
             let mut form = vec![
@@ -167,7 +167,7 @@ impl NotifyProvider for PushoverProvider {
                 .form(&form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("pushover", e))?
         };
 
         let status = resp.status().as_u16();

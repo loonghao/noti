@@ -80,7 +80,7 @@ impl NotifyProvider for PushBulletProvider {
                 .json(&upload_req)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("pushbullet", e))?;
 
             let upload_data: serde_json::Value = upload_resp
                 .json()
@@ -111,7 +111,7 @@ impl NotifyProvider for PushBulletProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("pushbullet", e))?;
 
             // Step 3: Send file push
             let mut payload = json!({
@@ -140,7 +140,7 @@ impl NotifyProvider for PushBulletProvider {
                 .json(&payload)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("pushbullet", e))?;
 
             let status = resp.status().as_u16();
             let raw: serde_json::Value = resp
@@ -192,7 +192,7 @@ impl NotifyProvider for PushBulletProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("pushbullet", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp

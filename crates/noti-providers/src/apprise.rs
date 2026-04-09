@@ -146,14 +146,14 @@ impl NotifyProvider for AppriseProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("apprise", e))?
         } else {
             self.client
                 .post(&url)
                 .json(&payload)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("apprise", e))?
         };
 
         let status = resp.status().as_u16();

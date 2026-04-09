@@ -113,7 +113,7 @@ impl NotifyProvider for WhatsAppProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("whatsapp", e))?;
 
             let upload_raw: serde_json::Value = upload_resp
                 .json()
@@ -154,7 +154,7 @@ impl NotifyProvider for WhatsAppProvider {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("whatsapp", e))?;
 
             return Self::parse_response(resp).await;
         }
@@ -180,7 +180,7 @@ impl NotifyProvider for WhatsAppProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("whatsapp", e))?;
 
         Self::parse_response(resp).await
     }

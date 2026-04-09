@@ -142,7 +142,7 @@ impl NotifyProvider for MatrixProvider {
                     .body(data)
                     .send()
                     .await
-                    .map_err(|e| NotiError::Network(e.to_string()))?;
+                    .map_err(|e| crate::http_helpers::classify_reqwest_error("matrix", e))?;
 
                 let upload_raw: serde_json::Value = upload_resp
                     .json()
@@ -184,7 +184,7 @@ impl NotifyProvider for MatrixProvider {
                     .json(&payload)
                     .send()
                     .await
-                    .map_err(|e| NotiError::Network(e.to_string()))?;
+                    .map_err(|e| crate::http_helpers::classify_reqwest_error("matrix", e))?;
 
                 let status = resp.status().as_u16();
                 let raw: serde_json::Value = resp
@@ -243,7 +243,7 @@ impl NotifyProvider for MatrixProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("matrix", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp

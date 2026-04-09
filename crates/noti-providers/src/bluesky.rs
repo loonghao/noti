@@ -75,7 +75,7 @@ impl NotifyProvider for BlueskyProvider {
             .json(&session_payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("bluesky", e))?;
 
         let session_status = session_resp.status().as_u16();
         if !(200..300).contains(&(session_status as usize)) {
@@ -122,7 +122,7 @@ impl NotifyProvider for BlueskyProvider {
                     .body(data)
                     .send()
                     .await
-                    .map_err(|e| NotiError::Network(e.to_string()))?;
+                    .map_err(|e| crate::http_helpers::classify_reqwest_error("bluesky", e))?;
 
                 let blob_raw: serde_json::Value = blob_resp
                     .json()
@@ -187,7 +187,7 @@ impl NotifyProvider for BlueskyProvider {
             .json(&post_payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("bluesky", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp.json().await.unwrap_or(json!({"status": status}));

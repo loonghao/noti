@@ -107,7 +107,7 @@ impl NotifyProvider for GuildedProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("guilded", e))?
         } else {
             let mut payload = json!({ "content": content });
 
@@ -123,7 +123,7 @@ impl NotifyProvider for GuildedProvider {
                 .json(&payload)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("guilded", e))?
         };
 
         let status = resp.status().as_u16();

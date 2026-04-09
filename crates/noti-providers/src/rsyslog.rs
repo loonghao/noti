@@ -115,7 +115,7 @@ impl NotifyProvider for RsyslogProvider {
         let resp = req
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("rsyslog", e))?;
 
         let status = resp.status().as_u16();
         let body = resp

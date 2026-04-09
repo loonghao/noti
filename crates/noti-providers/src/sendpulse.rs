@@ -80,7 +80,7 @@ impl NotifyProvider for SendPulseProvider {
             }))
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("sendpulse", e))?;
 
         let token_data: serde_json::Value =
             token_resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -126,7 +126,7 @@ impl NotifyProvider for SendPulseProvider {
             .json(&email_payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("sendpulse", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);

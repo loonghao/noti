@@ -96,7 +96,7 @@ impl NotifyProvider for JiraProvider {
                     .multipart(form)
                     .send()
                     .await
-                    .map_err(|e| NotiError::Network(e.to_string()))?;
+                    .map_err(|e| crate::http_helpers::classify_reqwest_error("jira", e))?;
 
                 let status = resp.status().as_u16();
                 if !(200..300).contains(&status) {
@@ -137,7 +137,7 @@ impl NotifyProvider for JiraProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("jira", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);

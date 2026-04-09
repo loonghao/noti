@@ -40,7 +40,7 @@ impl NcTalkProvider {
             .body(data)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("nctalk", e))?;
 
         let upload_status = upload_resp.status().as_u16();
         if !(200..300).contains(&upload_status) {
@@ -68,7 +68,7 @@ impl NcTalkProvider {
             .json(&share_body)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("nctalk", e))?;
 
         let share_status = share_resp.status().as_u16();
         if !(200..300).contains(&share_status) {
@@ -148,7 +148,7 @@ impl NotifyProvider for NcTalkProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("nctalk", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);

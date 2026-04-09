@@ -95,7 +95,7 @@ impl NotifyProvider for ChanifyProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("chanify", e))?;
 
             let status = resp.status().as_u16();
             let body = resp
@@ -135,7 +135,7 @@ impl NotifyProvider for ChanifyProvider {
             .form(&form)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("chanify", e))?;
 
         let status = resp.status().as_u16();
         let body = resp

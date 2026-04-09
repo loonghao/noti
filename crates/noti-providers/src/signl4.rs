@@ -117,7 +117,7 @@ impl NotifyProvider for Signl4Provider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("signl4", e))?;
 
         let status = resp.status().as_u16();
         let raw: serde_json::Value = resp.json().await.unwrap_or(json!({"status": status}));
