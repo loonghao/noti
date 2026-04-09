@@ -278,9 +278,17 @@ impl<C: Clock> CircuitBreaker<C> {
             let now_ms = self.clock.now_ms();
             let open_duration_ms = self.config.open_duration.as_millis() as u64;
             if now_ms >= opened_at_ms + open_duration_ms {
-                // Transition to half-open
-                self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
-                self.successes.store(0, Ordering::SeqCst);
+                // Use compare_exchange to ensure only ONE thread transitions
+                // Open → HalfOpen, preventing thundering herd.
+                if self.state.compare_exchange(
+                    STATE_OPEN,
+                    STATE_HALF_OPEN,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ).is_ok() {
+                    // This thread won the CAS — it's the one that transitions
+                    self.successes.store(0, Ordering::SeqCst);
+                }
                 return false;
             }
             return true;
@@ -301,9 +309,18 @@ impl<C: Clock> CircuitBreaker<C> {
                 let now_ms = self.clock.now_ms();
                 let open_duration_ms = self.config.open_duration.as_millis() as u64;
                 if now_ms >= opened_at_ms + open_duration_ms {
-                    // Transition to half-open
-                    self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
-                    self.successes.store(0, Ordering::SeqCst);
+                    // Use compare_exchange for atomic transition
+                    match self.state.compare_exchange(
+                        STATE_OPEN,
+                        STATE_HALF_OPEN,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        Ok(_) => {
+                            self.successes.store(0, Ordering::SeqCst);
+                        }
+                        Err(_) => {}
+                    }
                     return CircuitState::HalfOpen;
                 }
                 CircuitState::Open

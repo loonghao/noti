@@ -49,47 +49,57 @@ impl Ord for PriorityEntry {
     }
 }
 
+/// Unified internal state behind a single Mutex to eliminate lock contention.
+struct QueueState {
+    /// Priority-ordered queue of pending tasks.
+    heap: BinaryHeap<PriorityEntry>,
+    /// All tasks indexed by ID (for lookup, ack, nack).
+    tasks: HashMap<TaskId, NotificationTask>,
+    /// Aggregate counters.
+    counters: QueueStats,
+    /// Dead letter queue: tasks that have permanently failed.
+    dlq: HashMap<TaskId, DlqEntry>,
+}
+
 /// In-memory queue backend using a priority heap.
 ///
 /// Suitable for single-process deployments and testing.
 /// Tasks are lost if the process crashes (no persistence).
 pub struct InMemoryQueue {
-    /// Priority-ordered queue of pending tasks.
-    heap: Mutex<BinaryHeap<PriorityEntry>>,
-    /// All tasks indexed by ID (for lookup, ack, nack).
-    tasks: Mutex<HashMap<TaskId, NotificationTask>>,
+    /// All mutable state behind a single lock to avoid lock contention.
+    state: Mutex<QueueState>,
     /// Notifier for waking blocked dequeue calls.
     notify: Arc<Notify>,
     /// Maximum queue capacity (0 = unlimited).
     capacity: usize,
-    /// Aggregate counters.
-    counters: Mutex<QueueStats>,
-    /// Dead letter queue: tasks that have permanently failed.
-    dlq: Mutex<HashMap<TaskId, DlqEntry>>,
 }
 
 impl InMemoryQueue {
     /// Create a new in-memory queue with unlimited capacity.
     pub fn new() -> Self {
         Self {
-            heap: Mutex::new(BinaryHeap::new()),
-            tasks: Mutex::new(HashMap::new()),
+            state: Mutex::new(QueueState {
+                heap: BinaryHeap::new(),
+                tasks: HashMap::new(),
+                counters: QueueStats::default(),
+                dlq: HashMap::new(),
+            }),
             notify: Arc::new(Notify::new()),
             capacity: 0,
-            counters: Mutex::new(QueueStats::default()),
-            dlq: Mutex::new(HashMap::new()),
         }
     }
 
     /// Create a new in-memory queue with a maximum capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            heap: Mutex::new(BinaryHeap::new()),
-            tasks: Mutex::new(HashMap::new()),
+            state: Mutex::new(QueueState {
+                heap: BinaryHeap::new(),
+                tasks: HashMap::new(),
+                counters: QueueStats::default(),
+                dlq: HashMap::new(),
+            }),
             notify: Arc::new(Notify::new()),
             capacity,
-            counters: Mutex::new(QueueStats::default()),
-            dlq: Mutex::new(HashMap::new()),
         }
     }
 
@@ -109,52 +119,40 @@ impl Default for InMemoryQueue {
 impl QueueBackend for InMemoryQueue {
     async fn enqueue(&self, task: NotificationTask) -> Result<TaskId, QueueError> {
         let id = task.id.clone();
+        let mut state = self.state.lock().await;
 
-        if self.capacity > 0 {
-            let heap = self.heap.lock().await;
-            if heap.len() >= self.capacity {
-                return Err(QueueError::QueueFull {
-                    capacity: self.capacity,
-                    current: heap.len(),
-                });
-            }
-            drop(heap);
+        if self.capacity > 0 && state.heap.len() >= self.capacity {
+            return Err(QueueError::QueueFull {
+                capacity: self.capacity,
+                current: state.heap.len(),
+            });
         }
 
-        let mut tasks = self.tasks.lock().await;
-        tasks.insert(id.clone(), task.clone());
-        drop(tasks);
+        state.tasks.insert(id.clone(), task.clone());
+        state.heap.push(PriorityEntry { task });
+        state.counters.queued += 1;
 
-        let mut heap = self.heap.lock().await;
-        heap.push(PriorityEntry { task });
-        drop(heap);
-
-        let mut counters = self.counters.lock().await;
-        counters.queued += 1;
-        drop(counters);
-
-        // Wake any blocked dequeue call
+        drop(state);
         self.notify.notify_one();
 
         Ok(id)
     }
 
     async fn dequeue(&self) -> Result<Option<NotificationTask>, QueueError> {
-        let mut heap = self.heap.lock().await;
+        let mut state = self.state.lock().await;
         let now = std::time::SystemTime::now();
         let mut deferred = Vec::new();
 
         // Skip cancelled (or otherwise non-queued) tasks that remain in the heap
         // after being cancelled via the `cancel()` method.
         // Also skip tasks with a future `available_at` (retry backoff delay).
-        while let Some(entry) = heap.pop() {
+        while let Some(entry) = state.heap.pop() {
             let task_id = &entry.task.id;
 
-            let tasks = self.tasks.lock().await;
-            let task_info = tasks
+            let task_info = state
+                .tasks
                 .get(task_id)
                 .map(|t| (t.status.clone(), t.available_at));
-            drop(tasks);
 
             match task_info {
                 Some((TaskStatus::Queued, Some(available_at))) if available_at > now => {
@@ -173,51 +171,46 @@ impl QueueBackend for InMemoryQueue {
 
             // Re-push deferred entries back into the heap before returning.
             for d in deferred {
-                heap.push(d);
+                state.heap.push(d);
             }
 
             let mut task = entry.task;
             task.available_at = None;
             task.mark_processing();
 
-            let mut tasks = self.tasks.lock().await;
-            tasks.insert(task.id.clone(), task.clone());
-            drop(tasks);
-
-            let mut counters = self.counters.lock().await;
-            counters.queued = counters.queued.saturating_sub(1);
-            counters.processing += 1;
-            drop(counters);
+            state.tasks.insert(task.id.clone(), task.clone());
+            state.counters.queued = state.counters.queued.saturating_sub(1);
+            state.counters.processing += 1;
 
             return Ok(Some(task));
         }
 
         // Re-push deferred entries back into the heap.
         for d in deferred {
-            heap.push(d);
+            state.heap.push(d);
         }
 
         Ok(None)
     }
 
     async fn ack(&self, task_id: &str) -> Result<(), QueueError> {
-        let mut tasks = self.tasks.lock().await;
-        let task = tasks
+        let mut state = self.state.lock().await;
+        let task = state
+            .tasks
             .get_mut(task_id)
             .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
 
         task.mark_completed();
-
-        let mut counters = self.counters.lock().await;
-        counters.processing = counters.processing.saturating_sub(1);
-        counters.completed += 1;
+        state.counters.processing = state.counters.processing.saturating_sub(1);
+        state.counters.completed += 1;
 
         Ok(())
     }
 
     async fn nack(&self, task_id: &str, error: &str) -> Result<(), QueueError> {
-        let mut tasks = self.tasks.lock().await;
-        let task = tasks
+        let mut state = self.state.lock().await;
+        let task = state
+            .tasks
             .get_mut(task_id)
             .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
 
@@ -238,51 +231,47 @@ impl QueueBackend for InMemoryQueue {
             task.available_at = available_at;
 
             let requeue_task = task.clone();
-            drop(tasks);
+            state.heap.push(PriorityEntry { task: requeue_task });
+            state.counters.processing = state.counters.processing.saturating_sub(1);
+            state.counters.queued += 1;
 
-            let mut heap = self.heap.lock().await;
-            heap.push(PriorityEntry { task: requeue_task });
-            drop(heap);
-
-            let mut counters = self.counters.lock().await;
-            counters.processing = counters.processing.saturating_sub(1);
-            counters.queued += 1;
-            drop(counters);
-
-            // Wake workers for retry
+            drop(state);
             self.notify.notify_one();
         } else {
             // Retries exhausted — move to DLQ instead of just marking failed.
-            // This removes from tasks map and inserts into DLQ, updating counters.
-            drop(tasks);
-            self.move_to_dlq(task_id, error).await?;
+            // Extract the task from the map, then insert into DLQ.
+            let task = state
+                .tasks
+                .get_mut(task_id)
+                .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
+            task.mark_failed(error);
+            let task = state.tasks.remove(task_id).expect("task was just obtained via get_mut");
+
+            let entry = DlqEntry::new(task, error);
+            state.dlq.insert(task_id.to_string(), entry);
+            state.counters.processing = state.counters.processing.saturating_sub(1);
         }
 
         Ok(())
     }
 
     async fn get_task(&self, task_id: &str) -> Result<Option<NotificationTask>, QueueError> {
-        let tasks = self.tasks.lock().await;
-        if let Some(task) = tasks.get(task_id) {
+        let state = self.state.lock().await;
+        if let Some(task) = state.tasks.get(task_id) {
             return Ok(Some(task.clone()));
         }
-        drop(tasks);
 
         // Fall back to DLQ — tasks there have Failed status but are still queryable
-        let dlq = self.dlq.lock().await;
-        Ok(dlq.get(task_id).map(|entry| entry.task.clone()))
+        Ok(state.dlq.get(task_id).map(|entry| entry.task.clone()))
     }
 
     async fn cancel(&self, task_id: &str) -> Result<bool, QueueError> {
-        let mut tasks = self.tasks.lock().await;
-        if let Some(task) = tasks.get_mut(task_id) {
+        let mut state = self.state.lock().await;
+        if let Some(task) = state.tasks.get_mut(task_id) {
             if task.status == TaskStatus::Queued {
                 task.mark_cancelled();
-
-                let mut counters = self.counters.lock().await;
-                counters.queued = counters.queued.saturating_sub(1);
-                counters.cancelled += 1;
-
+                state.counters.queued = state.counters.queued.saturating_sub(1);
+                state.counters.cancelled += 1;
                 return Ok(true);
             }
         }
@@ -290,8 +279,8 @@ impl QueueBackend for InMemoryQueue {
     }
 
     async fn stats(&self) -> Result<QueueStats, QueueError> {
-        let counters = self.counters.lock().await;
-        Ok(counters.clone())
+        let state = self.state.lock().await;
+        Ok(state.counters.clone())
     }
 
     async fn list_tasks(
@@ -299,8 +288,9 @@ impl QueueBackend for InMemoryQueue {
         status: Option<TaskStatus>,
         limit: usize,
     ) -> Result<Vec<NotificationTask>, QueueError> {
-        let tasks = self.tasks.lock().await;
-        let iter = tasks
+        let state = self.state.lock().await;
+        let iter = state
+            .tasks
             .values()
             .filter(|t| status.as_ref().is_none_or(|s| t.status == *s));
 
@@ -311,41 +301,36 @@ impl QueueBackend for InMemoryQueue {
     }
 
     async fn purge_completed(&self) -> Result<usize, QueueError> {
-        let mut tasks = self.tasks.lock().await;
-        let before = tasks.len();
-        tasks.retain(|_, t| !t.is_terminal());
-        let purged = before - tasks.len();
-        drop(tasks);
+        let mut state = self.state.lock().await;
+        let before = state.tasks.len();
+        state.tasks.retain(|_, t| !t.is_terminal());
+        let purged = before - state.tasks.len();
 
         // Decrement counters so stats() reflects actual remaining tasks,
         // matching SqliteQueue semantics where purge DELETEs rows.
         if purged > 0 {
-            let mut counters = self.counters.lock().await;
-            counters.completed = 0;
-            counters.failed = 0;
-            counters.cancelled = 0;
+            state.counters.completed = 0;
+            state.counters.failed = 0;
+            state.counters.cancelled = 0;
         }
 
         Ok(purged)
     }
 
     async fn move_to_dlq(&self, task_id: &str, reason: &str) -> Result<(), QueueError> {
-        let task = {
-            let mut tasks = self.tasks.lock().await;
-            let task = tasks
-                .get_mut(task_id)
-                .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
-            // Mark as Failed before extracting so the DLQ entry has the correct status
-            task.mark_failed(reason);
-            tasks.remove(task_id).expect("task was just obtained via get_mut")
-        };
+        let mut state = self.state.lock().await;
+
+        let task = state
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
+        // Mark as Failed before extracting so the DLQ entry has the correct status
+        task.mark_failed(reason);
+        let task = state.tasks.remove(task_id).expect("task was just obtained via get_mut");
 
         let entry = DlqEntry::new(task, reason);
-        let mut dlq = self.dlq.lock().await;
-        dlq.insert(task_id.to_string(), entry);
-
-        let mut counters = self.counters.lock().await;
-        counters.processing = counters.processing.saturating_sub(1);
+        state.dlq.insert(task_id.to_string(), entry);
+        state.counters.processing = state.counters.processing.saturating_sub(1);
         // NOTE: we do NOT increment counters.failed here.
         // Failed tasks in the main queue are tracked there; DLQ tasks are
         // tracked separately via dlq_stats(). This avoids double-counting
@@ -355,8 +340,8 @@ impl QueueBackend for InMemoryQueue {
     }
 
     async fn list_dlq(&self, limit: usize) -> Result<Vec<DlqEntry>, QueueError> {
-        let dlq = self.dlq.lock().await;
-        let mut entries: Vec<_> = dlq.values().cloned().collect();
+        let state = self.state.lock().await;
+        let mut entries: Vec<_> = state.dlq.values().cloned().collect();
         // Newest first
         entries.sort_by(|a, b| b.moved_at.cmp(&a.moved_at));
         entries.truncate(limit);
@@ -364,18 +349,20 @@ impl QueueBackend for InMemoryQueue {
     }
 
     async fn dlq_stats(&self) -> Result<DlqStats, QueueError> {
-        let dlq = self.dlq.lock().await;
+        let state = self.state.lock().await;
         Ok(DlqStats {
-            dlq_size: dlq.len(),
+            dlq_size: state.dlq.len(),
         })
     }
 
     async fn requeue_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
-        let task = {
-            let mut dlq = self.dlq.lock().await;
-            dlq.remove(task_id).ok_or_else(|| QueueError::NotFound(task_id.to_string()))?
-                .task
-        };
+        let mut state = self.state.lock().await;
+
+        let task = state
+            .dlq
+            .remove(task_id)
+            .ok_or_else(|| QueueError::NotFound(task_id.to_string()))?
+            .task;
 
         // Reset attempt counter and status for fresh retry
         let mut retry_task = task;
@@ -385,27 +372,19 @@ impl QueueBackend for InMemoryQueue {
         retry_task.available_at = None;
 
         let id = retry_task.id.clone();
-        let mut tasks = self.tasks.lock().await;
-        tasks.insert(id.clone(), retry_task.clone());
-        drop(tasks);
+        state.tasks.insert(id.clone(), retry_task.clone());
+        state.heap.push(PriorityEntry { task: retry_task });
+        state.counters.queued += 1;
 
-        let mut heap = self.heap.lock().await;
-        heap.push(PriorityEntry { task: retry_task });
-        drop(heap);
-
-        let mut counters = self.counters.lock().await;
-        counters.queued += 1;
-        drop(counters);
-
-        // Wake workers
+        drop(state);
         self.notify.notify_one();
 
         Ok(())
     }
 
     async fn delete_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
-        let mut dlq = self.dlq.lock().await;
-        dlq.remove(task_id).ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
+        let mut state = self.state.lock().await;
+        state.dlq.remove(task_id).ok_or_else(|| QueueError::NotFound(task_id.to_string()))?;
         Ok(())
     }
 }
