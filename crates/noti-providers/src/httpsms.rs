@@ -64,7 +64,11 @@ impl NotifyProvider for HttpSmsProvider {
         let from = config.require("from", "httpsms")?;
         let to = config.require("to", "httpsms")?;
 
-        let url = "https://api.httpsms.com/v1/messages/send";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.httpsms.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/v1/messages/send");
 
         let text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

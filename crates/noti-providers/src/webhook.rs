@@ -305,7 +305,7 @@ impl WebhookProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use noti_core::MessageFormat;
+
 
     // ---- build_body tests ----
 

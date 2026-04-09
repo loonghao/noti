@@ -50,6 +50,8 @@ impl NotifyProvider for ClickatellProvider {
                 "media_url",
                 "Public URL for media attachment (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://platform.clickatell.com)")
+                .with_example("https://platform.clickatell.com"),
         ]
     }
 
@@ -67,7 +69,11 @@ impl NotifyProvider for ClickatellProvider {
         let to = config.require("to", "clickatell")?;
         let channel = config.get("channel").unwrap_or("sms");
 
-        let url = "https://platform.clickatell.com/messages";
+        let url = if let Some(base) = config.get("base_url") {
+            format!("{}/messages", base.trim_end_matches('/'))
+        } else {
+            "https://platform.clickatell.com/messages".to_string()
+        };
 
         let body_text = if let Some(ref title) = message.title {
             format!("{title}\n\n{}", message.text)

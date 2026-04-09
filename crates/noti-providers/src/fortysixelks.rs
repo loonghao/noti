@@ -70,11 +70,16 @@ impl NotifyProvider for FortySixElksProvider {
 
         let has_media = message.has_attachments() || config.get("media_url").is_some();
 
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.46elks.com")
+            .trim_end_matches('/');
+
         // Use MMS endpoint if we have attachments
         let endpoint = if has_media {
-            "https://api.46elks.com/a1/mms"
+            format!("{base_url}/a1/mms")
         } else {
-            "https://api.46elks.com/a1/sms"
+            format!("{base_url}/a1/sms")
         };
 
         let mut params: Vec<(&str, String)> = vec![

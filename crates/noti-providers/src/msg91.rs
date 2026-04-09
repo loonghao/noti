@@ -62,7 +62,11 @@ impl NotifyProvider for Msg91Provider {
         let sender = config.require("sender", "msg91")?;
         let to = config.require("to", "msg91")?;
 
-        let url = "https://control.msg91.com/api/v5/flow/";
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://control.msg91.com")
+            .trim_end_matches('/');
+        let url = format!("{base_url}/api/v5/flow/");
 
         let route = config.get("route").unwrap_or("4");
         let country = config.get("country").unwrap_or("91");

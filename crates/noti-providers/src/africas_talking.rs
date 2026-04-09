@@ -43,6 +43,8 @@ impl NotifyProvider for AfricasTalkingProvider {
                 "sandbox",
                 "Use sandbox environment (true/false, default: false)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.africastalking.com)")
+                .with_example("https://api.africastalking.com"),
         ]
     }
 
@@ -58,10 +60,12 @@ impl NotifyProvider for AfricasTalkingProvider {
         let to = config.require("to", "africastalking")?;
         let sandbox = config.get("sandbox").unwrap_or("false") == "true";
 
-        let base_url = if sandbox {
-            "https://api.sandbox.africastalking.com/version1/messaging"
+        let base_url = if let Some(base) = config.get("base_url") {
+            base.trim_end_matches('/').to_string()
+        } else if sandbox {
+            "https://api.sandbox.africastalking.com/version1/messaging".to_string()
         } else {
-            "https://api.africastalking.com/version1/messaging"
+            "https://api.africastalking.com/version1/messaging".to_string()
         };
 
         let mut params: Vec<(&str, &str)> = vec![

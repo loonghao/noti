@@ -48,6 +48,8 @@ impl NotifyProvider for BulkVsProvider {
                 "media_url",
                 "Public URL for MMS media (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://portal.bulkvs.com)")
+                .with_example("https://portal.bulkvs.com"),
         ]
     }
 
@@ -102,9 +104,14 @@ impl NotifyProvider for BulkVsProvider {
             "Message": msg_obj
         });
 
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://portal.bulkvs.com")
+            .trim_end_matches('/');
+
         let resp = self
             .client
-            .post("https://portal.bulkvs.com/api/3.0/message")
+            .post(format!("{base_url}/api/3.0/message"))
             .json(&body)
             .send()
             .await

@@ -74,7 +74,7 @@ impl NotifyProvider for SnsProvider {
         let url = if let Some(base) = config.get("base_url") {
             base.trim_end_matches('/').to_string()
         } else {
-            format!("https://sns.{region}.amazonaws.com/")
+            format!("https://sns.{region}.amazonaws.com")
         };
 
         let body_text = if let Some(ref title) = message.title {

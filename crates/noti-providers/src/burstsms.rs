@@ -51,6 +51,8 @@ impl NotifyProvider for BurstSmsProvider {
                 "media_url",
                 "Public URL for MMS image (alternative to file attachments)",
             ),
+            ParamDef::optional("base_url", "API base URL override (default: https://api.transmitsms.com)")
+                .with_example("https://api.transmitsms.com"),
         ]
     }
 
@@ -77,11 +79,16 @@ impl NotifyProvider for BurstSmsProvider {
 
         let has_media = message.has_attachments() || config.get("media_url").is_some();
 
+        let base_url = config
+            .get("base_url")
+            .unwrap_or("https://api.transmitsms.com")
+            .trim_end_matches('/');
+
         // Use MMS endpoint for media attachments
         let endpoint = if has_media {
-            "https://api.transmitsms.com/send-mms.json"
+            format!("{base_url}/send-mms.json")
         } else {
-            "https://api.transmitsms.com/send-sms.json"
+            format!("{base_url}/send-sms.json")
         };
 
         let mut params: Vec<(&str, String)> = vec![
