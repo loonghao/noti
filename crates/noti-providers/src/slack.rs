@@ -140,13 +140,27 @@ impl NotifyProvider for SlackProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("slack", e))?;
 
         let status = resp.status().as_u16();
+        let retry_after = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
         let body_text = resp
             .text()
             .await
             .map_err(|e| NotiError::Network(format!("failed to read response: {e}")))?;
+
+        if status == 429 {
+            return Err(crate::http_helpers::handle_http_error(
+                "slack",
+                status,
+                &body_text,
+                retry_after.as_deref(),
+            ));
+        }
 
         if status == 200 && body_text == "ok" {
             Ok(
@@ -205,9 +219,23 @@ impl SlackProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("slack", e))?;
 
             let status = resp.status().as_u16();
+            if status == 429 {
+                let retry_after = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                let body = resp.text().await.unwrap_or_default();
+                return Err(crate::http_helpers::handle_http_error(
+                    "slack",
+                    status,
+                    &body,
+                    retry_after.as_deref(),
+                ));
+            }
             let raw: serde_json::Value = resp
                 .json()
                 .await
@@ -300,9 +328,23 @@ impl SlackProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("slack", e))?;
 
         let status = resp.status().as_u16();
+        if status == 429 {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::http_helpers::handle_http_error(
+                "slack",
+                status,
+                &body,
+                retry_after.as_deref(),
+            ));
+        }
         let raw: serde_json::Value = resp
             .json()
             .await

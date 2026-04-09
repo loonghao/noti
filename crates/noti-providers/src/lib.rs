@@ -128,6 +128,9 @@ pub mod zulip;
 // Provider registration module - all registration logic organized by category
 pub mod providers;
 
+/// Shared HTTP response helpers for consistent error handling across providers.
+pub mod http_helpers;
+
 use std::sync::LazyLock;
 use std::time::Duration;
 

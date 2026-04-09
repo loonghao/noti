@@ -68,7 +68,7 @@ impl TelegramProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("telegram", e))?;
 
         Self::parse_response(resp).await
     }
@@ -138,7 +138,7 @@ impl TelegramProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?;
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("telegram", e))?;
 
             let result = Self::parse_response(resp).await?;
             if !result.success {
@@ -153,6 +153,23 @@ impl TelegramProvider {
 
     async fn parse_response(resp: reqwest::Response) -> Result<SendResponse, NotiError> {
         let status = resp.status().as_u16();
+
+        // Handle rate limiting (429)
+        if status == 429 {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::http_helpers::handle_http_error(
+                "telegram",
+                status,
+                &body,
+                retry_after.as_deref(),
+            ));
+        }
+
         let raw: serde_json::Value = resp
             .json()
             .await
@@ -198,7 +215,7 @@ impl TelegramProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("telegram", e))?;
 
         Self::parse_response(resp).await
     }
@@ -244,7 +261,7 @@ impl TelegramProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| NotiError::Network(e.to_string()))?;
+            .map_err(|e| crate::http_helpers::classify_reqwest_error("telegram", e))?;
 
         Self::parse_response(resp).await
     }

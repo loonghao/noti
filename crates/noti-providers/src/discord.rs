@@ -119,7 +119,7 @@ impl NotifyProvider for DiscordProvider {
                 .multipart(form)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("discord", e))?
         } else {
             // Text-only JSON payload
             let mut payload_with_user = payload;
@@ -135,10 +135,30 @@ impl NotifyProvider for DiscordProvider {
                 .json(&payload_with_user)
                 .send()
                 .await
-                .map_err(|e| NotiError::Network(e.to_string()))?
+                .map_err(|e| crate::http_helpers::classify_reqwest_error("discord", e))?
         };
 
         let status = resp.status().as_u16();
+
+        // Handle rate limiting (429) — Discord returns retry_after in JSON body
+        if status == 429 {
+            let retry_after = resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let body = resp.text().await.unwrap_or_default();
+            // Discord also includes retry_after in the JSON body
+            let retry_from_body = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("retry_after").and_then(|r| r.as_f64()))
+                .map(|secs| secs as u64);
+            let retry_secs = retry_after
+                .as_deref()
+                .and_then(|s| s.parse::<u64>().ok())
+                .or(retry_from_body);
+            return Err(NotiError::rate_limited("discord", retry_secs));
+        }
 
         // Discord returns 204 No Content on success (or 200 with message object if wait=true)
         if status == 204 || status == 200 {
