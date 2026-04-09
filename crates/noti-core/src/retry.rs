@@ -170,15 +170,11 @@ where
 
 /// Determine whether an error is transient and worth retrying.
 ///
-/// Validation errors are never retried (they indicate permanent problems).
-/// Network and provider errors are considered retryable.
+/// Delegates to [`NotiError::is_retryable`] which considers timeout,
+/// rate-limited, network, and provider errors as retryable, while
+/// validation, config, and URL parse errors are not.
 fn is_retryable(err: &NotiError) -> bool {
-    match err {
-        NotiError::Network(_) => true,
-        NotiError::Provider { .. } => true,
-        NotiError::Io(_) => true,
-        NotiError::Validation(_) | NotiError::Config(_) | NotiError::UrlParse(_) => false,
-    }
+    err.is_retryable()
 }
 
 /// Serde helper: serialize/deserialize `Duration` as milliseconds.

@@ -33,12 +33,102 @@ fn test_noti_error_all_variants_are_error() {
         NotiError::UrlParse("u".into()),
         NotiError::Network("n".into()),
         NotiError::Validation("v".into()),
+        NotiError::Timeout("t".into()),
+        NotiError::RateLimited {
+            provider: "slack".into(),
+            retry_after_secs: Some(60),
+        },
     ];
     for err in &errors {
         // All errors should implement Display via thiserror
         let display = err.to_string();
         assert!(!display.is_empty());
     }
+}
+
+#[rstest]
+fn test_noti_error_timeout_constructor() {
+    let err = NotiError::timeout("request to slack timed out after 30s");
+    assert!(err.is_timeout());
+    assert!(err.is_retryable());
+    assert_eq!(
+        err.to_string(),
+        "timeout error: request to slack timed out after 30s"
+    );
+}
+
+#[rstest]
+fn test_noti_error_rate_limited_constructor() {
+    let err = NotiError::rate_limited("slack", Some(60));
+    assert!(err.is_rate_limited());
+    assert!(err.is_retryable());
+    assert!(err.to_string().contains("slack"));
+    assert!(err.to_string().contains("60"));
+}
+
+#[rstest]
+fn test_noti_error_rate_limited_no_retry_after() {
+    let err = NotiError::rate_limited("discord", None);
+    assert!(err.is_rate_limited());
+    assert!(err.is_retryable());
+    assert!(err.to_string().contains("discord"));
+    assert!(err.to_string().contains("retry after"));
+}
+
+#[rstest]
+fn test_noti_error_is_retryable_network() {
+    assert!(NotiError::Network("connection refused".into()).is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_retryable_timeout() {
+    assert!(NotiError::timeout("timed out").is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_retryable_rate_limited() {
+    assert!(NotiError::rate_limited("slack", Some(30)).is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_retryable_provider() {
+    assert!(NotiError::provider("slack", "500 internal error").is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_retryable_io() {
+    assert!(NotiError::Io(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "broken pipe"
+    ))
+    .is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_not_retryable_validation() {
+    assert!(!NotiError::Validation("missing param".into()).is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_not_retryable_config() {
+    assert!(!NotiError::Config("bad config".into()).is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_not_retryable_url_parse() {
+    assert!(!NotiError::UrlParse("bad url".into()).is_retryable());
+}
+
+#[rstest]
+fn test_noti_error_is_timeout_false_for_other_variants() {
+    assert!(!NotiError::Network("err".into()).is_timeout());
+    assert!(!NotiError::Validation("err".into()).is_timeout());
+}
+
+#[rstest]
+fn test_noti_error_is_rate_limited_false_for_other_variants() {
+    assert!(!NotiError::Network("err".into()).is_rate_limited());
+    assert!(!NotiError::Timeout("err".into()).is_rate_limited());
 }
 
 // ======================== Message additional tests ========================
