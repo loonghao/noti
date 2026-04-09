@@ -29,6 +29,7 @@ fn test_noti_error_all_variants_are_error() {
         NotiError::Provider {
             provider: "p".into(),
             message: "m".into(),
+            retryable: None,
         },
         NotiError::UrlParse("u".into()),
         NotiError::Network("n".into()),
@@ -92,7 +93,11 @@ fn test_noti_error_is_retryable_rate_limited() {
 
 #[rstest]
 fn test_noti_error_is_retryable_provider() {
-    assert!(NotiError::provider("slack", "500 internal error").is_retryable());
+    assert!(NotiError::provider_retryable("slack", "500 internal error").is_retryable());
+    // Default provider() constructor has retryable=None → not retryable
+    assert!(!NotiError::provider("slack", "unknown error").is_retryable());
+    // Explicit permanent → not retryable
+    assert!(!NotiError::provider_permanent("slack", "401 unauthorized").is_retryable());
 }
 
 #[rstest]

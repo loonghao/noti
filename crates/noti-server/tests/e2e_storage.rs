@@ -211,8 +211,9 @@ async fn e2e_storage_download_nonexistent_file() {
     let (base, _storage_path) = spawn_server_with_temp_storage().await;
     let client = test_client();
 
+    // Use a valid UUID that doesn't correspond to any stored file
     let resp = client
-        .get(format!("{base}/api/v1/storage/nonexistent-file-id"))
+        .get(format!("{base}/api/v1/storage/00000000-0000-0000-0000-000000000000"))
         .send()
         .await
         .expect("request failed");
@@ -225,7 +226,7 @@ async fn e2e_storage_download_nonexistent_file() {
 
     let body: ErrorResponse = resp.json().await.unwrap();
     assert!(
-        body.message.contains("not found") || body.message.contains("nonexistent"),
+        body.message.contains("not found"),
         "error message should indicate file not found"
     );
 }
@@ -392,7 +393,7 @@ async fn e2e_storage_delete_nonexistent_file() {
     let client = test_client();
 
     let resp = client
-        .delete(format!("{base}/api/v1/storage/nonexistent-delete-id"))
+        .delete(format!("{base}/api/v1/storage/00000000-0000-0000-0000-000000000002"))
         .send()
         .await
         .expect("request failed");

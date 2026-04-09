@@ -44,7 +44,12 @@ pub fn handle_http_error(
         } else {
             format!("HTTP {status}: {}", truncate_body(body_text, 200))
         };
-        NotiError::provider(provider, msg)
+        // 5xx errors are transient (server-side), 4xx are permanent (client-side)
+        if status >= 500 {
+            NotiError::provider_retryable(provider, msg)
+        } else {
+            NotiError::provider_permanent(provider, msg)
+        }
     }
 }
 
@@ -127,9 +132,17 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_http_error_502() {
+        let err = handle_http_error("slack", 502, "bad gateway", None);
+        assert!(matches!(err, NotiError::Provider { .. }));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
     fn test_handle_http_error_401() {
         let err = handle_http_error("slack", 401, "unauthorized", None);
         assert!(matches!(err, NotiError::Provider { .. }));
+        assert!(!err.is_retryable()); // 4xx = permanent
         let msg = err.to_string();
         assert!(msg.contains("401"));
     }
@@ -138,6 +151,14 @@ mod tests {
     fn test_handle_http_error_403() {
         let err = handle_http_error("slack", 403, "forbidden", None);
         assert!(matches!(err, NotiError::Provider { .. }));
+        assert!(!err.is_retryable()); // 4xx = permanent
+    }
+
+    #[test]
+    fn test_handle_http_error_404() {
+        let err = handle_http_error("slack", 404, "not found", None);
+        assert!(matches!(err, NotiError::Provider { .. }));
+        assert!(!err.is_retryable()); // 4xx = permanent
     }
 
     #[test]

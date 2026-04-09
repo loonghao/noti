@@ -253,6 +253,7 @@ impl NotifyProvider for WebPushProvider {
         let payload = serde_json::to_string(&notification).map_err(|e| NotiError::Provider {
             provider: "webpush".into(),
             message: format!("failed to serialize payload: {e}"),
+            retryable: Some(false),
         })?;
 
         let ttl = config.get("ttl").unwrap_or("86400");

@@ -153,6 +153,7 @@ fn test_noti_error_provider_display() {
     let err = NotiError::Provider {
         provider: "wecom".to_string(),
         message: "auth failed".to_string(),
+        retryable: Some(false),
     };
     assert_eq!(err.to_string(), "provider error (wecom): auth failed");
 }
@@ -179,9 +180,10 @@ fn test_noti_error_validation_display() {
 fn test_noti_error_provider_convenience_constructor() {
     let err = NotiError::provider("slack", "rate limited");
     match err {
-        NotiError::Provider { provider, message } => {
+        NotiError::Provider { provider, message, retryable } => {
             assert_eq!(provider, "slack");
             assert_eq!(message, "rate limited");
+            assert_eq!(retryable, None);
         }
         _ => panic!("expected Provider variant"),
     }

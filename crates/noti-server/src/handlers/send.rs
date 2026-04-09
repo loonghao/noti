@@ -227,13 +227,7 @@ pub async fn send_notification(
                 "notification send failed"
             );
 
-            Ok(Json(SendApiResponse {
-                notification_id,
-                success: false,
-                provider: provider_name,
-                message: e.to_string(),
-                status_code: None,
-            }))
+            Err(ApiError::internal(e.to_string()).with_code(codes::NOTIFICATION_SEND_ERROR))
         }
     }
 }

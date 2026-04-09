@@ -266,7 +266,9 @@ mod tests {
 
     #[test]
     fn test_is_retryable_provider() {
-        assert!(is_retryable(&NotiError::provider("slack", "500")));
+        assert!(is_retryable(&NotiError::provider_retryable("slack", "500")));
+        assert!(!is_retryable(&NotiError::provider("slack", "unknown")));
+        assert!(!is_retryable(&NotiError::provider_permanent("slack", "401")));
     }
 
     #[test]

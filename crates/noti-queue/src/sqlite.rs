@@ -385,14 +385,25 @@ impl QueueBackend for SqliteQueue {
             let task_json = serde_json::to_string(&task).serde_err()?;
             let moved_at = now;
 
-            // Insert into DLQ then delete from main tasks table (within same transaction)
-            conn.execute(
-                "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
-                params![task_id, task_json, moved_at, error],
-            )
-            .backend_err()?;
-            conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
+            // Insert into DLQ then delete from main tasks table within a transaction
+            // to prevent data loss if the process crashes between the two operations.
+            conn.execute_batch("BEGIN").backend_err()?;
+            let tx_result: Result<(), QueueError> = (|| {
+                conn.execute(
+                    "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
+                    params![task_id, task_json, moved_at, error],
+                )
                 .backend_err()?;
+                conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
+                    .backend_err()?;
+                Ok(())
+            })();
+            if tx_result.is_err() {
+                let _ = conn.execute_batch("ROLLBACK");
+            } else {
+                conn.execute_batch("COMMIT").backend_err()?;
+            }
+            tx_result?;
         }
 
         Ok(())
@@ -525,10 +536,16 @@ impl QueueBackend for SqliteQueue {
         let conn = self.conn.lock().await;
         let now = system_time_to_epoch_ms(SystemTime::now());
 
+        // Only recover tasks that have been in 'processing' state for longer
+        // than STALE_THRESHOLD_MS (5 minutes). This prevents recovering
+        // tasks that are actively being processed by a healthy worker.
+        const STALE_THRESHOLD_MS: i64 = 5 * 60 * 1000;
+        let cutoff = now - STALE_THRESHOLD_MS;
+
         let recovered = conn
             .execute(
-                "UPDATE tasks SET status = 'queued', updated_at = ?1 WHERE status = 'processing'",
-                params![now],
+                "UPDATE tasks SET status = 'queued', updated_at = ?1 WHERE status = 'processing' AND updated_at < ?2",
+                params![now, cutoff],
             )
             .backend_err()?;
 
@@ -541,57 +558,64 @@ impl QueueBackend for SqliteQueue {
     }
 
     async fn move_to_dlq(&self, task_id: &str, reason: &str) -> Result<(), QueueError> {
-        let task_json: String = {
-            let conn = self.conn.lock().await;
-            let row = match conn.query_row(
-                "SELECT id, provider, config_json, message_json, retry_policy_json,
-                        status, attempts, last_error, created_at, updated_at,
-                        metadata_json, callback_url, callback_secret, priority, available_at
-                 FROM tasks WHERE id = ?1",
-                params![task_id],
-                |row| {
-                    Ok(TaskRow {
-                        id: row.get(0)?,
-                        provider: row.get(1)?,
-                        config_json: row.get(2)?,
-                        message_json: row.get(3)?,
-                        retry_policy_json: row.get(4)?,
-                        status: row.get(5)?,
-                        attempts: row.get(6)?,
-                        last_error: row.get(7)?,
-                        created_at: row.get(8)?,
-                        updated_at: row.get(9)?,
-                        metadata_json: row.get(10)?,
-                        callback_url: row.get(11)?,
-                        callback_secret: row.get(12)?,
-                        priority: row.get(13)?,
-                        available_at: row.get(14)?,
-                    })
-                },
-            ) {
-                Ok(r) => r,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    return Err(QueueError::NotFound(task_id.to_string()));
-                }
-                Err(e) => return Err(QueueError::Backend(e.to_string())),
-            };
-            let mut task = Self::deserialize_task(&row)?;
-            task.mark_failed(reason);
-            serde_json::to_string(&task).serde_err()?
-        };
-
         let conn = self.conn.lock().await;
         let now = system_time_to_epoch_ms(std::time::SystemTime::now());
-        conn.execute(
-            "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
-            params![task_id, task_json, now, reason],
-        )
-        .backend_err()?;
 
-        conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
+        // Read the task first
+        let row = match conn.query_row(
+            "SELECT id, provider, config_json, message_json, retry_policy_json,
+                    status, attempts, last_error, created_at, updated_at,
+                    metadata_json, callback_url, callback_secret, priority, available_at
+             FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| {
+                Ok(TaskRow {
+                    id: row.get(0)?,
+                    provider: row.get(1)?,
+                    config_json: row.get(2)?,
+                    message_json: row.get(3)?,
+                    retry_policy_json: row.get(4)?,
+                    status: row.get(5)?,
+                    attempts: row.get(6)?,
+                    last_error: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                    metadata_json: row.get(10)?,
+                    callback_url: row.get(11)?,
+                    callback_secret: row.get(12)?,
+                    priority: row.get(13)?,
+                    available_at: row.get(14)?,
+                })
+            },
+        ) {
+            Ok(r) => r,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(QueueError::NotFound(task_id.to_string()));
+            }
+            Err(e) => return Err(QueueError::Backend(e.to_string())),
+        };
+        let mut task = Self::deserialize_task(&row)?;
+        task.mark_failed(reason);
+        let task_json = serde_json::to_string(&task).serde_err()?;
+
+        // Wrap DLQ insert + task delete in a transaction
+        conn.execute_batch("BEGIN").backend_err()?;
+        let tx_result: Result<(), QueueError> = (|| {
+            conn.execute(
+                "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
+                params![task_id, task_json, now, reason],
+            )
             .backend_err()?;
-
-        Ok(())
+            conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
+                .backend_err()?;
+            Ok(())
+        })();
+        if tx_result.is_err() {
+            let _ = conn.execute_batch("ROLLBACK");
+        } else {
+            conn.execute_batch("COMMIT").backend_err()?;
+        }
+        tx_result
     }
 
     async fn list_dlq(&self, limit: usize) -> Result<Vec<DlqEntry>, QueueError> {
@@ -633,20 +657,19 @@ impl QueueBackend for SqliteQueue {
     }
 
     async fn requeue_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
-        let task_json: String = {
-            let conn = self.conn.lock().await;
-            let result: Result<String, _> = conn.query_row(
-                "SELECT task_json FROM dlq_entries WHERE task_id = ?1",
-                params![task_id],
-                |row| row.get(0),
-            );
-            match result {
-                Ok(v) => v,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    return Err(QueueError::NotFound(task_id.to_string()));
-                }
-                Err(e) => return Err(QueueError::Backend(e.to_string())),
+        let conn = self.conn.lock().await;
+
+        // Read DLQ entry
+        let task_json: String = match conn.query_row(
+            "SELECT task_json FROM dlq_entries WHERE task_id = ?1",
+            params![task_id],
+            |row| row.get(0),
+        ) {
+            Ok(v) => v,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(QueueError::NotFound(task_id.to_string()));
             }
+            Err(e) => return Err(QueueError::Backend(e.to_string())),
         };
 
         let mut task: NotificationTask = serde_json::from_str(&task_json).serde_err()?;
@@ -658,34 +681,44 @@ impl QueueBackend for SqliteQueue {
         task.available_at = None;
 
         let task_row = Self::serialize_task(&task)?;
-        let conn = self.conn.lock().await;
-        conn.execute(
-            "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
-                               status, attempts, last_error, created_at, updated_at,
-                               metadata_json, callback_url, callback_secret, priority, available_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            params![
-                task_row.id,
-                task_row.provider,
-                task_row.config_json,
-                task_row.message_json,
-                task_row.retry_policy_json,
-                task_row.status,
-                task_row.attempts,
-                task_row.last_error,
-                task_row.created_at,
-                task_row.updated_at,
-                task_row.metadata_json,
-                task_row.callback_url,
-                task_row.callback_secret,
-                task_row.priority,
-                task_row.available_at,
-            ],
-        )
-        .backend_err()?;
 
-        conn.execute("DELETE FROM dlq_entries WHERE task_id = ?1", params![task_id])
+        // Wrap task insert + DLQ delete in a transaction
+        conn.execute_batch("BEGIN").backend_err()?;
+        let tx_result: Result<(), QueueError> = (|| {
+            conn.execute(
+                "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
+                                   status, attempts, last_error, created_at, updated_at,
+                                   metadata_json, callback_url, callback_secret, priority, available_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    task_row.id,
+                    task_row.provider,
+                    task_row.config_json,
+                    task_row.message_json,
+                    task_row.retry_policy_json,
+                    task_row.status,
+                    task_row.attempts,
+                    task_row.last_error,
+                    task_row.created_at,
+                    task_row.updated_at,
+                    task_row.metadata_json,
+                    task_row.callback_url,
+                    task_row.callback_secret,
+                    task_row.priority,
+                    task_row.available_at,
+                ],
+            )
             .backend_err()?;
+            conn.execute("DELETE FROM dlq_entries WHERE task_id = ?1", params![task_id])
+                .backend_err()?;
+            Ok(())
+        })();
+        if tx_result.is_err() {
+            let _ = conn.execute_batch("ROLLBACK");
+        } else {
+            conn.execute_batch("COMMIT").backend_err()?;
+        }
+        tx_result?;
 
         drop(conn);
         self.notify.notify_waiters();
@@ -1027,6 +1060,18 @@ mod tests {
         let stats = queue.stats().await.unwrap();
         assert_eq!(stats.processing, 2);
         assert_eq!(stats.queued, 1);
+
+        // Manually set updated_at to 6 minutes ago so tasks are considered stale
+        // (recover_stale_tasks only recovers tasks older than 5 minutes)
+        let six_min_ago = system_time_to_epoch_ms(SystemTime::now()) - 6 * 60 * 1000;
+        {
+            let conn = queue.conn.lock().await;
+            conn.execute(
+                "UPDATE tasks SET updated_at = ?1 WHERE status = 'processing'",
+                params![six_min_ago],
+            )
+            .unwrap();
+        }
 
         // Simulate server restart — recover stale "processing" tasks
         let recovered = queue.recover_stale_tasks().await.unwrap();

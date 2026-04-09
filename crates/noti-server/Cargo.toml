@@ -44,5 +44,6 @@ axum-test = "19"
 humantime = { workspace = true }
 reqwest = { workspace = true }
 rstest = { workspace = true }
+rusqlite = { workspace = true }
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }

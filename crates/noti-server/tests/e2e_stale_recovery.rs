@@ -7,6 +7,22 @@ use noti_queue::QueueBackend;
 use reqwest::StatusCode;
 use serde_json::Value;
 
+/// Helper: backdate all 'processing' tasks so they appear stale (>5 min old).
+/// This simulates the passage of time that would occur in a real crash/restart scenario.
+fn backdate_processing_tasks(db_path: &str) {
+    let conn = rusqlite::Connection::open(db_path).expect("open db for backdating");
+    let six_min_ago_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+        - 6 * 60 * 1000;
+    conn.execute(
+        "UPDATE tasks SET updated_at = ?1 WHERE status = 'processing'",
+        rusqlite::params![six_min_ago_ms],
+    )
+    .expect("backdate processing tasks");
+}
+
 // ───────────────────── Stale task recovery (SQLite file) ─────────────────────
 
 /// Enqueue tasks, dequeue them (leaving them in "processing" state), drop the
@@ -42,6 +58,9 @@ async fn e2e_stale_recovery_processing_tasks_become_queued() {
         assert_eq!(stats.processing, 2, "both tasks should be processing");
         // Drop queue — simulates crash
     }
+
+    // Backdate processing tasks so they appear stale (>5 min threshold)
+    backdate_processing_tasks(&db_path);
 
     // Phase 2: start HTTP server against the same DB — triggers recover_stale_tasks()
     let base = spawn_server_sqlite_file(&db_path).await;
@@ -97,6 +116,9 @@ async fn e2e_stale_recovery_tasks_can_be_processed_by_workers() {
         assert_eq!(dequeued.id, task_id);
         // Drop — simulates crash with task stuck in processing
     }
+
+    // Backdate processing tasks so they appear stale (>5 min threshold)
+    backdate_processing_tasks(&db_path);
 
     // Phase 2: start server with workers — recovery + worker processing
     let (base, worker_handle) = spawn_server_sqlite_file_with_workers(&db_path).await;

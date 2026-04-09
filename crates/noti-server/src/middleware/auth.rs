@@ -67,7 +67,15 @@ impl AuthConfig {
     }
 
     /// Check if a path is excluded from authentication.
+    ///
+    /// Normalizes the path by stripping trailing slashes and query strings
+    /// before comparing against the excluded set. This prevents bypasses
+    /// via `/health?foo=1` or `/health/`.
     pub fn is_excluded(&self, path: &str) -> bool {
+        // Strip query string
+        let path = path.split('?').next().unwrap_or(path);
+        // Strip trailing slash (but keep root "/")
+        let path = path.strip_suffix('/').unwrap_or(path);
         self.excluded_paths.contains(path)
     }
 

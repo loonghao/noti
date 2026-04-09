@@ -2244,6 +2244,7 @@ dependencies = [
  "prometheus-client",
  "reqwest",
  "rstest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
