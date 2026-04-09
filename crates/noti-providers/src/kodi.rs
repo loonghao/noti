@@ -47,6 +47,8 @@ impl NotifyProvider for KodiProvider {
                 "Display time in milliseconds (default: 5000)",
             ),
             ParamDef::optional("image", "Notification icon: info, warning, error, or URL"),
+            ParamDef::optional("base_url", "Override base URL for the Kodi server")
+                .with_example("http://192.168.1.100:8080"),
         ]
     }
 
@@ -71,7 +73,13 @@ impl NotifyProvider for KodiProvider {
             .unwrap_or(5000);
         let title = message.title.as_deref().unwrap_or("noti");
 
-        let url = format!("{scheme}://{host}:{port}/jsonrpc");
+        let default_base = format!("{scheme}://{host}:{port}");
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or(default_base);
+
+        let url = format!("{base_url}/jsonrpc");
 
         // Use explicit image config, or embed first image attachment as data URI
         let image = if let Some(img_config) = config.get("image") {

@@ -41,6 +41,8 @@ impl NotifyProvider for FreeMobileProvider {
                 .with_example("12345678"),
             ParamDef::required("password", "Free Mobile API key (password)")
                 .with_example("xxxxxxxx"),
+            ParamDef::optional("base_url", "Override base URL for the Free Mobile API")
+                .with_example("https://smsapi.free-mobile.fr"),
         ]
     }
 
@@ -59,8 +61,14 @@ impl NotifyProvider for FreeMobileProvider {
             message.text.clone()
         };
 
+        let default_base = "https://smsapi.free-mobile.fr";
+        let base = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_base.to_string());
+
         let url = format!(
-            "https://smsapi.free-mobile.fr/sendmsg?user={user}&pass={password}&msg={}",
+            "{base}/sendmsg?user={user}&pass={password}&msg={}",
             urlencoding(&text)
         );
 

@@ -58,6 +58,8 @@ impl NotifyProvider for JsonWebhookProvider {
             .with_example("X-Api-Key=abc;X-Custom=val"),
             ParamDef::optional("type", "Notification type field (default: info)")
                 .with_example("warning"),
+            ParamDef::optional("base_url", "Override the target URL (takes precedence over url)")
+                .with_example("https://example.com/api/notify"),
         ]
     }
 
@@ -71,7 +73,11 @@ impl NotifyProvider for JsonWebhookProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
-        let url = config.require("url", "json")?;
+        let default_url = config.require("url", "json")?;
+        let target_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_url.trim_end_matches('/').to_string());
         let method = config.get("method").unwrap_or("POST").to_uppercase();
         let noti_type = config.get("type").unwrap_or("info");
 
@@ -100,9 +106,9 @@ impl NotifyProvider for JsonWebhookProvider {
         }
 
         let mut request = match method.as_str() {
-            "PUT" => self.client.put(url),
-            "PATCH" => self.client.patch(url),
-            _ => self.client.post(url),
+            "PUT" => self.client.put(&target_url),
+            "PATCH" => self.client.patch(&target_url),
+            _ => self.client.post(&target_url),
         };
 
         // Add custom headers

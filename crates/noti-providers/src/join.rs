@@ -51,6 +51,8 @@ impl NotifyProvider for JoinProvider {
             ParamDef::optional("icon", "Notification icon URL"),
             ParamDef::optional("smallicon", "Small notification icon URL"),
             ParamDef::optional("url", "URL to open on the device"),
+            ParamDef::optional("base_url", "Override base URL for the Join API")
+                .with_example("https://joinjoaomgcd.appspot.com"),
         ]
     }
 
@@ -98,9 +100,15 @@ impl NotifyProvider for JoinProvider {
             params.push(("image", format!("data:{mime};base64,{b64}")));
         }
 
+        let default_base = "https://joinjoaomgcd.appspot.com";
+        let base = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_base.to_string());
+
         let resp = self
             .client
-            .get("https://joinjoaomgcd.appspot.com/_ah/api/messaging/v1/sendPush")
+            .get(format!("{base}/_ah/api/messaging/v1/sendPush"))
             .query(&params)
             .send()
             .await

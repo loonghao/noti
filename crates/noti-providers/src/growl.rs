@@ -52,6 +52,8 @@ impl NotifyProvider for GrowlProvider {
                 "sticky",
                 "Make notification sticky: true or false (default: false)",
             ),
+            ParamDef::optional("base_url", "Override base URL for the Growl server")
+                .with_example("http://192.168.1.100:23053"),
         ]
     }
 
@@ -73,8 +75,14 @@ impl NotifyProvider for GrowlProvider {
 
         let title = message.title.as_deref().unwrap_or("noti");
 
+        let default_base = format!("{scheme}://{host}:{port}");
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or(default_base);
+
         // Use GNTP over HTTP (some Growl-compatible implementations support REST)
-        let url = format!("{scheme}://{host}:{port}/gntp");
+        let url = format!("{base_url}/gntp");
 
         // Build GNTP message with optional icon resource
         let mut gntp_message = format!(

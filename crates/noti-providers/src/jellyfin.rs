@@ -56,6 +56,8 @@ impl NotifyProvider for JellyfinProvider {
             ParamDef::optional("user_id", "Target user ID for the notification"),
             ParamDef::optional("scheme", "URL scheme: http or https (default: http)")
                 .with_example("http"),
+            ParamDef::optional("base_url", "Override base URL for the Jellyfin server")
+                .with_example("http://localhost:8096"),
         ]
     }
 
@@ -69,7 +71,11 @@ impl NotifyProvider for JellyfinProvider {
         let host = config.require("host", "jellyfin")?;
 
         let scheme = config.get("scheme").unwrap_or("http");
-        let base_url = format!("{scheme}://{host}");
+        let default_base = format!("{scheme}://{host}");
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or(default_base);
 
         let name = message.title.as_deref().unwrap_or("noti");
 

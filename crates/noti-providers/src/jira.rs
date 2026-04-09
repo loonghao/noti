@@ -44,6 +44,8 @@ impl NotifyProvider for JiraProvider {
             ParamDef::required("api_token", "Jira API token"),
             ParamDef::required("issue_key", "Issue key to comment on (e.g. PROJ-123)"),
             ParamDef::optional("scheme", "URL scheme: https or http (default: https)"),
+            ParamDef::optional("base_url", "Override base URL for the Jira instance")
+                .with_example("https://mycompany.atlassian.net"),
         ]
     }
 
@@ -64,9 +66,15 @@ impl NotifyProvider for JiraProvider {
         let issue_key = config.require("issue_key", "jira")?;
         let scheme = config.get("scheme").unwrap_or("https");
 
+        let default_base = format!("{scheme}://{host}");
+        let base_url = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or(default_base);
+
         // Step 1: Upload attachments if present
         if message.has_attachments() {
-            let attach_url = format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/attachments");
+            let attach_url = format!("{base_url}/rest/api/3/issue/{issue_key}/attachments");
 
             for attachment in &message.attachments {
                 let data = attachment.read_bytes().await?;
@@ -105,7 +113,7 @@ impl NotifyProvider for JiraProvider {
         }
 
         // Step 2: Add comment
-        let comment_url = format!("{scheme}://{host}/rest/api/3/issue/{issue_key}/comment");
+        let comment_url = format!("{base_url}/rest/api/3/issue/{issue_key}/comment");
 
         let body = serde_json::json!({
             "body": {

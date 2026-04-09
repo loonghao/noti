@@ -45,6 +45,8 @@ impl NotifyProvider for KumulosProvider {
                 "channel",
                 "Broadcast channel ID (default sends to all users)",
             ),
+            ParamDef::optional("base_url", "Override base URL for the Kumulos API")
+                .with_example("https://messages.kumulos.com"),
         ]
     }
 
@@ -85,7 +87,13 @@ impl NotifyProvider for KumulosProvider {
             }
         }
 
-        let url = format!("https://messages.kumulos.com/v2/app-api-keys/{api_key}/messages");
+        let default_base = "https://messages.kumulos.com";
+        let base = config
+            .get("base_url")
+            .map(|s| s.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default_base.to_string());
+
+        let url = format!("{base}/v2/app-api-keys/{api_key}/messages");
 
         let resp = self
             .client
