@@ -19,6 +19,7 @@ repository = "https://github.com/loonghao/noti"
 anyhow = "1.0"
 async-trait = "0.1"
 criterion = { version = "0.5", features = ["async_tokio"] }
+dashmap = "6"
 rand = "0.8"
 metrics = "0.24"
 p256 = { version = "0.13", features = ["ecdsa"] }

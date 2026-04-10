@@ -1,4 +1,5 @@
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -104,8 +105,10 @@ fn build_v1_routes() -> Router<AppState> {
             "/queue/dlq/{task_id}",
             delete(handlers::queue::delete_from_dlq),
         )
-        // Storage endpoints
-        .route("/storage/upload", post(handlers::storage::upload_file))
+        // Storage endpoints — upload route needs a larger body limit so the
+        // handler can return a proper 400 instead of the global limit
+        // dropping the connection mid-transfer.
+        .route("/storage/upload", post(handlers::storage::upload_file).layer(DefaultBodyLimit::max(handlers::storage::UPLOAD_BODY_LIMIT)))
         .route("/storage/{file_id}", get(handlers::storage::download_file))
         .route("/storage/{file_id}", delete(handlers::storage::delete_file))
         .route(

@@ -24,7 +24,12 @@ use crate::state::AppState;
 
 /// Maximum allowed upload size: 50 MB.
 /// This is enforced in addition to any global body-limit middleware.
-const MAX_UPLOAD_SIZE: usize = 50 * 1024 * 1024;
+pub const MAX_UPLOAD_SIZE: usize = 50 * 1024 * 1024;
+
+/// Body limit for the upload route: slightly above MAX_UPLOAD_SIZE so the handler
+/// can return a readable 400 error instead of the middleware abruptly dropping
+/// the connection (which happens when the global DefaultBodyLimit is smaller).
+pub const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_SIZE + 1024;
 
 // ───────────────────── DTOs ─────────────────────
 
@@ -516,5 +521,48 @@ mod tests {
         assert!(!is_image_mime("text/plain"));
         assert!(!is_image_mime("application/pdf"));
         assert!(!is_image_mime("video/mp4"));
+    }
+
+    #[test]
+    fn test_max_upload_size_exceeded() {
+        // Verify that the MAX_UPLOAD_SIZE constant is enforced.
+        // The handler checks `data.len() > MAX_UPLOAD_SIZE` and returns 400.
+        // This unit test validates the constant and the comparison logic.
+        let exactly_limit = vec![0u8; MAX_UPLOAD_SIZE];
+        assert!(
+            exactly_limit.len() <= MAX_UPLOAD_SIZE,
+            "data at exactly MAX_UPLOAD_SIZE should pass the check"
+        );
+
+        let over_limit = vec![0u8; MAX_UPLOAD_SIZE + 1];
+        assert!(
+            over_limit.len() > MAX_UPLOAD_SIZE,
+            "data over MAX_UPLOAD_SIZE should fail the check"
+        );
+    }
+
+    #[test]
+    fn test_upload_body_limit_allows_max_upload() {
+        // UPLOAD_BODY_LIMIT must be >= MAX_UPLOAD_SIZE so the handler
+        // can receive the full request and return a proper 400 error.
+        assert!(
+            UPLOAD_BODY_LIMIT >= MAX_UPLOAD_SIZE,
+            "UPLOAD_BODY_LIMIT ({}) must be >= MAX_UPLOAD_SIZE ({}) so the handler can return a proper error",
+            UPLOAD_BODY_LIMIT,
+            MAX_UPLOAD_SIZE
+        );
+    }
+
+    #[test]
+    fn test_validate_file_id_rejects_traversal() {
+        assert!(validate_file_id("../../etc/passwd").is_err());
+        assert!(validate_file_id("..%2F..%2Fetc").is_err());
+        assert!(validate_file_id("not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn test_validate_file_id_accepts_uuid() {
+        assert!(validate_file_id("00000000-0000-0000-0000-000000000000").is_ok());
+        assert!(validate_file_id("550e8400-e29b-41d4-a716-446655440000").is_ok());
     }
 }

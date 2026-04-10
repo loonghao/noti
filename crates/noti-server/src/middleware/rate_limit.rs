@@ -3,8 +3,10 @@
 //! Provides both **global** and **per-IP** rate limiting as a Tower layer.
 //! When a client exceeds the allowed rate, the middleware returns
 //! `429 Too Many Requests` with a JSON body and standard `Retry-After` header.
+//!
+//! Per-IP tracking uses [`DashMap`] for sharded locking, so different IPs
+//! are processed concurrently without contending on a single global mutex.
 
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -13,6 +15,7 @@ use std::time::{Duration, Instant};
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
+use dashmap::DashMap;
 use tokio::sync::Mutex;
 
 // ───────────────────── Configuration ─────────────────────
@@ -112,6 +115,13 @@ impl TokenBucket {
         }
     }
 
+    /// Whether this bucket is fully refilled (idle client).
+    fn is_idle(&self, threshold: f64) -> bool {
+        let mut clone = self.clone();
+        clone.refill();
+        clone.tokens >= threshold
+    }
+
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
@@ -149,11 +159,15 @@ pub struct RateLimitMetricsSnapshot {
 // ───────────────────── Shared State ─────────────────────
 
 /// Shared rate limiter state, safe to clone across handlers.
+///
+/// Uses `DashMap` for per-IP buckets so that different IPs are tracked
+/// in separate shards, eliminating the global mutex bottleneck that would
+/// otherwise serialize all per-IP rate limit checks.
 #[derive(Clone)]
 pub struct RateLimiterState {
     config: RateLimitConfig,
     global_bucket: Arc<Mutex<TokenBucket>>,
-    ip_buckets: Arc<Mutex<HashMap<IpAddr, TokenBucket>>>,
+    ip_buckets: Arc<DashMap<IpAddr, TokenBucket>>,
     metrics: Arc<RateLimitMetrics>,
 }
 
@@ -163,7 +177,7 @@ impl RateLimiterState {
         Self {
             config: config.clone(),
             global_bucket: Arc::new(Mutex::new(global_bucket)),
-            ip_buckets: Arc::new(Mutex::new(HashMap::new())),
+            ip_buckets: Arc::new(DashMap::new()),
             metrics: Arc::new(RateLimitMetrics {
                 requests_total: std::sync::atomic::AtomicU64::new(0),
                 rejected_total: std::sync::atomic::AtomicU64::new(0),
@@ -214,19 +228,18 @@ impl RateLimiterState {
     }
 
     async fn check_ip(&self, ip: IpAddr) -> Result<RateLimitInfo, RateLimitInfo> {
-        let mut buckets = self.ip_buckets.lock().await;
-        let ip_is_new = !buckets.contains_key(&ip);
-
-        // Evict stale entries if we hit the limit
-        if buckets.len() >= self.config.max_tracked_ips && !buckets.contains_key(&ip) {
-            let evicted = self.evict_stale(&mut buckets);
-            // Update tracked IPs count after eviction
-            if evicted > 0 {
-                self.metrics.tracked_ips.fetch_sub(evicted, Ordering::Relaxed);
-            }
+        // Evict stale entries if we hit the limit and this IP is new
+        if !self.ip_buckets.contains_key(&ip)
+            && self.ip_buckets.len() >= self.config.max_tracked_ips
+        {
+            self.evict_stale();
         }
 
-        let bucket = buckets
+        let ip_is_new = !self.ip_buckets.contains_key(&ip);
+
+        // Use DashMap entry API — only locks the shard for this IP's hash
+        let mut entry = self
+            .ip_buckets
             .entry(ip)
             .or_insert_with(|| TokenBucket::new(self.config.max_requests, self.config.window));
 
@@ -235,6 +248,7 @@ impl RateLimiterState {
             self.metrics.tracked_ips.fetch_add(1, Ordering::Relaxed);
         }
 
+        let bucket = entry.value_mut();
         let info = RateLimitInfo {
             limit: self.config.max_requests,
             remaining: bucket.remaining(),
@@ -252,16 +266,19 @@ impl RateLimiterState {
         }
     }
 
-    fn evict_stale(&self, buckets: &mut HashMap<IpAddr, TokenBucket>) -> usize {
-        // Remove buckets that are fully refilled (idle clients)
+    /// Evict stale IP buckets that are fully refilled (idle clients).
+    /// DashMap's `retain` iterates per-shard, so this does not block
+    /// concurrent accesses to other shards.
+    fn evict_stale(&self) {
         let threshold = self.config.max_requests as f64;
-        let initial_len = buckets.len();
-        buckets.retain(|_, b| {
-            let mut clone = b.clone();
-            clone.refill();
-            clone.tokens < threshold
-        });
-        initial_len - buckets.len()
+        let before = self.ip_buckets.len();
+        self.ip_buckets.retain(|_, b| !b.is_idle(threshold));
+        let evicted = before - self.ip_buckets.len();
+        if evicted > 0 {
+            self.metrics
+                .tracked_ips
+                .fetch_sub(evicted, Ordering::Relaxed);
+        }
     }
 }
 
@@ -505,5 +522,48 @@ mod tests {
 
         // Third should fail
         assert!(state.check(None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_evict_stale_removes_idle_buckets() {
+        // Create a limiter with a very small max_tracked_ips
+        let config = RateLimitConfig {
+            max_requests: 5,
+            window: Duration::from_millis(100), // very short window for fast refill
+            per_ip: true,
+            max_tracked_ips: 3,
+        };
+        let state = RateLimiterState::new(config);
+
+        // Add 3 IPs (fill up to max_tracked_ips)
+        for i in 1..=3u8 {
+            let ip: IpAddr = format!("10.0.0.{i}").parse().unwrap();
+            assert!(state.check(Some(ip)).await.is_ok());
+        }
+
+        assert_eq!(state.ip_buckets.len(), 3);
+
+        // Wait for tokens to fully refill (idle state)
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Adding a 4th IP should trigger eviction of idle IPs
+        let ip4: IpAddr = "10.0.0.4".parse().unwrap();
+        assert!(state.check(Some(ip4)).await.is_ok());
+
+        // After eviction, at least one idle IP should have been removed
+        // and the new IP added. The map should still be at most max_tracked_ips.
+        assert!(state.ip_buckets.len() <= 3);
+    }
+
+    #[tokio::test]
+    async fn test_is_idle_detection() {
+        let bucket = TokenBucket::new(5, Duration::from_millis(50));
+        // Fresh bucket is fully refilled → idle
+        assert!(bucket.is_idle(5.0));
+
+        // Consume a token → no longer idle
+        let mut b = bucket.clone();
+        b.try_acquire();
+        assert!(!b.is_idle(5.0));
     }
 }
