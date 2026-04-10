@@ -9,14 +9,13 @@
 
 use std::net::IpAddr;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use dashmap::DashMap;
-use tokio::sync::Mutex;
 
 // ───────────────────── Configuration ─────────────────────
 
@@ -210,7 +209,9 @@ impl RateLimiterState {
     }
 
     async fn check_global(&self) -> Result<RateLimitInfo, RateLimitInfo> {
-        let mut bucket = self.global_bucket.lock().await;
+        // std::sync::Mutex is safe here because the lock is held for only
+        // a few arithmetic operations — never across an await point.
+        let mut bucket = self.global_bucket.lock().expect("global bucket lock poisoned");
         let info = RateLimitInfo {
             limit: self.config.max_requests,
             remaining: bucket.remaining(),
