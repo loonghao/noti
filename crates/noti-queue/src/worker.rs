@@ -142,7 +142,9 @@ impl WorkerHandle {
     /// Wait for all workers to finish.
     pub async fn join(self) {
         for handle in self.handles {
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                tracing::warn!(error = %e, "worker task join error");
+            }
         }
     }
 
@@ -151,7 +153,9 @@ impl WorkerHandle {
         self.shutdown_flag.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
         for handle in self.handles {
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                tracing::warn!(error = %e, "worker task join error during shutdown");
+            }
         }
     }
 

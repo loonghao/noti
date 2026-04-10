@@ -85,7 +85,7 @@ impl NotifyProvider for NextcloudProvider {
                 );
 
                 // Ensure directory exists (MKCOL)
-                let _ = self
+                if let Err(e) = self
                     .client
                     .request(
                         reqwest::Method::from_bytes(b"MKCOL").unwrap_or(reqwest::Method::PUT),
@@ -93,7 +93,10 @@ impl NotifyProvider for NextcloudProvider {
                     )
                     .basic_auth(user, Some(password))
                     .send()
-                    .await;
+                    .await
+                {
+                    tracing::debug!(error = %e, "MKCOL for attachment directory failed (may already exist)");
+                }
 
                 // Upload file via WebDAV PUT
                 let upload_resp = self

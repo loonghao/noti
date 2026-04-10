@@ -139,9 +139,13 @@ impl SqliteQueue {
         .backend_err()?;
 
         // Migration: add available_at column if upgrading from an older schema.
-        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN available_at INTEGER;");
+        if let Err(e) = conn.execute_batch("ALTER TABLE tasks ADD COLUMN available_at INTEGER;") {
+            tracing::debug!(error = %e, "migration: available_at column already exists");
+        }
         // Migration: add callback_secret column if upgrading from an older schema.
-        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN callback_secret TEXT;");
+        if let Err(e) = conn.execute_batch("ALTER TABLE tasks ADD COLUMN callback_secret TEXT;") {
+            tracing::debug!(error = %e, "migration: callback_secret column already exists");
+        }
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS dlq_entries (
@@ -399,7 +403,9 @@ impl QueueBackend for SqliteQueue {
                 Ok(())
             })();
             if tx_result.is_err() {
-                let _ = conn.execute_batch("ROLLBACK");
+                if let Err(e) = conn.execute_batch("ROLLBACK") {
+                    tracing::error!(error = %e, "failed to rollback transaction during nack");
+                }
             } else {
                 conn.execute_batch("COMMIT").backend_err()?;
             }
@@ -611,7 +617,9 @@ impl QueueBackend for SqliteQueue {
             Ok(())
         })();
         if tx_result.is_err() {
-            let _ = conn.execute_batch("ROLLBACK");
+            if let Err(e) = conn.execute_batch("ROLLBACK") {
+                tracing::error!(error = %e, "failed to rollback transaction during auto_move_to_dlq");
+            }
         } else {
             conn.execute_batch("COMMIT").backend_err()?;
         }
@@ -714,7 +722,9 @@ impl QueueBackend for SqliteQueue {
             Ok(())
         })();
         if tx_result.is_err() {
-            let _ = conn.execute_batch("ROLLBACK");
+            if let Err(e) = conn.execute_batch("ROLLBACK") {
+                tracing::error!(error = %e, "failed to rollback transaction during requeue_from_dlq");
+            }
         } else {
             conn.execute_batch("COMMIT").backend_err()?;
         }

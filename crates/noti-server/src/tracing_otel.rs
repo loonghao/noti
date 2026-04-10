@@ -54,7 +54,9 @@ pub struct OtelGuard {
 impl OtelGuard {
     /// Force-flush any pending spans and shut down the tracer provider.
     pub fn shutdown(&self) {
-        let _ = self.tracer_provider.shutdown();
+        if let Err(e) = self.tracer_provider.shutdown() {
+            tracing::debug!(error = %e, "OTEL tracer provider shutdown error");
+        }
     }
 }
 

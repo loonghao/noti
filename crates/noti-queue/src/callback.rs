@@ -143,7 +143,13 @@ pub async fn fire_callback(task: &NotificationTask) {
     let client = &*CALLBACK_CLIENT;
 
     // Serialize once so we can sign the raw bytes before sending
-    let payload_bytes = serde_json::to_vec(&payload).expect("callback payload serializes");
+    let payload_bytes = match serde_json::to_vec(&payload) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!(task_id = %task.id, error = %e, "failed to serialize callback payload");
+            return;
+        }
+    };
 
     let mut request = client.post(&url);
     request = request

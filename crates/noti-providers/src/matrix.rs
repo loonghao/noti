@@ -112,13 +112,16 @@ impl NotifyProvider for MatrixProvider {
                     }
                 };
 
-                let _ = self
+                if let Err(e) = self
                     .client
                     .put(&text_url)
                     .header("Authorization", format!("Bearer {access_token}"))
                     .json(&text_payload)
                     .send()
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "failed to upload text attachment to Matrix");
+                }
             }
 
             // Upload and send each attachment

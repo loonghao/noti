@@ -310,16 +310,13 @@ impl<C: Clock> CircuitBreaker<C> {
                 let open_duration_ms = self.config.open_duration.as_millis() as u64;
                 if now_ms >= opened_at_ms + open_duration_ms {
                     // Use compare_exchange for atomic transition
-                    match self.state.compare_exchange(
+                    if self.state.compare_exchange(
                         STATE_OPEN,
                         STATE_HALF_OPEN,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
-                    ) {
-                        Ok(_) => {
-                            self.successes.store(0, Ordering::SeqCst);
-                        }
-                        Err(_) => {}
+                    ).is_ok() {
+                        self.successes.store(0, Ordering::SeqCst);
                     }
                     return CircuitState::HalfOpen;
                 }
@@ -386,7 +383,7 @@ impl CircuitBreakerRegistry {
     pub fn get_or_create(&self, provider_name: &str) -> SharedCircuitBreaker {
         // Fast path: try to get existing breaker
         {
-            let readers = self.breakers.read().unwrap();
+            let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
             if let Some(cb) = readers.get(provider_name) {
                 return cb.clone();
             }
@@ -394,7 +391,7 @@ impl CircuitBreakerRegistry {
 
         // Slow path: create new breaker
         let new_breaker = Arc::new(CircuitBreaker::new());
-        let mut writers = self.breakers.write().unwrap();
+        let mut writers = self.breakers.write().expect("circuit breaker registry lock poisoned");
         if let Some(cb) = writers.get(provider_name) {
             return cb.clone();
         }
@@ -404,31 +401,31 @@ impl CircuitBreakerRegistry {
 
     /// Get the circuit breaker for a provider if it exists.
     pub fn get(&self, provider_name: &str) -> Option<SharedCircuitBreaker> {
-        let readers = self.breakers.read().unwrap();
+        let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
         readers.get(provider_name).cloned()
     }
 
     /// Remove a circuit breaker for a provider.
     pub fn remove(&self, provider_name: &str) {
-        let mut writers = self.breakers.write().unwrap();
+        let mut writers = self.breakers.write().expect("circuit breaker registry lock poisoned");
         writers.remove(provider_name);
     }
 
     /// Clear all circuit breakers.
     pub fn clear(&self) {
-        let mut writers = self.breakers.write().unwrap();
+        let mut writers = self.breakers.write().expect("circuit breaker registry lock poisoned");
         writers.clear();
     }
 
     /// Returns the number of registered breakers.
     pub fn len(&self) -> usize {
-        let readers = self.breakers.read().unwrap();
+        let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
         readers.len()
     }
 
     /// Returns true if there are no registered breakers.
     pub fn is_empty(&self) -> bool {
-        let readers = self.breakers.read().unwrap();
+        let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
         readers.is_empty()
     }
 }

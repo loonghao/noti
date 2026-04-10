@@ -422,7 +422,9 @@ pub async fn delete_file(
     // Delete thumbnail if exists
     let thumb_path = thumb_dir.join(format!("{}.png", file_id));
     if thumb_path.exists() {
-        let _ = fs::remove_file(&thumb_path).await;
+        if let Err(e) = fs::remove_file(&thumb_path).await {
+            tracing::warn!(path = %thumb_path.display(), error = %e, "failed to delete thumbnail");
+        }
     }
 
     tracing::info!(file_id = %file_id, "file deleted");

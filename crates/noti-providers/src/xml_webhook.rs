@@ -63,7 +63,10 @@ impl NotifyProvider for XmlWebhookProvider {
         config: &ProviderConfig,
     ) -> Result<SendResponse, NotiError> {
         self.validate_config(config)?;
-        let url = config.get("base_url").unwrap_or_else(|| config.require("url", "xml").unwrap());
+        let url = match config.get("base_url") {
+            Some(u) => u,
+            None => config.require("url", "xml")?,
+        };
         let method_str = config.get("method").unwrap_or("POST").to_uppercase();
         let noti_type = config.get("type").unwrap_or("info");
         let root = config.get("root").unwrap_or("notification");
