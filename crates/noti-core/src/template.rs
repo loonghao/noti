@@ -169,6 +169,10 @@ fn extract_variables(template: &str) -> Vec<String> {
     vars
 }
 
+/// Maximum number of templates allowed in a single registry.
+/// Prevents unbounded memory growth in long-running servers.
+const MAX_TEMPLATES: usize = 1024;
+
 /// A registry of named message templates.
 #[derive(Debug, Clone, Default)]
 pub struct TemplateRegistry {
@@ -182,8 +186,19 @@ impl TemplateRegistry {
     }
 
     /// Register a template.
-    pub fn register(&mut self, template: MessageTemplate) {
+    ///
+    /// Returns `Err` if the registry has reached the maximum capacity
+    /// and this is a new template (not overwriting an existing one).
+    pub fn register(&mut self, template: MessageTemplate) -> Result<(), NotiError> {
+        // Allow overwriting existing templates without counting towards the limit
+        if !self.templates.contains_key(&template.name) && self.templates.len() >= MAX_TEMPLATES {
+            return Err(NotiError::Validation(format!(
+                "template registry is full (max {} templates)",
+                MAX_TEMPLATES
+            )));
+        }
         self.templates.insert(template.name.clone(), template);
+        Ok(())
     }
 
     /// Get a template by name.
@@ -329,8 +344,8 @@ mod tests {
         let mut reg = TemplateRegistry::new();
         assert!(reg.is_empty());
 
-        reg.register(MessageTemplate::new("alert", "Alert: {{msg}}"));
-        reg.register(MessageTemplate::new("info", "Info: {{msg}}"));
+        reg.register(MessageTemplate::new("alert", "Alert: {{msg}}")).unwrap();
+        reg.register(MessageTemplate::new("info", "Info: {{msg}}")).unwrap();
 
         assert_eq!(reg.len(), 2);
         assert!(reg.get("alert").is_some());

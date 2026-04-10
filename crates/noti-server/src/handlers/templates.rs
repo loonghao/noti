@@ -112,7 +112,7 @@ pub async fn create_template(
     let title = template.title.clone();
 
     let mut registry = state.template_registry.write().await;
-    registry.register(template);
+    registry.register(template).map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     Ok((
         StatusCode::CREATED,
@@ -267,7 +267,7 @@ pub async fn update_template(
         defaults: updated.defaults.clone(),
     };
 
-    registry.register(updated);
+    registry.register(updated).map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(response))
 }

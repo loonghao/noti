@@ -187,6 +187,11 @@ impl StatusTracker {
     }
 
     /// Update the status of a specific provider delivery for a notification.
+    ///
+    /// Enforces valid state transitions:
+    /// - From any non-terminal state, any forward transition is allowed.
+    /// - Terminal states (Delivered, Failed, Cancelled, Read) cannot be left.
+    /// - Read can only be reached from Delivered.
     pub async fn update_status(
         &self,
         notification_id: &str,
@@ -197,6 +202,14 @@ impl StatusTracker {
         let mut store = self.records.write().await;
         if let Some(records) = store.get_mut(notification_id) {
             if let Some(record) = records.iter_mut().find(|r| r.provider == provider) {
+                // Enforce state machine: terminal states cannot be left
+                if record.is_terminal() {
+                    return false;
+                }
+                // Enforce: Read can only come after Delivered
+                if status == DeliveryStatus::Read && record.current_status != DeliveryStatus::Delivered {
+                    return false;
+                }
                 record.transition(status, detail);
                 return true;
             }
