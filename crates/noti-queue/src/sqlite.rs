@@ -557,32 +557,11 @@ impl QueueBackend for SqliteQueue {
         let mut conn = self.conn.lock().await;
         let now = system_time_to_epoch_ms(std::time::SystemTime::now());
 
-        // Read the task first
+        // Read the task using the standard row mapper
         let row = match conn.query_row(
-            "SELECT id, provider, config_json, message_json, retry_policy_json,
-                    status, attempts, last_error, created_at, updated_at,
-                    metadata_json, callback_url, callback_secret, priority, available_at
-             FROM tasks WHERE id = ?1",
+            "SELECT * FROM tasks WHERE id = ?1",
             params![task_id],
-            |row| {
-                Ok(TaskRow {
-                    id: row.get(0)?,
-                    provider: row.get(1)?,
-                    config_json: row.get(2)?,
-                    message_json: row.get(3)?,
-                    retry_policy_json: row.get(4)?,
-                    status: row.get(5)?,
-                    attempts: row.get(6)?,
-                    last_error: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    metadata_json: row.get(10)?,
-                    callback_url: row.get(11)?,
-                    callback_secret: row.get(12)?,
-                    priority: row.get(13)?,
-                    available_at: row.get(14)?,
-                })
-            },
+            TaskRow::from_rusqlite_row,
         ) {
             Ok(r) => r,
             Err(rusqlite::Error::QueryReturnedNoRows) => {
