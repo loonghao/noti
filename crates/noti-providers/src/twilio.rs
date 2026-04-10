@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use base64::Engine;
 use noti_core::{Message, NotiError, NotifyProvider, ParamDef, ProviderConfig, SendResponse};
 use reqwest::Client;
 
@@ -110,7 +109,7 @@ impl NotifyProvider for TwilioProvider {
                 );
 
                 let part = reqwest::multipart::Part::bytes(data.clone())
-                    .file_name(file_name)
+                    .file_name(file_name.clone())
                     .mime_str(&mime_str)
                     .map_err(|e| NotiError::Network(format!("MIME error: {e}")))?;
 
@@ -132,13 +131,23 @@ impl NotifyProvider for TwilioProvider {
                             resp.json().await.unwrap_or(serde_json::Value::Null);
                         if let Some(media_url) = upload_raw.get("uri").and_then(|v| v.as_str()) {
                             form_params.push(("MediaUrl", media_url.to_string()));
+                        } else {
+                            tracing::warn!(
+                                "twilio: media upload succeeded but no URI in response, skipping attachment {file_name}"
+                            );
                         }
                     }
-                    _ => {
-                        // Fallback: use data URI (works for some MMS gateways)
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                        let data_uri = format!("data:{mime_str};base64,{b64}");
-                        form_params.push(("MediaUrl", data_uri));
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = crate::http_helpers::read_response_body("twilio", resp).await;
+                        tracing::warn!(
+                            "twilio: media upload failed (status {status}), skipping attachment {file_name}: {body}"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "twilio: media upload error, skipping attachment {file_name}: {e}"
+                        );
                     }
                 }
             }
