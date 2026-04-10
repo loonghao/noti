@@ -62,8 +62,10 @@ impl AuthConfig {
     }
 
     /// Check if a given API key is valid.
+    ///
+    /// Uses constant-time comparison to prevent timing attacks.
     pub fn is_valid_key(&self, key: &str) -> bool {
-        self.api_keys.contains(key)
+        self.api_keys.iter().any(|k| constant_time_eq(k.as_bytes(), key.as_bytes()))
     }
 
     /// Check if a path is excluded from authentication.
@@ -118,11 +120,25 @@ fn extract_api_key<B>(request: &Request<B>) -> Option<String> {
     if let Some(auth) = request.headers().get("authorization") {
         if let Ok(val) = auth.to_str() {
             let val = val.trim();
-            if let Some(key) = val.strip_prefix("Bearer ") {
-                let key = key.trim();
-                if !key.is_empty() {
-                    return Some(key.to_string());
+            // RFC 6750: Bearer prefix is case-insensitive
+            let key = if let Some(k) = val.strip_prefix("Bearer ") {
+                k.trim()
+            } else if let Some(k) = val.strip_prefix("bearer ") {
+                k.trim()
+            } else if let Some(k) = val.strip_prefix("BEARER ") {
+                k.trim()
+            } else {
+                // Also handle mixed-case by checking lowercase prefix
+                let lower = val.to_ascii_lowercase();
+                if let Some(k) = lower.strip_prefix("bearer ") {
+                    // Get the original substring after the prefix
+                    &val[val.len() - k.len()..]
+                } else {
+                    ""
                 }
+            };
+            if !key.is_empty() {
+                return Some(key.to_string());
             }
         }
     }
@@ -181,6 +197,23 @@ fn unauthorized_response(message: &str) -> Response {
         "message": message,
     });
     (StatusCode::UNAUTHORIZED, axum::Json(body)).into_response()
+}
+
+// ───────────────────── Constant-time comparison ─────────────────────
+
+/// Constant-time byte comparison to prevent timing attacks.
+///
+/// Compares two byte slices in O(n) time regardless of where they differ,
+/// preventing attackers from inferring correct prefix bytes via timing.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 // ───────────────────── Tests ─────────────────────
@@ -360,6 +393,26 @@ mod tests {
             .add_header(
                 HeaderName::from_static("authorization"),
                 HeaderValue::from_static("Bearer my-key"),
+            )
+            .await;
+        resp.assert_status_ok();
+
+        // "bearer" lowercase — RFC 6750 requires case-insensitive
+        let resp = server
+            .get("/test")
+            .add_header(
+                HeaderName::from_static("authorization"),
+                HeaderValue::from_static("bearer my-key"),
+            )
+            .await;
+        resp.assert_status_ok();
+
+        // "BEARER" uppercase — also valid per RFC 6750
+        let resp = server
+            .get("/test")
+            .add_header(
+                HeaderName::from_static("authorization"),
+                HeaderValue::from_static("BEARER my-key"),
             )
             .await;
         resp.assert_status_ok();

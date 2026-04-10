@@ -350,7 +350,7 @@ impl QueueBackend for SqliteQueue {
     }
 
     async fn nack(&self, task_id: &str, error: &str) -> Result<(), QueueError> {
-        let conn = self.conn.lock().await;
+        let mut conn = self.conn.lock().await;
         let now = system_time_to_epoch_ms(SystemTime::now());
 
         // Read the task to check retry eligibility
@@ -391,25 +391,15 @@ impl QueueBackend for SqliteQueue {
 
             // Insert into DLQ then delete from main tasks table within a transaction
             // to prevent data loss if the process crashes between the two operations.
-            conn.execute_batch("BEGIN").backend_err()?;
-            let tx_result: Result<(), QueueError> = (|| {
-                conn.execute(
-                    "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
-                    params![task_id, task_json, moved_at, error],
-                )
+            let tx = conn.transaction().backend_err()?;
+            tx.execute(
+                "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
+                params![task_id, task_json, moved_at, error],
+            )
+            .backend_err()?;
+            tx.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
                 .backend_err()?;
-                conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
-                    .backend_err()?;
-                Ok(())
-            })();
-            if tx_result.is_err() {
-                if let Err(e) = conn.execute_batch("ROLLBACK") {
-                    tracing::error!(error = %e, "failed to rollback transaction during nack");
-                }
-            } else {
-                conn.execute_batch("COMMIT").backend_err()?;
-            }
-            tx_result?;
+            tx.commit().backend_err()?;
         }
 
         Ok(())
@@ -564,7 +554,7 @@ impl QueueBackend for SqliteQueue {
     }
 
     async fn move_to_dlq(&self, task_id: &str, reason: &str) -> Result<(), QueueError> {
-        let conn = self.conn.lock().await;
+        let mut conn = self.conn.lock().await;
         let now = system_time_to_epoch_ms(std::time::SystemTime::now());
 
         // Read the task first
@@ -605,25 +595,17 @@ impl QueueBackend for SqliteQueue {
         let task_json = serde_json::to_string(&task).serde_err()?;
 
         // Wrap DLQ insert + task delete in a transaction
-        conn.execute_batch("BEGIN").backend_err()?;
-        let tx_result: Result<(), QueueError> = (|| {
-            conn.execute(
-                "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
-                params![task_id, task_json, now, reason],
-            )
+        let tx = conn.transaction().backend_err()?;
+        tx.execute(
+            "INSERT INTO dlq_entries (task_id, task_json, moved_at, reason) VALUES (?1, ?2, ?3, ?4)",
+            params![task_id, task_json, now, reason],
+        )
+        .backend_err()?;
+        tx.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
             .backend_err()?;
-            conn.execute("DELETE FROM tasks WHERE id = ?1", params![task_id])
-                .backend_err()?;
-            Ok(())
-        })();
-        if tx_result.is_err() {
-            if let Err(e) = conn.execute_batch("ROLLBACK") {
-                tracing::error!(error = %e, "failed to rollback transaction during auto_move_to_dlq");
-            }
-        } else {
-            conn.execute_batch("COMMIT").backend_err()?;
-        }
-        tx_result
+        tx.commit().backend_err()?;
+
+        Ok(())
     }
 
     async fn list_dlq(&self, limit: usize) -> Result<Vec<DlqEntry>, QueueError> {
@@ -665,7 +647,7 @@ impl QueueBackend for SqliteQueue {
     }
 
     async fn requeue_from_dlq(&self, task_id: &str) -> Result<(), QueueError> {
-        let conn = self.conn.lock().await;
+        let mut conn = self.conn.lock().await;
 
         // Read DLQ entry
         let task_json: String = match conn.query_row(
@@ -691,44 +673,34 @@ impl QueueBackend for SqliteQueue {
         let task_row = Self::serialize_task(&task)?;
 
         // Wrap task insert + DLQ delete in a transaction
-        conn.execute_batch("BEGIN").backend_err()?;
-        let tx_result: Result<(), QueueError> = (|| {
-            conn.execute(
-                "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
-                                   status, attempts, last_error, created_at, updated_at,
-                                   metadata_json, callback_url, callback_secret, priority, available_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                params![
-                    task_row.id,
-                    task_row.provider,
-                    task_row.config_json,
-                    task_row.message_json,
-                    task_row.retry_policy_json,
-                    task_row.status,
-                    task_row.attempts,
-                    task_row.last_error,
-                    task_row.created_at,
-                    task_row.updated_at,
-                    task_row.metadata_json,
-                    task_row.callback_url,
-                    task_row.callback_secret,
-                    task_row.priority,
-                    task_row.available_at,
-                ],
-            )
+        let tx = conn.transaction().backend_err()?;
+        tx.execute(
+            "INSERT INTO tasks (id, provider, config_json, message_json, retry_policy_json,
+                               status, attempts, last_error, created_at, updated_at,
+                               metadata_json, callback_url, callback_secret, priority, available_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                task_row.id,
+                task_row.provider,
+                task_row.config_json,
+                task_row.message_json,
+                task_row.retry_policy_json,
+                task_row.status,
+                task_row.attempts,
+                task_row.last_error,
+                task_row.created_at,
+                task_row.updated_at,
+                task_row.metadata_json,
+                task_row.callback_url,
+                task_row.callback_secret,
+                task_row.priority,
+                task_row.available_at,
+            ],
+        )
+        .backend_err()?;
+        tx.execute("DELETE FROM dlq_entries WHERE task_id = ?1", params![task_id])
             .backend_err()?;
-            conn.execute("DELETE FROM dlq_entries WHERE task_id = ?1", params![task_id])
-                .backend_err()?;
-            Ok(())
-        })();
-        if tx_result.is_err() {
-            if let Err(e) = conn.execute_batch("ROLLBACK") {
-                tracing::error!(error = %e, "failed to rollback transaction during requeue_from_dlq");
-            }
-        } else {
-            conn.execute_batch("COMMIT").backend_err()?;
-        }
-        tx_result?;
+        tx.commit().backend_err()?;
 
         drop(conn);
         self.notify.notify_waiters();
