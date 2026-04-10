@@ -22,6 +22,10 @@ use uuid::Uuid;
 use crate::handlers::error::ApiError;
 use crate::state::AppState;
 
+/// Maximum allowed upload size: 50 MB.
+/// This is enforced in addition to any global body-limit middleware.
+const MAX_UPLOAD_SIZE: usize = 50 * 1024 * 1024;
+
 // ───────────────────── DTOs ─────────────────────
 
 /// Response for a successful file upload.
@@ -231,6 +235,16 @@ pub async fn upload_file(
     })?;
 
     let size_bytes = data.len() as u64;
+
+    // Explicit file size limit to prevent abuse
+    if data.len() > MAX_UPLOAD_SIZE {
+        return Err(ApiError::bad_request(format!(
+            "file too large: {} bytes (max {} bytes)",
+            data.len(),
+            MAX_UPLOAD_SIZE
+        )));
+    }
+
     let mime_type = detect_mime(&data, &filename);
 
     // Store the file
@@ -355,6 +369,9 @@ pub async fn get_thumbnail(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Result<Response, ApiError> {
+    // Validate file_id is a proper UUID to prevent path traversal
+    validate_file_id(&file_id)?;
+
     let thumb_path = state.thumbnails_dir().join(format!("{}.png", file_id));
 
     if !thumb_path.exists() {
@@ -394,6 +411,9 @@ pub async fn delete_file(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Result<Json<DeleteFileResponse>, ApiError> {
+    // Validate file_id is a proper UUID to prevent path traversal
+    validate_file_id(&file_id)?;
+
     let upload_dir = state.storage_dir();
     let thumb_dir = state.thumbnails_dir();
 

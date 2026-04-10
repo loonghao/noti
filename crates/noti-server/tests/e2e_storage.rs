@@ -317,7 +317,7 @@ async fn e2e_storage_thumbnail_for_nonexistent_file() {
     let client = test_client();
 
     let resp = client
-        .get(format!("{base}/api/v1/storage/nonexistent-id/thumbnail"))
+        .get(format!("{base}/api/v1/storage/00000000-0000-0000-0000-000000000000/thumbnail"))
         .send()
         .await
         .expect("request failed");
@@ -560,6 +560,94 @@ async fn e2e_storage_download_empty_file() {
         downloaded_bytes.len(),
         0,
         "downloaded content should be empty"
+    );
+}
+
+// ───────────────────── Path Traversal Protection Tests ─────────────────────
+
+#[tokio::test]
+async fn e2e_storage_download_rejects_path_traversal() {
+    let (base, _storage_path) = spawn_server_with_temp_storage().await;
+    let client = test_client();
+
+    // Attempt path traversal via file_id
+    let resp = client
+        .get(format!("{base}/api/v1/storage/..%2F..%2Fetc%2Fpasswd"))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "path traversal in download should return 400"
+    );
+}
+
+#[tokio::test]
+async fn e2e_storage_thumbnail_rejects_path_traversal() {
+    let (base, _storage_path) = spawn_server_with_temp_storage().await;
+    let client = test_client();
+
+    let resp = client
+        .get(format!("{base}/api/v1/storage/..%2F..%2Fetc%2Fpasswd/thumbnail"))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "path traversal in thumbnail should return 400"
+    );
+}
+
+#[tokio::test]
+async fn e2e_storage_delete_rejects_path_traversal() {
+    let (base, _storage_path) = spawn_server_with_temp_storage().await;
+    let client = test_client();
+
+    let resp = client
+        .delete(format!("{base}/api/v1/storage/..%2F..%2Fetc%2Fpasswd"))
+        .send()
+        .await
+        .expect("request failed");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "path traversal in delete should return 400"
+    );
+}
+
+#[tokio::test]
+async fn e2e_storage_upload_rejects_oversized_file() {
+    let (base, _storage_path) = spawn_server_with_temp_storage().await;
+    let client = test_client();
+
+    // Create a payload that exceeds MAX_UPLOAD_SIZE (50 MB)
+    // Use a smaller test: we just verify the server rejects large uploads
+    // by sending a 51 MB zeroed buffer. Skip in CI if too slow.
+    let oversized_data = vec![0u8; 51 * 1024 * 1024];
+    let file_part = reqwest::multipart::Part::bytes(oversized_data)
+        .file_name("huge.bin")
+        .mime_str("application/octet-stream")
+        .unwrap();
+
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+
+    let resp = client
+        .post(format!("{base}/api/v1/storage/upload"))
+        .multipart(form)
+        .send()
+        .await
+        .expect("request failed");
+
+    // Server should reject the oversized upload (400 bad request or 413 payload too large)
+    assert!(
+        resp.status() == StatusCode::BAD_REQUEST || resp.status() == StatusCode::PAYLOAD_TOO_LARGE,
+        "oversized upload should be rejected, got {}",
+        resp.status()
     );
 }
 

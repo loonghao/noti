@@ -165,6 +165,23 @@ impl WorkerHandle {
     }
 }
 
+/// Fire callback for a task if `has_callback` is true and the task is still retrievable.
+///
+/// This helper eliminates the repeated callback logic that was duplicated across
+/// five branches in the worker loop (provider-not-found, circuit-breaker-open,
+/// send-success, send-failure-response, send-error).
+async fn maybe_fire_callback(
+    has_callback: bool,
+    queue: &Arc<dyn QueueBackend>,
+    task_id: &str,
+) {
+    if has_callback {
+        if let Ok(Some(updated)) = queue.get_task(task_id).await {
+            fire_callback(&updated).await;
+        }
+    }
+}
+
 /// A pool of workers that consume tasks from a queue and send notifications.
 pub struct WorkerPool;
 
@@ -247,12 +264,7 @@ impl WorkerPool {
                                             "failed to nack task after provider-not-found"
                                         );
                                     }
-                                    // Fire callback if task reached terminal state
-                                    if has_callback {
-                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
-                                            fire_callback(&updated).await;
-                                        }
-                                    }
+                                    maybe_fire_callback(has_callback, &queue, &task_id).await;
                                     stats.mark_idle();
                                     continue;
                                 }
@@ -281,11 +293,7 @@ impl WorkerPool {
                                         "failed to nack task after circuit breaker open"
                                     );
                                 }
-                                if has_callback {
-                                    if let Ok(Some(updated)) = queue.get_task(&task_id).await {
-                                        fire_callback(&updated).await;
-                                    }
-                                }
+                                maybe_fire_callback(has_callback, &queue, &task_id).await;
                                 stats.mark_idle();
                                 continue;
                             }
@@ -318,11 +326,7 @@ impl WorkerPool {
                                             "failed to ack completed task"
                                         );
                                     }
-                                    if has_callback {
-                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
-                                            fire_callback(&updated).await;
-                                        }
-                                    }
+                                    maybe_fire_callback(has_callback, &queue, &task_id).await;
                                 }
                                 Ok(resp) => {
                                     circuit.record_failure();
@@ -341,11 +345,7 @@ impl WorkerPool {
                                             "failed to nack task after provider failure"
                                         );
                                     }
-                                    if has_callback {
-                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
-                                            fire_callback(&updated).await;
-                                        }
-                                    }
+                                    maybe_fire_callback(has_callback, &queue, &task_id).await;
                                 }
                                 Err(e) => {
                                     circuit.record_failure();
@@ -366,11 +366,7 @@ impl WorkerPool {
                                             "failed to nack task after send error"
                                         );
                                     }
-                                    if has_callback {
-                                        if let Ok(Some(updated)) = queue.get_task(&task_id).await {
-                                            fire_callback(&updated).await;
-                                        }
-                                    }
+                                    maybe_fire_callback(has_callback, &queue, &task_id).await;
                                 }
                             }
                             // Mark worker as idle after completing task (all send outcomes)

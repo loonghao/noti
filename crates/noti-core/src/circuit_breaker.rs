@@ -383,7 +383,23 @@ impl CircuitBreakerRegistry {
     pub fn get_or_create(&self, provider_name: &str) -> SharedCircuitBreaker {
         // Fast path: try to get existing breaker
         {
-            let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
+            let readers = match self.breakers.read() {
+                Ok(r) => r,
+                Err(e) => {
+                    // Lock poisoned — another thread panicked while holding the lock.
+                    // Recover the map rather than cascading the panic.
+                    eprintln!("circuit breaker registry read lock poisoned, recovering: {}", e);
+                    let recovered = e.into_inner();
+                    return recovered.get(provider_name).cloned().unwrap_or_else(|| {
+                        let new_breaker = Arc::new(CircuitBreaker::new());
+                        // Best-effort: insert may also fail on poisoned lock, but we already recovered
+                        if let Ok(mut writers) = self.breakers.write() {
+                            writers.insert(provider_name.to_string(), new_breaker.clone());
+                        }
+                        new_breaker
+                    });
+                }
+            };
             if let Some(cb) = readers.get(provider_name) {
                 return cb.clone();
             }
@@ -391,7 +407,13 @@ impl CircuitBreakerRegistry {
 
         // Slow path: create new breaker
         let new_breaker = Arc::new(CircuitBreaker::new());
-        let mut writers = self.breakers.write().expect("circuit breaker registry lock poisoned");
+        let mut writers = match self.breakers.write() {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("circuit breaker registry write lock poisoned, recovering: {}", e);
+                e.into_inner()
+            }
+        };
         if let Some(cb) = writers.get(provider_name) {
             return cb.clone();
         }
@@ -401,32 +423,32 @@ impl CircuitBreakerRegistry {
 
     /// Get the circuit breaker for a provider if it exists.
     pub fn get(&self, provider_name: &str) -> Option<SharedCircuitBreaker> {
-        let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
+        let readers = self.breakers.read().ok()?;
         readers.get(provider_name).cloned()
     }
 
     /// Remove a circuit breaker for a provider.
     pub fn remove(&self, provider_name: &str) {
-        let mut writers = self.breakers.write().expect("circuit breaker registry lock poisoned");
-        writers.remove(provider_name);
+        if let Ok(mut writers) = self.breakers.write() {
+            writers.remove(provider_name);
+        }
     }
 
     /// Clear all circuit breakers.
     pub fn clear(&self) {
-        let mut writers = self.breakers.write().expect("circuit breaker registry lock poisoned");
-        writers.clear();
+        if let Ok(mut writers) = self.breakers.write() {
+            writers.clear();
+        }
     }
 
     /// Returns the number of registered breakers.
     pub fn len(&self) -> usize {
-        let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
-        readers.len()
+        self.breakers.read().map(|r| r.len()).unwrap_or(0)
     }
 
     /// Returns true if there are no registered breakers.
     pub fn is_empty(&self) -> bool {
-        let readers = self.breakers.read().expect("circuit breaker registry lock poisoned");
-        readers.is_empty()
+        self.len() == 0
     }
 }
 
