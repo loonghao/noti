@@ -296,7 +296,7 @@ impl QueueBackend for InMemoryQueue {
             .filter(|t| status.as_ref().is_none_or(|s| t.status == *s));
 
         let mut result: Vec<_> = iter.cloned().collect();
-        result.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        result.sort_by_key(|task| task.created_at);
         result.truncate(limit);
         Ok(result)
     }
