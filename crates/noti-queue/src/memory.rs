@@ -329,6 +329,35 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
+    async fn test_dyn_queue_futures_are_send_with_borrowed_arguments() {
+        fn require_send<T: Send>(future: T) -> T {
+            future
+        }
+
+        let queue: Box<dyn QueueBackend> = Box::new(InMemoryQueue::new());
+        let task = make_task("slack", Priority::Normal)
+            .with_retry_policy(RetryPolicy::fixed(3, Duration::ZERO));
+        let id = require_send(queue.enqueue(task)).await.unwrap();
+        let error = String::from("retryable fixture error");
+        require_send(queue.dequeue()).await.unwrap();
+        require_send(queue.nack(&id, &error)).await.unwrap();
+        assert!(require_send(queue.get_task(&id)).await.unwrap().is_some());
+        assert_eq!(require_send(queue.stats()).await.unwrap().total(), 1);
+        assert_eq!(
+            require_send(queue.list_tasks(None, 10))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(require_send(queue.recover_stale_tasks()).await.unwrap(), 0);
+        assert!(require_send(queue.dequeue()).await.unwrap().is_some());
+        require_send(queue.ack(&id)).await.unwrap();
+        assert!(!require_send(queue.cancel(&id)).await.unwrap());
+        assert_eq!(require_send(queue.purge_completed()).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
     async fn test_enqueue_dequeue() {
         let queue = InMemoryQueue::new();
 
