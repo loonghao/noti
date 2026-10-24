@@ -1,5 +1,6 @@
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::error::QueueError;
 use crate::task::{NotificationTask, TaskId, TaskStatus};
@@ -35,45 +36,112 @@ impl QueueStats {
 ///
 /// Implementations can range from simple in-memory queues to distributed
 /// message brokers like RabbitMQ or Kafka.
-#[async_trait]
+///
+/// Signatures preserve async-trait's boxed, Send, object-safe future ABI.
+/// Implementations may keep using `#[async_trait]` with `async fn`; spelling out
+/// declarations avoids a redundant generated `must_use` on current Clippy.
 pub trait QueueBackend: Send + Sync {
     /// Enqueue a notification task for asynchronous processing.
     ///
     /// Returns the task ID on success.
-    async fn enqueue(&self, task: NotificationTask) -> Result<TaskId, QueueError>;
+    fn enqueue<'life0, 'async_trait>(
+        &'life0 self,
+        task: NotificationTask,
+    ) -> Pin<Box<dyn Future<Output = Result<TaskId, QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Dequeue the next highest-priority task for processing.
     ///
     /// Returns `None` if the queue is empty.
-    async fn dequeue(&self) -> Result<Option<NotificationTask>, QueueError>;
+    fn dequeue<'life0, 'async_trait>(
+        &'life0 self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<NotificationTask>, QueueError>> + Send + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Acknowledge that a task has been completed successfully.
-    async fn ack(&self, task_id: &str) -> Result<(), QueueError>;
+    fn ack<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        task_id: &'life1 str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Negative-acknowledge: mark a task as failed.
     ///
     /// If the task is eligible for retry, it will be re-queued.
     /// Otherwise, it will be moved to the failed state.
-    async fn nack(&self, task_id: &str, error: &str) -> Result<(), QueueError>;
+    fn nack<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        task_id: &'life1 str,
+        error: &'life2 str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Get the current status of a task.
-    async fn get_task(&self, task_id: &str) -> Result<Option<NotificationTask>, QueueError>;
+    fn get_task<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        task_id: &'life1 str,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<NotificationTask>, QueueError>> + Send + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Cancel a queued (not yet processing) task.
-    async fn cancel(&self, task_id: &str) -> Result<bool, QueueError>;
+    fn cancel<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        task_id: &'life1 str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Get current queue statistics.
-    async fn stats(&self) -> Result<QueueStats, QueueError>;
+    fn stats<'life0, 'async_trait>(
+        &'life0 self,
+    ) -> Pin<Box<dyn Future<Output = Result<QueueStats, QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Get tasks filtered by status.
-    async fn list_tasks(
-        &self,
+    fn list_tasks<'life0, 'async_trait>(
+        &'life0 self,
         status: Option<TaskStatus>,
         limit: usize,
-    ) -> Result<Vec<NotificationTask>, QueueError>;
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Vec<NotificationTask>, QueueError>> + Send + 'async_trait>,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Purge all completed/failed/cancelled tasks from the queue.
-    async fn purge_completed(&self) -> Result<usize, QueueError>;
+    fn purge_completed<'life0, 'async_trait>(
+        &'life0 self,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Recover stale tasks that were left in `Processing` state.
     ///
@@ -85,8 +153,14 @@ pub trait QueueBackend: Send + Sync {
     ///
     /// The default implementation is a no-op (returns 0), which is correct
     /// for in-memory backends where all state is lost on restart.
-    async fn recover_stale_tasks(&self) -> Result<usize, QueueError> {
-        Ok(0)
+    fn recover_stale_tasks<'life0, 'async_trait>(
+        &'life0 self,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, QueueError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move { Ok(0) })
     }
 }
 
