@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/loonghao/noti/compare/v0.1.10...v0.1.11) (2026-10-24)
+
+
+### Bug Fixes
+
+* retain Rust 1.85 locked Docker builds ([#52](https://github.com/loonghao/noti/issues/52)) ([c11ac51](https://github.com/loonghao/noti/commit/c11ac51c2cef398d694b069e0f0ed82cbe7b1620))
+
 ## [0.1.10](https://github.com/loonghao/noti/compare/v0.1.9...v0.1.10) (2026-04-07)
 
 
