@@ -108,9 +108,9 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "ar_archive_writer"
-version = "0.5.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eb93bbb63b9c227414f6eb3a0adfddca591a8ce1e9b60661bb08969b87e340b"
+checksum = "f0c269894b6fe5e9d7ada0cf69b5bf847ff35bc25fc271f08e1d080fce80339a"
 dependencies = [
  "object",
 ]
@@ -1584,7 +1584,7 @@ checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
 
 [[package]]
 name = "noti-cli"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1601,7 +1601,7 @@ dependencies = [
 
 [[package]]
 name = "noti-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "noti-providers"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "base64",
@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "noti-queue"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "criterion",
@@ -1659,7 +1659,7 @@ dependencies = [
 
 [[package]]
 name = "noti-server"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "axum",
@@ -1783,9 +1783,9 @@ dependencies = [
 
 [[package]]
 name = "object"
-version = "0.37.3"
+version = "0.32.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+checksum = "a6a622008b6e321afc04970976f62ee297fdbaa6f95318ca343e3eebb9648441"
 dependencies = [
  "memchr",
 ]
@@ -1988,9 +1988,9 @@ dependencies = [
 
 [[package]]
 name = "psm"
-version = "0.1.30"
+version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3852766467df634d74f0b2d7819bf8dc483a0eb2e3b0f50f756f9cfe8b0d18d8"
+checksum = "d11f2fedc3b7dafdc2851bc52f277377c5473d378859be234bc7ebb593144d01"
 dependencies = [
  "ar_archive_writer",
  "cc",

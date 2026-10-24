@@ -48,7 +48,7 @@ RUN mkdir -p crates/noti-cli/src && echo "fn main(){}" > crates/noti-cli/src/mai
 RUN case "$TARGETPLATFORM" in \
       "linux/arm64") CARGO_TARGET="--target aarch64-unknown-linux-gnu" ;; \
       *) CARGO_TARGET="" ;; \
-    esac && cargo build --release --workspace $CARGO_TARGET 2>/dev/null || true
+    esac && cargo build --locked --release --workspace $CARGO_TARGET 2>/dev/null || true
 
 # Copy real source and rebuild
 COPY crates/ crates/
@@ -56,7 +56,7 @@ RUN touch crates/*/src/main.rs crates/*/src/lib.rs 2>/dev/null || true
 RUN case "$TARGETPLATFORM" in \
       "linux/arm64") CARGO_TARGET="--target aarch64-unknown-linux-gnu" ;; \
       *) CARGO_TARGET="" ;; \
-    esac && cargo build --release --bin noti-server --bin noti $CARGO_TARGET
+    esac && cargo build --locked --release --bin noti-server --bin noti $CARGO_TARGET
 
 # Copy binaries to a known location regardless of target triple
 RUN mkdir -p /build/out && \
