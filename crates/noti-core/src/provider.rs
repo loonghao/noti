@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::error::NotiError;
 use crate::message::Message;
@@ -176,9 +178,18 @@ pub trait NotifyProvider: Send + Sync {
     }
 
     /// Send a message using this provider.
-    async fn send(
-        &self,
-        message: &Message,
-        config: &ProviderConfig,
-    ) -> Result<SendResponse, NotiError>;
+    ///
+    /// Spell out async-trait's object-safe future ABI so the trait declaration
+    /// does not receive its redundant generated `must_use` attribute. Provider
+    /// implementations can continue using `#[async_trait]` and `async fn send`.
+    fn send<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        message: &'life1 Message,
+        config: &'life2 ProviderConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<SendResponse, NotiError>> + Send + 'async_trait>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 }

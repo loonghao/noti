@@ -53,6 +53,24 @@ fn test_registry_new_is_empty() {
     assert!(registry.provider_names().is_empty());
 }
 
+#[tokio::test]
+async fn test_dyn_provider_send_future_is_send_with_borrowed_arguments() {
+    fn require_send<T: Send>(future: T) -> T {
+        future
+    }
+
+    let provider: Arc<dyn NotifyProvider> = Arc::new(MockProvider::new("mock", "mock"));
+    let message = Message::text("in-memory contract test");
+    let config = ProviderConfig::new().set("token", "fixture");
+    let response = require_send(provider.send(&message, &config))
+        .await
+        .expect("the in-memory mock provider succeeds");
+
+    assert!(response.success);
+    assert_eq!(response.provider, "mock");
+    assert_eq!(response.message, "sent");
+}
+
 #[rstest]
 fn test_registry_default_is_empty() {
     let registry = ProviderRegistry::default();
